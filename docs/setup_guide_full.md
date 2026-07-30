@@ -73,10 +73,10 @@ dtparam=i2c_arm=on
 # UART 활성화 (Yahboom 드라이버, ESP32-S3 통신용)
 enable_uart=1
 
-# 카메라 활성화
+# 카메라 활성화 (선택, VSLAM 서브 옵션 사용 시에만 필요)
 camera_auto_detect=1
 
-# GPU 메모리 최소화 (VSLAM 서버 offload 시)
+# GPU 메모리 최소화 (SLAM/센서 처리는 CPU 중심이라 GPU 메모리는 최소화)
 gpu_mem=128
 ```
 
@@ -184,7 +184,28 @@ source install/setup.bash
 
 ## Phase 4: 센서 드라이버 설치
 
-### 4.1 카메라 (IMX219)
+### 4.0 LD06 2D LiDAR (Phase 0 메인 SLAM 센서)
+
+```bash
+# 시리얼 포트 권한 (최초 1회, 재로그인 필요)
+sudo usermod -aG dialout $USER
+
+ls -la /dev/ttyUSB*
+
+cd ~/catkin_ws/src
+git clone https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2.git
+cd ~/catkin_ws
+colcon build --packages-select ldlidar_stl_ros2
+source install/setup.bash
+
+# 테스트 (product_name=LDLiDAR_LD06으로 launch 파일 설정 후)
+ros2 launch ldlidar_stl_ros2 ld06.launch.py
+ros2 topic echo /scan
+```
+
+### 4.1 [선택] 카메라 (IMX219, VSLAM 서브 옵션)
+
+> Phase 0은 LD06 LiDAR가 메인 SLAM 센서라 카메라 구매/설치가 필수는 아님. 추후 VSLAM 보조 검토 시에만 진행.
 
 ```bash
 sudo apt install -y rpicam-apps libcamera-dev
@@ -199,7 +220,7 @@ sudo apt install -y ros-jazzy-camera-ros
 sudo apt install -y python3-picamera2
 ```
 
-### 4.2 IMU (ICM-20948)
+### 4.2 IMU (ICM-20948, Qwiic)
 
 ```bash
 sudo apt install -y python3-smbus2
@@ -491,14 +512,15 @@ source install/setup.bash
 ros2 run smart_trash_motion test_motor
 ```
 
-### 8.3 서버에서 VSLAM 실행
+### 8.3 SLAM Toolbox 실행 (Pi 또는 서버)
 
 ```bash
-# 서버에서
 cd ~/catkin_ws
 source install/setup.bash
-ros2 launch ov_msckf subscribe.launch.py config:=robot_config.yaml
+ros2 launch slam_toolbox online_async_launch.py
 ```
+
+> [선택] 카메라 기반 VSLAM(OpenVINS)을 보조로 검토하는 경우: `ros2 launch ov_msckf subscribe.launch.py config:=robot_config.yaml`
 
 ---
 

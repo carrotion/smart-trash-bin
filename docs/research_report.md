@@ -4,15 +4,17 @@
 > 프로젝트 단계: Phase 0 / PoC 설계  
 > 대상 독자: 중학생 팀원 및 멘토  
 
+> ⚠️ **업데이트 노트 (2026-07-28)**: 본 보고서는 카메라+IMU 기반 VSLAM을 메인으로 조사한 자료입니다. 이후 **LD06 2D LiDAR(실구매가 ₩42,000)** 가격/성능이 확인되면서 **LiDAR + SLAM Toolbox 방식으로 최종 전환**되었습니다 (상세는 [`overview.md`](overview.md) 8절, [`phase0_hardware_ros2_guide.md`](phase0_hardware_ros2_guide.md) 참고). 아래 3장의 VSLAM/OpenVINS 비교 조사는 **배경 연구 자료로는 유효**하지만, Phase 0 실제 구현 경로는 LiDAR 기반이며 카메라/VSLAM은 서브 옵션으로 격하되었습니다.
+
 ---
 
 ## 1. Executive Summary
 
 본 보고서는 **방마다 배치된 이동형 스마트 쓰레기통이 음성 트리거로 집합 장소로 모였다가, 비우기 및 봉투 교체 후 원위치로 복귀**하는 시스템을 구현하기 위한 기초 조사 결과를 정리한 것이다. 추가로 **웰컴/군무 등 이벤트성 퍼포먼스 동작**을 단계적으로 학습·재생하는 방안도 포함한다.
 
-**핵심 결론**
-- **하드웨어**: Raspberry Pi 5 4GB + Camera Module 2(IMX219) + 9축 IMU + DC 모터(엔코더) + VL53L1X/0X + ESP32-S3 폴백으로 시작.
-- **SLAM/네비게이션**: LiDAR 없이 **카메라+IMU 기반 VSLAM**(OpenVINS `ov_msckf` 또는 ORB-SLAM3) + **VL53L1X 장애물 폴백** + **Nav2**.
+**핵심 결론 (2026-07-28 업데이트: LiDAR 전환 반영)**
+- **하드웨어**: Raspberry Pi 5 4GB + **LD06 2D LiDAR(₩42,000)** + ICM-20948 IMU(Qwiic) + DC 모터(엔코더) + VL53L1X/0X + ESP32-S3 폴백으로 구성. (카메라는 Phase 0 필수 아님, VSLAM 서브 옵션으로만 검토)
+- **SLAM/네비게이션**: **LD06 LiDAR 기반 2D SLAM**(SLAM Toolbox) + **IMU 융합(robot_localization)** + **Nav2**. ~~LiDAR 없이 카메라+IMU 기반 VSLAM~~ → 아래 3장 비교조사 결과 및 실구매가를 반영해 LiDAR로 전환, 주행 안정성 대폭 상승.
 - **중앙 처리**: 기존 ATS 서버(12코어 AMD, RTX 5060 Ti ×2)에서 ROS2 백엔드/SLAM/AI/음성을 Docker 컨테이너로 운영.
 - **음성**: 서버 기반 STT(TTS)를 기본으로 하되, 통신 장애 시 ESP32-S3에서 **웨이크워드("스마트 쓰레기통")**와 **"모여"/"돌아가"** 같은 소수 명령만 오프라인 처리.
 - **멀티 로봇 회피**: 실시간 위치 공유 기반 **병렬 이동**. 군무 동작을 위해 단순 순차 이동이 아닌 동시 제어가 핵심.
@@ -279,8 +281,8 @@ Nav2는 기본적으로 **LaserScan** 또는 **PointCloud2** 입력을 받는다
 | 주차 | 목표 | 산출물 |
 |------|------|--------|
 | **Week 1** | 부품 구매 + Pi 5 Ubuntu 24.04 + ROS2 Jazzy 설치 | 설치된 Pi 2대 |
-| **Week 2** | 카메라 + IMU 연결, OpenVINS/ORB-SLAM3로 1개 방 맵핑 | VSLAM 데모 영상 |
-| **Week 3** | DC 모터 + 엔코더 + TB6612 연결, diff-drive ROS2 노드 | 이동 가능한 1대 |
+| **Week 2** | LD06 LiDAR + IMU 연결, SLAM Toolbox로 1개 방 맵핑 | LiDAR SLAM 데모 영상 |
+| **Week 3** | DC 모터 + 엔코더 + Yahboom 드라이버 연결, diff-drive ROS2 노드 | 이동 가능한 1대 |
 | **Week 4** | VL53L1X 장애물 감지, 간단한 집합/복귀 동작 | 자율 이동 PoC |
 | **Week 5** | 2대 구성, 멀티 로봇 네임스페이스, 서버 연동 | 2대 동시 제어 |
 | **Week 6** | 음성 파이프라인, 모바일 앱 상태 연동 | 음성 호출 데모 |
@@ -292,7 +294,7 @@ Nav2는 기본적으로 **LaserScan** 또는 **PointCloud2** 입력을 받는다
 
 | 위험 | 영향 | 대응 |
 |------|------|------|
-| VSLAM이 집안에서 흔들리거나 드리프트 | 위치 정확도 저하 | IMU 칼리브레이션 철저, ArUco 마커로 홈/집합 장소 보정 |
+| LiDAR SLAM이 유리 벽/좁은 복도 등에서 드리프트 | 위치 정확도 저하 | IMU 캘리브레이션 철저, ArUco 마커로 홈/집합 장소 보정 |
 | Pi 5 전원 부족 | 갑작스러운 재부팅 | 공식 27W PSU 사용, 배터리팩 용량 충분히 확보 |
 | Wi-Fi 지연/단절 | 음성/명령 지연 | ESP32-S3 웨이크워드 + 소수 명령 폴백 |
 | 멀티 로봇 충돌 | 물리적 손상 | 초기에는 순차 이동 모드 제공, 병렬 모드는 시뮬레이션 검증 후 적용 |

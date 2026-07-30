@@ -11,40 +11,41 @@
 
 | # | 부품 | 추천 모델/사양 | 수량/1대 | 역할 | 국내 구매처 예시 | 대략 단가(원) | 비고 |
 |---|------|----------------|---------|------|----------------|------------|------|
-| 1 | **Raspberry Pi 5** | 4GB RAM (8GB는 여유 있음) | 1대 | 메인 컴퓨터, VSLAM, 통신, 모터 제어 | 디바이스마트, 엘레파츠, ICBanQ | ₩186,000 | 4GB 현재 가격 (2026-07 기준) |
+| 1 | **Raspberry Pi 5** | 4GB RAM (8GB는 여유 있음) | 1대 | 메인 컴퓨터, SLAM, 통신, 모터 제어 | 디바이스마트, 엘레파츠, ICBanQ | ₩186,000 | 4GB 현재 가격 (2026-07 기준) |
 | 2 | **Pi 5 공식 파워 서플라이** | 27W USB-C PD (5.1V/5A) | 1개 | 안정적 전원 공급 | 디바이스마트 | ₩16,400~18,000 | KC 인증 정품 권장 |
 | 3 | **microSD 카드** | 64GB A2 UHS-I (삼성/샌디스크/공식 SD) | 1개 | OS 저장 | 디바이스마트, 온라인 마트 | ₩15,000~30,000 | 32GB로는 source build/로그 여유 부족. 공식 A2 카드 권장. 상세 가이드: [pi5_buying_guide.md](pi5_buying_guide.md) |
-| 4 | **Raspberry Pi Camera** | **Camera Module 2 (IMX219)** + 광각 렌즈 or **Arducam 8MP IMX219 175°** | 1개 | VSLAM, 마커 인식 | 디바이스마트, Amazon/AliExpress | ₩25,000~50,000 | **Camera Module 3(IMX708)은 Ubuntu 24.04에서 libcamera 빌드 이슈 다수** |
-| 5 | **카메라 케이블** | Pi 5용 FFC 케이블 (22핀, 30cm 이상) | 1개 | 카메라 연결 | 디바이스마트 | ₩3,000~5,000 | 키트에 포함되는 경우 있음 |
-| 6 | **IMU (9축)** | MPU9250 또는 ICM-20948 모듈 | 1개 | VIO 보조, 자세 추정 | 디바이스마트, AliExpress | ₩5,000~15,000 | I2C 연결, 칼리브레이션 중요 |
-| 7 | **ToF 거리센서 (폴백)** | VL53L1X 모듈 (최대 4m) | 2~3개 | 전방/측방 장애물 감지 | 디바이스마트, AliExpress | ₩3,000~6,000/개 | I2C, XSHUT으로 주소 분리 |
-| 8 | **DC 모터 (엔코더 포함)** | **JGA25-370 / 370 메탈 기어 DC 모터 + 마그네틱 엔코더** | **4개** | **4WD 차동 구동, odom 피드백** | [AliExpress JGA25-370 4WD encoder kit](https://ko.aliexpress.com/item/1005012268741388.html) | ₩8,000~15,000/개 | **기성 4WD 섀시 키트 형태로 구매 권장** |
-| 9 | **4WD 로봇 섀시** | **520/370 4WD 메탈 기어 DC 모터 + 인코더 섀시 키트** | 1세트 | 본체 프레임, 4개 바퀴 모두 구동 | [AliExpress JGA25-370 4WD encoder kit](https://ko.aliexpress.com/item/1005012268741388.html), Devicemart 4WD smart car kit | ₩45,000~80,000 | **바닥에 닿는 것은 모두 바퀴, 캐스터 미끄러짐 없음** |
-| 10 | **모터 드라이버** | **Yahboom 4-Channel Encoder Motor Drive Module (P016551737)** | 1개 | 4개 DC 모터 + 4채널 인코더 통합 제어 | ICBanQ P016551737 | ₩37,620 | STM32 보조 프로세서, UART/I2C 통신, 520 모터까지 지원 |
-| 11 | **TB6612FNG 듀얼 모터 드라이버 (예비/폴백)** | keyestudio TB6612FNG | 1개 | 모터 2개 제어용 폴백 | ICBanQ P008202439 | ₩5,000~10,000 | Yahboom 보드 문제 시 대체용 |
-| 12 | **휴지통 본체** | 기성 10~20L 휴지통 | 1개 | 쓰레기통 본체 | 다이소/마트/온라인 | ₩15,000~30,000 | 내부 ToF 설치 공간 확보 |
-| 13 | **쓰레기 채움 센서** | VL53L0X 모듈 | 2개 | 쓰레기 높이 측정 | 디바이스마트, AliExpress | ₩3,000~5,000/개 | 뚜껑 안쪽에서 아래로 측정 |
-| 14 | **마이크 모듈** | INMP441 MEMS I2S 마이크 | 1개 | 음성 트리거/확인 | AliExpress, Devicemart | ₩3,000~5,000 | Pi GPIO I2S 연결 |
-| 15 | **스피커 (옵션)** | 3W 4Ω 미니 스피커 + 앰프 (PAM8302A 등) | 1세트 | TTS 응답/알림 | AliExpress, Devicemart | ₩5,000~10,000 | 없으면 앱/LED로 대체 |
-| 16 | **배터리팩 + BMS** | **18650 3셀 + 3S BMS + 홀더/박스 (11.1V~12.6V)** | 1세트 | 모바일 전원 | 배터리 전문 쇼핑몰, AliExpress | ₩30,000~50,000 | **3S 필수: 모터 전압 강하로 Pi 5 리셋 방지** |
-| 17 | **5V 5A 동기식 Buck Converter** | MP2482/TPS54560 기반 5V 5A 스텝다운 | 1개 | Pi 5 및 센서용 안정적 5V | AliExpress, Devicemart | ₩5,000~12,000 | LM2596/XL4015 지양 (발열/전류 부족) |
-| 18 | **평활 콘덴서** | 470µF~1000µF / 16V 전해 콘덴서 | 1개 | Pi 5 입력단 전압 급변 완화 | 전자부품 쇼핑몰 | ₩500~2,000 | 모터 기동 시 전압 강하 흡수 |
-| 19 | **DC-DC 컨버터 (모터용)** | XL4015 또는 LM2596 | 0~1개 | 모터 전압 강하 필요 시 조정 | AliExpress, Devicemart | ₩3,000~5,000 | 12V 모터 사용 시 3S 직결로 불필요 |
-| 20 | **퓨즈 세트** | 20A (모터용), 5A (Pi용) 블레이드 퓨즈 + 홀더 | 1세트 | 과전류 보호 | 전자부품 쇼핑몰 | ₩2,000~5,000 | 전원 분리 후 각 선로 보호 |
-| 21 | **브레드보드/점퍼선** | 400타이 브레드보드 + M-F/F-F 선 | 1세트 | 프로토타입 연결 | 전자부품 쇼핑몰 | ₩5,000~10,000 | PCB 설계 전 임시 연결 |
-| 22 | **USB Wi-Fi 동글 (옵션)** | 내장 Wi-Fi 불안 시 5GHz USB 동글 | 0~1개 | 무선 통신 안정화 | 온라인 마트 | ₩10,000~20,000 | Pi 5 내장 Wi-Fi 우선 사용 |
-| 23 | **ESP32-S3 (음성 폴백용)** | DevKitC-1 또는 유사 보드 | 1개 | wake word + 명령 폴백 | AliExpress, Devicemart | ₩10,000~18,000 | 서버 통신 장애 시 사용 |
+| 4 | **LD06 2D LiDAR** | USB 어댑터 포함 | 1개 | **2D SLAM 메인 센서, 맵핑, 장애물 인식** | 디바이스마트, AliExpress | **₩42,000** | **구매 완료 (SLAM Toolbox 사용, 실구매가)** |
+| 5 | **IMU (9축)** | **ICM-20948 (Qwiic)** | 1개 | 자세 추정, Odom 융합 | 디바이스마트, AliExpress | ₩15,000 | **구매 완료 (Qwiic to F-Jumper 케이블 필요)**. I2C 연결, 칼리브레이션 중요 |
+| 6 | **Raspberry Pi Camera (선택)** | Camera Module 2 (IMX219) + 광각 렌즈 or Arducam 8MP IMX219 175° | 0~1개 | VSLAM 서브 옵션, 마커 인식 | 디바이스마트, Amazon/AliExpress | ₩25,000~50,000 | **Phase 0 필수 아님 — LD06으로 대체됨.** VSLAM은 추후 보조 옵션으로만 검토 |
+| 7 | **카메라 케이블 (선택)** | Pi 5용 FFC 케이블 (22핀, 30cm 이상) | 0~1개 | 카메라 연결 | 디바이스마트 | ₩3,000~5,000 | 카메라를 구매하는 경우에만 필요 |
+| 8 | **ToF 거리센서 (장애물 보조)** | VL53L1X 모듈 (최대 4m) | 2~3개 | LiDAR 사각지대(저상 장애물 등) 보조 감지 | 디바이스마트, AliExpress | ₩3,000~6,000/개 | I2C, XSHUT으로 주소 분리 |
+| 9 | **DC 모터 (엔코더 포함)** | **JGA25-370 / 370 메탈 기어 DC 모터 + 마그네틱 엔코더** | **4개** | **4WD 차동 구동, odom 피드백** | [AliExpress JGA25-370 4WD encoder kit](https://ko.aliexpress.com/item/1005012268741388.html) | ₩8,000~15,000/개 | **구매 완료 (기성 4WD 섀시 키트 형태, PH2.0 6핀 양단 케이블)** |
+| 10 | **4WD 로봇 섀시** | **520/370 4WD 메탈 기어 DC 모터 + 인코더 섀시 키트** | 1세트 | 본체 프레임, 4개 바퀴 모두 구동 | [AliExpress JGA25-370 4WD encoder kit](https://ko.aliexpress.com/item/1005012268741388.html), Devicemart 4WD smart car kit | ₩45,000~80,000 | **바닥에 닿는 것은 모두 바퀴, 캐스터 미끄러짐 없음** |
+| 11 | **모터 드라이버** | **Yahboom 4-Channel Encoder Motor Drive Module (P016551737)** | 1개 | 4개 DC 모터 + 4채널 인코더 통합 제어 | ICBanQ P016551737 | ₩37,620 | **구매 완료.** STM32 보조 프로세서, UART 통신, 520 모터까지 지원 |
+| 12 | **TB6612FNG 듀얼 모터 드라이버 (예비/폴백)** | keyestudio TB6612FNG | 1개 | 모터 2개 제어용 폴백 | ICBanQ P008202439 | ₩5,000~10,000 | Yahboom 보드 문제 시 대체용 |
+| 13 | **휴지통 본체** | 기성 10~20L 휴지통 | 1개 | 쓰레기통 본체 | 다이소/마트/온라인 | ₩15,000~30,000 | 내부 ToF 설치 공간 확보 |
+| 14 | **쓰레기 채움 센서** | VL53L0X 모듈 | 2개 | 쓰레기 높이 측정 | 디바이스마트, AliExpress | ₩3,000~5,000/개 | 뚜껑 안쪽에서 아래로 측정 |
+| 15 | **마이크 모듈** | INMP441 MEMS I2S 마이크 | 1개 | 음성 트리거/확인 | AliExpress, Devicemart | ₩3,000~5,000 | Pi GPIO I2S 연결 |
+| 16 | **스피커 (옵션)** | 3W 4Ω 미니 스피커 + 앰프 (PAM8302A 등) | 1세트 | TTS 응답/알림 | AliExpress, Devicemart | ₩5,000~10,000 | 없으면 앱/LED로 대체 |
+| 17 | **배터리팩 + BMS** | **18650 3셀 + 3S BMS + 홀더/박스 (11.1V~12.6V)** | 1세트 | 모바일 전원 | 배터리 전문 쇼핑몰, AliExpress | ₩30,000~50,000 | **3S 필수: 모터 전압 강하로 Pi 5 리셋 방지** |
+| 18 | **5V 5A 동기식 Buck Converter** | MP2482/TPS54560 기반 5V 5A 스텝다운 | 1개 | Pi 5 및 센서용 안정적 5V | AliExpress, Devicemart | ₩5,000~12,000 | LM2596/XL4015 지양 (발열/전류 부족) |
+| 19 | **평활 콘덴서** | 470µF~1000µF / 16V 전해 콘덴서 | 1개 | Pi 5 입력단 전압 급변 완화 | 전자부품 쇼핑몰 | ₩500~2,000 | 모터 기동 시 전압 강하 흡수 |
+| 20 | **DC-DC 컨버터 (모터용)** | XL4015 또는 LM2596 | 0~1개 | 모터 전압 강하 필요 시 조정 | AliExpress, Devicemart | ₩3,000~5,000 | 12V 모터 사용 시 3S 직결로 불필요 |
+| 21 | **퓨즈 세트** | 20A (모터용), 5A (Pi용) 블레이드 퓨즈 + 홀더 | 1세트 | 과전류 보호 | 전자부품 쇼핑몰 | ₩2,000~5,000 | 전원 분리 후 각 선로 보호 |
+| 22 | **브레드보드/점퍼선** | 400타이 브레드보드 + M-F/F-F 선 | 1세트 | 프로토타입 연결 | 전자부품 쇼핑몰 | ₩5,000~10,000 | PCB 설계 전 임시 연결 |
+| 23 | **USB Wi-Fi 동글 (옵션)** | 내장 Wi-Fi 불안 시 5GHz USB 동글 | 0~1개 | 무선 통신 안정화 | 온라인 마트 | ₩10,000~20,000 | Pi 5 내장 Wi-Fi 우선 사용 |
+| 24 | **ESP32-S3 (음성 폴백용)** | DevKitC-1 또는 유사 보드 | 1개 | wake word + 명령 폴백 | AliExpress, Devicemart | ₩10,000~18,000 | 서버 통신 장애 시 사용 |
 
 ### 1.2 2대 기준 총 예산
 
 | 항목 | 1대 예상 비용 | 2대 예상 비용 |
 |------|--------------|--------------|
-|| 필수 핵심 부품 (Pi 5 + 카메라 + IMU + 4WD 메탈 기어 모터 + Yahboom 드라이버 + 4WD 섀시 + 배터리) | ₩340,000~510,000 | ₩680,000~1,020,000 |
+|| 필수 핵심 부품 (Pi 5 + **LD06 LiDAR** + IMU + 4WD 메탈 기어 모터 + Yahboom 드라이버 + 4WD 섀시 + 배터리) | ₩378,000~471,000 | ₩756,000~942,000 |
 || 센서/주변기기 (ToF, 마이크, 스피커, ESP32, 기타) | ₩40,000~80,000 | ₩80,000~160,000 |
-|| **총계** | **₩380,000~590,000** | **₩760,000~1,180,000** |
+|| **총계** | **₩418,000~551,000** | **₩836,000~1,102,000** |
 
-> **목표 예산**: **₩76~118만원대**. Pi 5 가격 상승 및 4WD 메탈 기어 모터 채택으로 비용 증가. 키트/할인/중고로 조정 가능.  
-> **1대 먼저 구매**하여 VSLAM과 이동 검증 후 2대째 복제 권장.
+> **목표 예산**: **약 ₩84~110만원대**. LD06(₩42,000 고정가)이 카메라 대비 저렴해 기존 추정(₩76~118만원)보다 다소 절감. 카메라/VSLAM 부품(#6~7)을 뺀 실질 지출이라 상한선도 낮아짐. 키트/할인/중고로 추가 조정 가능.  
+> **1대 먼저 구매**하여 LiDAR SLAM과 이동 검증 후 2대째 복제 권장.
 
 ---
 
@@ -98,8 +99,9 @@ usb_max_current_enable=1
 | 부품 | 추천 구매처 예시 |
 |------|----------------|
 | Raspberry Pi 5 | [RPiLocator](https://rpilocator.com), [디바이스마트](https://www.devicemart.co.kr), [엘레파츠](https://www.eleparts.co.kr), [ICBanQ](https://www.icbanq.com) |
-| Pi Camera Module 2 (IMX219) / Arducam 광각 | 디바이스마트, AliExpress, Amazon |
-| MPU9250 / ICM-20948 | 디바이스마트, AliExpress, Amazon |
+| **LD06 2D LiDAR (₩42,000, 구매 완료)** | 디바이스마트, AliExpress |
+| Pi Camera Module 2 (IMX219) / Arducam 광각 (선택, VSLAM 서브 옵션) | 디바이스마트, AliExpress, Amazon |
+| ICM-20948 (Qwiic, 구매 완료) | 디바이스마트, AliExpress, Amazon |
 | VL53L1X / VL53L0X | 디바이스마트, AliExpress |
 || DC 모터 + 엔코더 + 섀시 | [AliExpress JGA25-370 4WD encoder kit](https://ko.aliexpress.com/item/1005012268741388.html), Devicemart 4WD smart car kit |
 || 모터 드라이버 | **ICBanQ P016551737 (Yahboom 4-Channel Encoder Motor Driver)** |
@@ -110,7 +112,52 @@ usb_max_current_enable=1
 
 ---
 
-## 3.2 Phase 0: IMX219 + OpenVINS 실전 설정
+## 3.2-LiDAR Phase 0: LD06 + SLAM Toolbox 실전 설정 (메인 경로)
+
+### 3.2-LiDAR.1 LD06 드라이버 설치
+
+LD06은 USB 어댑터를 통해 시리얼로 연결되며, LDROBOT 공식 ROS2 드라이버(`ldlidar_stl_ros2`)를 사용한다.
+
+```bash
+cd ~/catkin_ws/src
+git clone https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2.git
+cd ~/catkin_ws
+colcon build --packages-select ldlidar_stl_ros2
+source install/setup.bash
+
+# 시리얼 포트 확인 (보통 /dev/ttyUSB0)
+ls -la /dev/ttyUSB*
+
+# 포트 권한 (dialout 그룹 추가, 최초 1회)
+sudo usermod -aG dialout $USER
+# 재로그인 필요
+```
+
+`ldlidar_stl_ros2`의 launch 파일에서 `product_name`을 `LDLiDAR_LD06`으로, `port_name`을 확인된 포트로 설정 후 실행:
+
+```bash
+ros2 launch ldlidar_stl_ros2 ld06.launch.py
+ros2 topic echo /scan
+```
+
+### 3.2-LiDAR.2 SLAM Toolbox 설치 및 실행
+
+```bash
+sudo apt install -y ros-jazzy-slam-toolbox ros-jazzy-robot-localization
+
+# 온라인 비동기 SLAM (실시간 맵핑)
+ros2 launch slam_toolbox online_async_launch.py
+```
+
+`/scan`(LD06) + `/imu/data`(ICM-20948, `robot_localization` EKF로 odom과 융합) 토픽을 SLAM Toolbox가 구독해 `/map`을 생성한다. Nav2와 연동 시 `ros-jazzy-navigation2 ros-jazzy-nav2-bringup` 추가 설치.
+
+> Rpi 5 자체에서 SLAM Toolbox를 돌려도 되고, 부하가 크면 LD06/IMU 데이터만 Pi에서 퍼블리시하고 SLAM Toolbox는 ATS 서버에서 원격 실행하는 방식으로 분리 가능 (overview.md 아키텍처 참고).
+
+---
+
+## 3.2 [선택 / VSLAM 서브 옵션] IMX219 + OpenVINS 실전 설정
+
+> **Phase 0 메인 경로는 위 LD06 + SLAM Toolbox입니다.** 아래 카메라 기반 VSLAM 설정은 추후 보조 옵션 검토 시에만 참고하세요 (구매 필수 아님).
 
 ### 3.2.1 Rolling Shutter 보정
 
@@ -331,7 +378,9 @@ qos = QoSProfile(
 
 ---
 
-### 3.5 VSLAM 패키지 설치
+### 3.5 [선택 / VSLAM 서브 옵션] VSLAM 패키지 설치
+
+> Phase 0 메인 경로(LD06 + SLAM Toolbox)에는 필요 없음. 카메라 기반 VSLAM을 보조로 검토할 때만 참고.
 
 #### OpenVINS (ov_msckf) — 권장 시작점
 
@@ -370,19 +419,17 @@ colcon build --packages-select orbslam3 --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 > **참고**: ORB-SLAM3는 빌드가 무거움. Pi 5에서도 가능하나 첫 빌드에 30분~1시간 이상 소요.
 
-### 3.8 카메라-IMU 칼리브레이션
+### 3.8 IMU 캘리브레이션
 
-VSLAM 정확도를 위해 **Kalibr** 또는 **allan_variance_ros**로 칼리브레이션 필수.
+`allan_variance_ros`로 IMU 노이즈(white noise, random walk) 측정. **LD06+SLAM Toolbox 경로에서도 `robot_localization` EKF의 IMU 노이즈 파라미터 튜닝에 필요**하므로 VSLAM 여부와 무관하게 진행 권장.
 
 ```bash
-# Kalibr (Ubuntu 24.04에서 Docker 권장)
-# allan_variance_ros로 IMU 노이즈 측정
 cd ~/catkin_ws/src
 git clone https://github.com/ori-drs/allan_variance_ros.git
 cd .. && colcon build --packages-select allan_variance_ros
 ```
 
-OpenVINS 튜토리얼: https://docs.openvins.com/gs-calibration.html
+> [선택 / VSLAM 서브 옵션] 카메라-IMU 외부 파라미터(extrinsic)까지 필요하면 **Kalibr**(Ubuntu 24.04에서 Docker 권장) 추가 사용. OpenVINS 튜토리얼: https://docs.openvins.com/gs-calibration.html
 
 ---
 
@@ -472,8 +519,8 @@ PH2.0 6핀 커넥터가 모터 및 Yahboom 드라이버와 물리적으로 조�
 ## 4. 개발 워크플로우 제안
 
 1. **Week 1**: 부품 구매 + Pi 5에 Ubuntu 24.04 + ROS2 Jazzy 설치
-2. **Week 2**: 카메라 + IMU 연결, OpenVINS/ORB-SLAM3로 1개 방 맵핑
-3. **Week 3**: DC 모터 + 엔코더 + TB6612 연결, diff-drive ROS2 노드 작성
+2. **Week 2**: LD06 LiDAR + IMU 연결, SLAM Toolbox로 1개 방 맵핑
+3. **Week 3**: DC 모터 + 엔코더 + Yahboom 드라이버 연결, diff-drive ROS2 노드 작성
 4. **Week 4**: VL53L1X 장애물 감지, 간단한 집합/복귀 동작
 5. **Week 5**: 2대 구성, 멀티 로봇 네임스페이스, 서버 연동
 6. **Week 6**: 음성 파이프라인, 모바일 앱 상태 연동
@@ -487,9 +534,9 @@ PH2.0 6핀 커넥터가 모터 및 Yahboom 드라이버와 물리적으로 조�
 - [ ] Raspberry Pi 5 2대 + 주변기기 발주
 - [ ] Ubuntu 24.04 microSD 또는 USB SSD 준비
 - [ ] ATS 서버에 ROS2 Jazzy 설치 및 Docker 환경 구성
-- [ ] 카메라 + IMU + 모터 드라이버 실물 연결 테스트
-- [ ] OpenVINS 또는 ORB-SLAM3 빌드 및 1개 방 맵핑 시도
-- [ ] 카메라-IMU 칼리브레이션 (Kalibr 또는 allan_variance_ros)
+- [ ] LD06 LiDAR + IMU + 모터 드라이버 실물 연결 테스트
+- [ ] SLAM Toolbox 빌드 및 1개 방 맵핑 시도
+- [ ] IMU 캘리브레이션 (allan_variance_ros)
 - [ ] diff-drive ROS2 노드 템플릿 작성
 - [ ] 2대 조립 후 기본 집합/복귀 테스트
 
