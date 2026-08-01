@@ -19,9 +19,10 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 
 ## 워크스페이스
 
-- `~/catkin_ws/src`에 자체 패키지 4개(ament_python): `smart_trash_bringup`, `smart_trash_sensors`, `smart_trash_motion`, `smart_trash_voice`. `colcon build` 정상 동작 확인됨(2026-08-01).
-- ⚠️ **`~/catkin_ws`는 git 저장소(`smart-trash-bin`) 밖에 있음.** `robot/` 폴더는 아직 `.gitkeep`만 있는 빈 placeholder — 실제 코드를 어떻게 버전관리할지(심볼릭 링크? `robot/`을 워크스페이스로 바꿀지? 등) 아직 결정 안 됨. 다음 논의 필요.
-- **LD06 드라이버**: `~/catkin_ws/src/ldlidar_stl_ros2` (공식 LDROBOT repo, ament_cmake/C++). **로컬 패치 필요**: `ldlidar_driver/src/logger/log_module.cpp`에 `#include <pthread.h>` 누락으로 최신 GCC(15.2.0, Ubuntu 26.04)에서 빌드 실패 → 파일 상단에 `#include <pthread.h>` 추가해서 해결(2026-08-01, 로컬 패치, 업스트림에는 없음). **이 폴더를 지우고 다시 클론하면 이 패치도 다시 해줘야 함.**
+- ROS2 워크스페이스의 실제 위치는 **`~/smart-trash-bin/robot/`** (git 저장소 안, 버전관리됨). `~/catkin_ws`는 여기를 가리키는 **심볼릭 링크**일 뿐 (`ln -s ~/smart-trash-bin/robot ~/catkin_ws`) — 문서에 있는 `~/catkin_ws` 명령어들은 그대로 다 써도 됨. `build/`, `install/`, `log/`는 `.gitignore`에 걸려 있어 커밋 안 됨.
+- 자체 패키지 4개(ament_python, `robot/src/` 밑): `smart_trash_bringup`, `smart_trash_sensors`, `smart_trash_motion`, `smart_trash_voice`. `colcon build` 정상 동작 확인됨(2026-08-01).
+- **LD06 드라이버**는 `robot/src/ldlidar_stl_ros2`에 **git submodule**로 연결됨, 가리키는 저장소는 `carrotion/ldlidar_stl_ros2` (공식 `ldrobotSensorTeam/ldlidar_stl_ros2`를 fork). **fork에 패치 커밋 완료**: `ldlidar_driver/src/logger/log_module.cpp`에 `#include <pthread.h>` 추가 (누락 시 최신 GCC 15.2.0/Ubuntu 26.04에서 빌드 실패). 로컬 패치가 아니라 fork에 정식 커밋+푸시했으니 재클론해도 유지됨.
+- ⚠️ **이 저장소를 새로 클론할 때는 `git clone --recurse-submodules ...` 또는 클론 후 `git submodule update --init`을 꼭 해야 `robot/src/ldlidar_stl_ros2` 내용이 채워짐.**
 
 ## 알려진 미해결 이슈
 

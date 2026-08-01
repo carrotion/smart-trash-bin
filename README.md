@@ -4,11 +4,15 @@
 
 ## 구성
 
-- `robot/`: Raspberry Pi 5 로컬 코드 (ROS2 패키지)
+- `robot/`: Raspberry Pi 5 ROS2 워크스페이스 (`~/catkin_ws`는 이 폴더를 가리키는 심볼릭 링크). LD06 드라이버는 [`carrotion/ldlidar_stl_ros2`](https://github.com/carrotion/ldlidar_stl_ros2) fork를 git submodule로 포함
 - `server/`: 중앙 서버 코드 (FastAPI + SLAM/Nav2)
 - `app/`: 모바일 앱
 - `docs/`: 프로젝트 문서 (개요, 조사 보고서, 설치 가이드, 부품 리스트)
 - `hardware/`: 회로도, 배선도, 부품 리스트
+
+> ⚠️ 이 저장소를 새로 클론할 때는 서브모듈까지 같이 받아야 함:
+> `git clone --recurse-submodules https://github.com/carrotion/smart-trash-bin.git`
+> (이미 클론했다면 `git submodule update --init`)
 
 ## 시작하기
 
