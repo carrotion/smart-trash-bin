@@ -34,12 +34,19 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 
 - ROS2 워크스페이스의 실제 위치는 **`~/smart-trash-bin/robot/`** (git 저장소 안, 버전관리됨). `~/catkin_ws`는 여기를 가리키는 **심볼릭 링크**일 뿐 (`ln -s ~/smart-trash-bin/robot ~/catkin_ws`) — 문서에 있는 `~/catkin_ws` 명령어들은 그대로 다 써도 됨. `build/`, `install/`, `log/`는 `.gitignore`에 걸려 있어 커밋 안 됨.
 - 자체 패키지 4개(ament_python, `robot/src/` 밑): `smart_trash_bringup`, `smart_trash_sensors`, `smart_trash_motion`, `smart_trash_voice`. `colcon build` 정상 동작 확인됨(2026-08-01).
+- **`smart_trash_bringup/launch/mapping.launch.py`** (2026-08-01 작성): LD06 드라이버(`ldlidar_stl_ros2`) + SLAM Toolbox(`online_async_launch.py`, 파라미터는 `config/mapper_params_online_async.yaml`)를 함께 띄워 매핑하는 launch. **`use_sim_time`을 명시적으로 `false`로 넘김** — slam_toolbox의 기본 launch는 `use_sim_time` 기본값이 `true`라 실물 로봇에서 그대로 include하면 `/clock`을 기다리며 멈춤. `odom→base_link`는 아직 Week 3 diff-drive 오도메트리 노드가 없어서 `publish_placeholder_odom`(기본 true) 인자로 identity tf를 임시 발행 — 실제 오도메트리 노드가 생기면 이 launch 인자를 `false`로 끌 것. `ros2 launch smart_trash_bringup mapping.launch.py --show-args`로 파싱 검증 완료(2026-08-01), LiDAR 실물 미연결 상태라 실행 테스트는 아직 못 함.
+- **`smart_trash_sensors/imu_publisher_node`** (2026-08-01 작성): ICM-20948을 SparkFun의 `sparkfun-qwiic-icm20948` pip 패키지(`pip3 install --break-system-packages sparkfun-qwiic-icm20948`, 이미 설치됨)로 읽어 `imu/data`(`sensor_msgs/Imu`)로 퍼블리시. 기본 풀스케일(가속도 ±2g/16384 LSB·자이로 ±250dps/131 LSB)로 raw→물리단위 변환, orientation은 채우지 않고 `orientation_covariance[0] = -1`(REP-145)로 표시 — 자세 융합은 Week 4 `robot_localization` EKF가 담당. **하드웨어 없이 실행하면 `RuntimeError`로 깔끔하게 실패하는 것까지만 확인함**(`ICM-20948을 I2C 버스에서 찾을 수 없습니다`), 실제 센서 값 검증은 IMU 연결 후(Week 1~2) 필요.
+- **I2C 권한**: `/dev/i2c-1`이 `dialout` 그룹 소유인데 `carrotian`이 그 그룹에 없어서 최초 실행 시 `Permission denied` 발생했음. `sudo usermod -aG dialout carrotian`으로 해결(2026-08-01) — **재로그인/재부팅해야 적용됨**, 다음 세션에서 IMU 노드 실행 전에 `groups` 명령으로 `dialout` 포함 여부 확인할 것.
 - **LD06 드라이버**는 `robot/src/ldlidar_stl_ros2`에 **git submodule**로 연결됨, 가리키는 저장소는 `carrotion/ldlidar_stl_ros2` (공식 `ldrobotSensorTeam/ldlidar_stl_ros2`를 fork). **fork에 패치 커밋 완료**: `ldlidar_driver/src/logger/log_module.cpp`에 `#include <pthread.h>` 추가 (누락 시 최신 GCC 15.2.0/Ubuntu 26.04에서 빌드 실패). 로컬 패치가 아니라 fork에 정식 커밋+푸시했으니 재클론해도 유지됨.
 - ⚠️ **이 저장소를 새로 클론할 때는 `git clone --recurse-submodules ...` 또는 클론 후 `git submodule update --init`을 꼭 해야 `robot/src/ldlidar_stl_ros2` 내용이 채워짐.**
 
 ## 알려진 미해결 이슈
 
 - 현재 없음. (26.04 시절의 python3.12 런타임 의존성/Nav2 크로스버전 충돌 이슈는 24.04 재설치로 해소됨 — 위 "Ubuntu 24.04 재설치 완료" 섹션 참고)
+
+## 목표/일정
+
+- **방학 중간 목표**: 2026-08-01 방학 시작 기준, 방학 안에 **맵을 그리는 것(LD06 + SLAM Toolbox로 실내 맵핑 성공)까지**를 중간 목표로 삼기로 함. `docs/schedule.md`의 Week 3 "LD06 + SLAM Toolbox 맵핑 검증"이 이 목표에 해당 — 부품(LD06) 도착이 전제조건이라 일정이 빠듯하므로, 부품 없이 미리 할 수 있는 SW 작업(워크스페이스/스캐폴딩/드라이버 빌드/`mapping.launch.py` 등)은 최대한 앞당겨 진행 중.
 
 ## 확정된 하드웨어/설계 결정
 

@@ -23,13 +23,14 @@
 
 ## Week 1 (8/1 ~ 8/9) — 소프트웨어 뼈대 + IMU
 
-- [ ] `~/catkin_ws/src`에 ROS2 워크스페이스 생성 — 담당자: ________
-- [ ] 자체 패키지 4개 스캐폴딩: `smart_trash_bringup`, `smart_trash_sensors`, `smart_trash_motion`, `smart_trash_voice` — 담당자: ________
-- [ ] OS(Ubuntu 26.04) ↔ ROS2 Jazzy(공식 24.04 타겟) 호환성 점검, 문제 시 우회 방법 기록 — 담당자: ________
+- [x] `~/catkin_ws/src`에 ROS2 워크스페이스 생성 — 담당자: ________
+- [x] 자체 패키지 4개 스캐폴딩: `smart_trash_bringup`, `smart_trash_sensors`, `smart_trash_motion`, `smart_trash_voice` — 담당자: ________
+- [x] OS ↔ ROS2 Jazzy 호환성 점검 — 우회 대신 **Ubuntu 24.04(Noble)로 재설치해 근본 해결** (2026-08-01, `CLAUDE.md` 참고) — 담당자: ________
 - [ ] Qwiic 케이블 도착 시 IMU(ICM-20948) Pi 5에 연결 — 담당자: ________
-- [ ] IMU 데이터 읽기 테스트 (I2C 스캔 → ROS2 `/imu/data` 토픽 퍼블리시 노드 작성) — 담당자: ________
-- [ ] LD06 드라이버(`ldlidar_stl_ros2`) 소스 클론 + 빌드 (하드웨어 없이 미리 준비) — 담당자: ________
+- [ ] IMU 데이터 읽기 테스트 (I2C 스캔 → ROS2 `/imu/data` 토픽 퍼블리시 노드 작성) — **노드 코드(`imu_publisher_node`)는 작성/빌드 완료, I2C 권한(`dialout` 그룹)도 미리 설정함. 실제 하드웨어 연결 후 동작 테스트만 남음** — 담당자: ________
+- [x] LD06 드라이버(`ldlidar_stl_ros2`) 소스 클론 + 빌드 (하드웨어 없이 미리 준비) — 담당자: ________
 - [ ] 메인 로커 스위치(10A+) 구매 — 담당자: ________
+- [x] *(선행 준비, 원래 Week 3 항목)* `smart_trash_bringup`에 LD06+SLAM Toolbox 매핑용 `mapping.launch.py` + 파라미터 yaml 작성/빌드 검증 완료. LiDAR 실물 연결 후 바로 실행 테스트 가능한 상태 (odom은 Week 3 전까지 identity placeholder tf로 대체) — 담당자: ________
 
 ## Week 2 (8/10 ~ 8/16) — 부품 도착, 전원부 조립
 
@@ -89,5 +90,5 @@
 |------|------|
 | 마지막 업데이트 | 2026-08-01 |
 | 현재 주차 | Week 1 |
-| 막힌 것 (Blocker) | - |
-| 다음 회의 안건 | - |
+| 막힌 것 (Blocker) | LD06/모터 키트 등 해외배송 부품 도착 대기 (Week 2 전제조건) |
+| 다음 회의 안건 | Week 1 SW 선행 작업(워크스페이스/스캐폴딩/OS 재설치/LD06 빌드/매핑 launch) 완료 공유, 부품 도착 일정 확인 |
