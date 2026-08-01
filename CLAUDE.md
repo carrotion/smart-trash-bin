@@ -17,9 +17,15 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 - 개발 중 부팅 디스크는 **외장 USB SSD 128GB**(`/dev/sda2`)를 사용 (microSD 쓰기속도/수명 문제 회피). 최종 배포용 128GB A2 microSD는 별도 확보돼 있음 — 개발 완료 후 전환 예정.
 - GitHub: `carrotion/smart-trash-bin` (private). `gh` CLI 인증 완료(HTTPS 프로토콜, `git_protocol=https`로 설정됨). git 커밋 이메일은 `59335136+carrotion@users.noreply.github.com`.
 
+## 워크스페이스
+
+- `~/catkin_ws/src`에 자체 패키지 4개(ament_python): `smart_trash_bringup`, `smart_trash_sensors`, `smart_trash_motion`, `smart_trash_voice`. `colcon build` 정상 동작 확인됨(2026-08-01).
+- ⚠️ **`~/catkin_ws`는 git 저장소(`smart-trash-bin`) 밖에 있음.** `robot/` 폴더는 아직 `.gitkeep`만 있는 빈 placeholder — 실제 코드를 어떻게 버전관리할지(심볼릭 링크? `robot/`을 워크스페이스로 바꿀지? 등) 아직 결정 안 됨. 다음 논의 필요.
+- **LD06 드라이버**: `~/catkin_ws/src/ldlidar_stl_ros2` (공식 LDROBOT repo, ament_cmake/C++). **로컬 패치 필요**: `ldlidar_driver/src/logger/log_module.cpp`에 `#include <pthread.h>` 누락으로 최신 GCC(15.2.0, Ubuntu 26.04)에서 빌드 실패 → 파일 상단에 `#include <pthread.h>` 추가해서 해결(2026-08-01, 로컬 패치, 업스트림에는 없음). **이 폴더를 지우고 다시 클론하면 이 패치도 다시 해줘야 함.**
+
 ## 알려진 미해결 이슈
 
-- python3.12용 numpy가 깨져 있음 (`ModuleNotFoundError: No module named 'numpy._core._multiarray_umath'`) — `ros2 topic list`, `ros2 doctor` 등 numpy 의존 서브커맨드 실패. `ros2 pkg list` 등 numpy 미사용 커맨드는 정상. 해결 중.
+- (해결됨) python3.12용 numpy 등 런타임 의존성 — 위 "환경" 섹션 참고.
 
 ## 확정된 하드웨어/설계 결정
 
