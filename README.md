@@ -13,6 +13,7 @@
 ## 시작하기
 
 - [`docs/overview.md`](docs/overview.md): 프로젝트 개요 및 아키텍처
+- [`docs/schedule.md`](docs/schedule.md): **주간 일정 및 팀 체크리스트 (최신)**
 - [`docs/research_report.md`](docs/research_report.md): 기초 조사 및 설계 보고서
 - [`docs/setup_guide_full.md`](docs/setup_guide_full.md): Pi 5 + 서버 개발 환경 구축 가이드
 - [`docs/phase0_hardware_ros2_guide.md`](docs/phase0_hardware_ros2_guide.md): Phase 0 부품 리스트 및 ROS2 환경 구축 가이드

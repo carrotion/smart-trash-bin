@@ -528,6 +528,8 @@ PH2.0 6핀 커넥터가 모터 및 Yahboom 드라이버와 물리적으로 조�
 
 ## 4. 개발 워크플로우 제안
 
+> ⚠️ **최신 통합 일정 및 팀 체크리스트는 [`schedule.md`](schedule.md) 참고.** 아래는 초기 참고용 개요입니다.
+
 1. **Week 1**: 부품 구매 + Pi 5에 Ubuntu 24.04 + ROS2 Jazzy 설치
 2. **Week 2**: LD06 LiDAR + IMU 연결, SLAM Toolbox로 1개 방 맵핑
 3. **Week 3**: DC 모터 + 엔코더 + Yahboom 드라이버 연결, diff-drive ROS2 노드 작성
