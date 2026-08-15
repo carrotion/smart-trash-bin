@@ -114,7 +114,11 @@ class DiffDriveNode(Node):
         # (대시보드는 시리얼을 직접 못 열므로 이 노드가 유일한 창구)
         self._encoder_pub = self.create_publisher(Int32MultiArray, 'wheel_encoders', 10)
         self._tf_broadcaster = TransformBroadcaster(self) if self._publish_tf else None
-        self.create_subscription(Twist, 'cmd_vel', self._on_cmd_vel, 10)
+        # 큐 깊이 1 — 조종 명령은 "최신 것만" 유효하다.
+        # 깊이 10이면 50ms 간격 발행 시 최대 10개(=500ms 분량)가 줄을 서서,
+        # 버튼을 떼고 0을 보내도 앞의 주행 명령들이 먼저 처리되며 계속 달렸음
+        # (사용자가 보고한 "떼도 500ms 더 감"의 정체).
+        self.create_subscription(Twist, 'cmd_vel', self._on_cmd_vel, 1)
         if self._use_imu:
             self.create_subscription(Imu, 'imu/data', self._on_imu, 20)
 
