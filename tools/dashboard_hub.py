@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """스마트 쓰레기통 — 전체 모듈 허브 대시보드.
 
-전원(power_monitor.py, :8765)과 모터(motor_dashboard.py, :8766)의 요약 상태를
-카드로 보여주고, 클릭하면 각 상세 대시보드로 이동한다. IMU/LiDAR는 아직 실물
-연결/검증 전이라 "미연결" 표시만 한다(가짜 데이터 금지).
+전원(power_monitor.py, :8765), 모터(motor_dashboard.py, :8766), IMU+LiDAR
+(sensor_dashboard.py, :8767)의 요약 상태를 카드로 보여주고, 클릭하면 각 상세
+대시보드로 이동한다.
 
 브라우저에서 다른 포트로 직접 fetch하면 CORS에 막히므로, 이 허브 서버가
 서버 쪽에서 각 서비스의 /api/status를 대신 조회해서 넘겨준다.
 
 사용법:
     python3 tools/dashboard_hub.py [--port 8764]
-    (power_monitor.py, motor_dashboard.py가 먼저 떠 있어야 요약이 채워짐)
+    (power_monitor.py, motor_dashboard.py, sensor_dashboard.py가 먼저 떠 있어야 요약이 채워짐)
 """
 import argparse
 import json
@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 MODULES = {
     "power": {"url": "http://localhost:8765/api/status", "dash_port": 8765},
     "motor": {"url": "http://localhost:8766/api/status", "dash_port": 8766},
+    "sensors": {"url": "http://localhost:8767/api/status", "dash_port": 8767},
 }
 
 
@@ -88,8 +89,8 @@ PAGE = """<!doctype html>
 const MODULES = [
   {key:'power', icon:'🔋', label:'전원', port:8765},
   {key:'motor', icon:'⚙️', label:'모터', port:8766},
-  {key:'imu',   icon:'🧭', label:'IMU', port:null},
-  {key:'lidar', icon:'📡', label:'LiDAR', port:null},
+  {key:'imu',   icon:'🧭', label:'IMU', port:8767},
+  {key:'lidar', icon:'📡', label:'LiDAR', port:8767},
 ];
 
 function card(mod, statusHtml, dotColor, disabled) {
@@ -109,28 +110,48 @@ async function tick() {
   catch (e) { return; }
 
   const grid = document.getElementById('grid');
+  const sensorsAvail = summary.sensors && summary.sensors.available;
+
   grid.innerHTML = MODULES.map(mod => {
-    const d = summary[mod.key];
-    if (!d || !d.available) {
-      return card(mod, `<div class="sub">${mod.key === 'imu' || mod.key === 'lidar' ? '아직 연결/검증 안 됨' : '대시보드 응답 없음'}</div>`,
-        'var(--idle)', true);
-    }
-    if (mod.key === 'power') {
-      const rails = (d.latest && d.latest.rails) || {};
-      const v = rails.EXT5V_V ? rails.EXT5V_V.value.toFixed(2) + 'V' : '-';
-      const flags = (d.latest && d.latest.throttled && d.latest.throttled.flags) || {};
-      const bad = flags.under_voltage_now || flags.throttled_now;
-      return card(mod, `<div class="metric">${v}</div><div class="sub">Pi 5V 입력</div>`,
-        bad ? 'var(--critical)' : 'var(--good)', false);
-    }
-    if (mod.key === 'motor') {
+    if (mod.key === 'power' || mod.key === 'motor') {
+      const d = summary[mod.key];
+      if (!d || !d.available) {
+        return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
+      }
+      if (mod.key === 'power') {
+        const rails = (d.latest && d.latest.rails) || {};
+        const v = rails.EXT5V_V ? rails.EXT5V_V.value.toFixed(2) + 'V' : '-';
+        const flags = (d.latest && d.latest.throttled && d.latest.throttled.flags) || {};
+        const bad = flags.under_voltage_now || flags.throttled_now;
+        return card(mod, `<div class="metric">${v}</div><div class="sub">Pi 5V 입력</div>`,
+          bad ? 'var(--critical)' : 'var(--good)', false);
+      }
       const connected = d.connected;
       const pwm = d.commanded_pwm || [0,0,0,0];
       const moving = pwm.some(v => v !== 0);
       return card(mod, `<div class="metric">${moving ? '주행 중' : '정지'}</div><div class="sub">${connected ? '드라이버 연결됨' : '연결 안 됨'}</div>`,
         !connected ? 'var(--critical)' : (moving ? 'var(--accent)' : 'var(--good)'), false);
     }
-    return card(mod, '', 'var(--idle)', true);
+
+    // imu / lidar는 sensor_dashboard.py(:8767) 하나가 둘 다 서빙
+    if (!sensorsAvail) {
+      return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
+    }
+    if (mod.key === 'imu') {
+      const imu = summary.sensors.imu || {};
+      if (!imu.connected) {
+        return card(mod, `<div class="sub">토픽 응답 없음</div>`, 'var(--critical)', false);
+      }
+      const a = imu.linear_acceleration || {};
+      return card(mod, `<div class="metric">${(a.z ?? 0).toFixed(1)} m/s²</div><div class="sub">가속도 Z (중력 기준)</div>`,
+        'var(--good)', false);
+    }
+    const lidar = summary.sensors.lidar || {};
+    if (!lidar.connected) {
+      return card(mod, `<div class="sub">토픽 응답 없음</div>`, 'var(--critical)', false);
+    }
+    return card(mod, `<div class="metric">${lidar.valid_point_count ?? '-'}</div><div class="sub">유효 포인트 / ${lidar.point_count ?? '-'}</div>`,
+      'var(--good)', false);
   }).join('');
 
   document.getElementById('updated').textContent = '마지막 갱신: ' + new Date().toLocaleTimeString();
