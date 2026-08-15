@@ -53,8 +53,13 @@ class DiffDriveNode(Node):
         # 모터 스펙 상한(무부하 280RPM × 바퀴원주 0.2105m ≈ 0.98m/s) 기준.
         # PWM 343에서 0.436m/s 실측됨 — 개루프라 명령 속도와 실제가 정확히는 안 맞고,
         # 데드존(min_pwm) 때문에 약 0.3m/s 이하로는 제어가 어려움.
-        self.declare_parameter('max_wheel_speed', 1.0)
-        self.declare_parameter('min_pwm', 250)               # 데드존 — 이보다 작으면 안 움직임
+        # PWM 343 → 0.436m/s 실측을 선형 외삽하면 PWM 1200에서 약 1.5m/s.
+        # 1.0으로 두면 명령보다 실제가 빨라져 슬라이더 눈금이 안 맞음.
+        self.declare_parameter('max_wheel_speed', 1.5)
+        # 데드존 보정 하한. 250은 너무 높아서 명령 0.1~0.2m/s가 전부 이 값으로
+        # 뭉개졌고, 슬라이더 20%와 40%의 체감 속도가 같아지는 버그가 있었음.
+        # PWM 343에서 0.436m/s가 실측됐으니 저속 구간은 이보다 훨씬 아래에 있음.
+        self.declare_parameter('min_pwm', 120)
         self.declare_parameter('cmd_vel_timeout', 0.5)       # 이 시간 명령 없으면 정지
         self.declare_parameter('odom_rate_hz', 20.0)
         self.declare_parameter('publish_tf', True)
