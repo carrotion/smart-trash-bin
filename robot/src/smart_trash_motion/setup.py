@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'diff_drive_node = smart_trash_motion.diff_drive_node:main',
         ],
     },
 )

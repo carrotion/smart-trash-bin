@@ -3,9 +3,14 @@
 <package format="3">
   <name>smart_trash_motion</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>4WD 차동구동 제어 및 휠 오도메트리 (Yahboom 4채널 드라이버)</description>
   <maintainer email="59335136+carrotion@users.noreply.github.com">carrotion</maintainer>
   <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
