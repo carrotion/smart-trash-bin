@@ -2,6 +2,16 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
+## 🎉 LD06 LiDAR 연결 + SLAM Toolbox 파이프라인 첫 성공 (2026-08-15)
+
+**방학 중간목표(맵핑까지)의 핵심 파이프라인이 처음으로 에러 없이 끝까지 떴음** — `ros2 launch smart_trash_bringup mapping.launch.py` 실행 시 LD06 통신 정상, `/scan` 10Hz 안정적으로 발행, SLAM Toolbox가 Configuring→Activating→"Registering sensor" 까지 전부 정상 완료.
+
+- **LD06은 USB 어댑터가 아니라 Pi5 GPIO UART로 직결됨**: GPIO 2/6/10/12번 핀(5V/GND/RXD/TXD 계열), 장치는 **`/dev/ttyAMA0`**, 보드레이트 **230400**. USB로 연결한다고 가정하고 `/dev/ttyUSB0`를 찾으면 안 됨 — `ttyUSB0`는 모터 드라이버 전용.
+- ⚠️ **UART 콘솔 충돌 함정(해결됨)**: 기본 이미지가 `/dev/ttyAMA0`을 로그인 시리얼 콘솔로도 쓰게 설정돼 있어서(`cmdline.txt`의 `console=serial0,115200` + `serial-getty@ttyAMA0.service`), LD06이 데이터를 쏟아내자 getty가 로그인 프롬프트로 착각하고 계속 죽었다 재시작하며 `input overrun` 에러만 남기고 `start-limit-hit`로 포기하는 상태였음. **해결**: `sudo systemctl disable --now serial-getty@ttyAMA0.service` + `sudo systemctl mask serial-getty@ttyAMA0.service` + `/boot/firmware/cmdline.txt`에서 `console=serial0,115200 ` 제거 + 재부팅. 재부팅 후 `/dev/ttyAMA0` 소유 그룹도 자동으로 `dialout`으로 바뀜(`carrotian` 이미 그 그룹이라 추가 조치 불필요). **새 Pi 이미지로 다시 설치하게 되면 이 과정을 처음부터 다시 해야 함.**
+- **`smart_trash_bringup/launch/mapping.launch.py` 리팩터링**: 서브모듈이 제공하는 `ld06.launch.py`(포트가 `/dev/ttyUSB0`로 하드코딩됨, 우리 배선과 안 맞음)를 include하는 대신, **`ldlidar_stl_ros2_node`를 직접 구성**해서 `port_name`을 launch 인자(`lidar_port`, 기본값 `/dev/ttyAMA0`)로 뺌. `base_link->base_laser` 정적 tf도 이 launch 파일이 직접 발행(예전과 동일하게 z=0.18, 회전 0).
+- ⚠️ **TODO(실측 필요, 아직 미반영)**: **LD06을 상판에 거꾸로(뒤집어서) 마운트함.** 정확한 뒤집힘 축(롤 180 vs 피치 180)을 실측 안 하고 추측으로 반영하면 위험해서, 코드에는 아직 정방향 마운트 가정값 그대로 있음(`laser_scan_dir: True`, tf 회전 0,0,0). **실제 맵핑 테스트 전에 반드시**: (1) 알려진 각도의 물체(예: 정면 벽)를 스캔해서 `/scan`의 각도-거리 매핑이 실제와 맞는지 확인, (2) 안 맞으면 `mapping.launch.py`의 `laser_scan_dir`과 정적 tf 회전값(현재 둘 다 파일 안에 TODO 주석으로 표시해둠)을 실측 결과로 수정할 것.
+- **다음 단계**: `publish_placeholder_odom`이 아직 identity tf라 실제 이동 시 맵이 안 맞을 것 — Week 3 diff-drive 오도메트리 노드(`smart_trash_motion`) 완성 후 그걸로 교체 필요. 그 전까지는 로봇을 고정해두고 정적 스캔 품질만 확인하거나, 아주 살살 손으로 옮기며 SLAM Toolbox의 스캔매칭만으로 테스트하는 정도로 제한할 것.
+
 ## 🖥️ 진단 대시보드 (systemd 서비스로 자동 실행, 2026-08-15)
 
 `tools/` 밑 3개 대시보드(`power_monitor.py`, `motor_dashboard.py`, `dashboard_hub.py`)는 **systemd 서비스로 등록**돼 있어 **Pi 재부팅해도 수동으로 안 띄워도 자동 시작**됨. 유닛 파일은 `tools/systemd/*.service`에 버전관리되고, `/etc/systemd/system/`에 복사돼 `enable`된 상태(심볼릭 링크 생성됨). 죽으면 3초 후 자동 재시작(`Restart=on-failure`).
