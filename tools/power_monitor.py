@@ -14,6 +14,7 @@ vcgencmd를 sudo 없이 쓰려면 carrotian이 video 그룹에 있어야 함
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import threading
@@ -45,6 +46,7 @@ LABELS_KR = {
 }
 
 LOG_PATH = "/home/carrotian/power_monitor.log"
+TRACE_PATH = "/home/carrotian/power_trace.csv"
 HISTORY_LEN = 600
 
 state_lock = threading.Lock()
@@ -156,6 +158,33 @@ def read_system_info():
     return info
 
 
+def append_trace(sample):
+    """매 샘플을 CSV 한 줄로 append. 전원이 갑자기 끊겨도 직전까지 남도록
+    매번 flush한다 (버퍼에만 있으면 사고 순간 기록이 통째로 날아감)."""
+    try:
+        new_file = not os.path.exists(TRACE_PATH)
+        sysinfo = sample.get("system", {})
+        rails = sample.get("rails", {})
+        with open(TRACE_PATH, "a") as f:
+            if new_file:
+                f.write("ts,iso,ext5v,cpu_temp,cpu_percent,cpu_freq_mhz,"
+                        "mem_percent,throttled_bitmask\n")
+            f.write(",".join(str(x) for x in [
+                f"{sample['ts']:.1f}",
+                datetime.fromtimestamp(sample["ts"]).strftime("%H:%M:%S"),
+                rails.get("EXT5V_V", {}).get("value", ""),
+                sysinfo.get("cpu_temp_c", ""),
+                round(sysinfo["cpu_percent"], 1) if sysinfo.get("cpu_percent") else "",
+                sysinfo.get("cpu_freq_mhz", ""),
+                round(sysinfo["mem_percent"], 1) if sysinfo.get("mem_percent") else "",
+                sample.get("throttled", {}).get("bitmask", ""),
+            ]) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        pass
+
+
 def poll_loop(interval):
     prev_flags = None
     while True:
@@ -172,6 +201,8 @@ def poll_loop(interval):
             latest.clear()
             latest.update(sample)
             history.append(sample)
+
+        append_trace(sample)
 
         flags = throttled["flags"]
         if prev_flags is not None:
