@@ -1,0 +1,14 @@
+[Unit]
+Description=Smart Trash Bin - Power monitor dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/usr/bin/python3 tools/power_monitor.py --port 8765
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Smart Trash Bin - Dashboard hub (overview page)
+After=network.target smart-trash-power-monitor.service smart-trash-motor-dashboard.service
+Wants=smart-trash-power-monitor.service smart-trash-motor-dashboard.service
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/usr/bin/python3 tools/dashboard_hub.py --port 8764
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
