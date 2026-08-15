@@ -36,8 +36,8 @@ from std_msgs.msg import Int32MultiArray
 
 # 조종 상한 — diff_drive_node의 max_wheel_speed(1.0 m/s)보다 보수적으로 잡음.
 # 실내 맵핑 주행은 느릴수록 SLAM 품질이 좋아서 일부러 낮게 둔다.
-MAX_LINEAR = 0.5   # m/s
-MAX_ANGULAR = 2.5  # rad/s
+MAX_LINEAR = 1.0   # m/s (diff_drive_node의 max_wheel_speed=1.5 대비 여유)
+MAX_ANGULAR = 3.0  # rad/s
 STALE_S = 2.0
 
 state_lock = threading.Lock()
@@ -191,8 +191,8 @@ PAGE = """<!doctype html>
 
 <script>
 // 서버(motor_dashboard.py)의 상한과 일치. PWM이 아니라 cmd_vel 속도 단위.
-const MAX_LINEAR = 0.5;   // m/s
-const MAX_ANGULAR = 2.5;  // rad/s
+const MAX_LINEAR = 1.0;   // m/s — 서버 상한과 일치
+const MAX_ANGULAR = 3.0;  // rad/s
 const slider = document.getElementById('speedSlider');
 const speedLabel = document.getElementById('speedLabel');
 
@@ -423,7 +423,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):
-            self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
+            # no-store: JS를 고쳐도 브라우저가 옛 버전을 계속 실행하던 문제 방지
+            body = PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/api/status":
             with state_lock:
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
