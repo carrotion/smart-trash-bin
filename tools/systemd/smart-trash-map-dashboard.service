@@ -1,0 +1,14 @@
+[Unit]
+Description=Smart Trash Bin - SLAM map visualization dashboard (subscribes to /map)
+After=network.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec python3 tools/map_dashboard.py --port 8768'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

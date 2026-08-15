@@ -21,6 +21,7 @@ MODULES = {
     "power": {"url": "http://localhost:8765/api/status", "dash_port": 8765},
     "motor": {"url": "http://localhost:8766/api/status", "dash_port": 8766},
     "sensors": {"url": "http://localhost:8767/api/status", "dash_port": 8767},
+    "map": {"url": "http://localhost:8768/api/map", "dash_port": 8768},
 }
 
 
@@ -91,6 +92,7 @@ const MODULES = [
   {key:'motor', icon:'⚙️', label:'모터', port:8766},
   {key:'imu',   icon:'🧭', label:'IMU', port:8767},
   {key:'lidar', icon:'📡', label:'LiDAR', port:8767},
+  {key:'map',   icon:'🗺️', label:'맵', port:8768},
 ];
 
 function card(mod, statusHtml, dotColor, disabled) {
@@ -134,23 +136,33 @@ async function tick() {
     }
 
     // imu / lidar는 sensor_dashboard.py(:8767) 하나가 둘 다 서빙
-    if (!sensorsAvail) {
-      return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
-    }
-    if (mod.key === 'imu') {
-      const imu = summary.sensors.imu || {};
-      if (!imu.connected) {
+    if (mod.key === 'imu' || mod.key === 'lidar') {
+      if (!sensorsAvail) {
+        return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
+      }
+      if (mod.key === 'imu') {
+        const imu = summary.sensors.imu || {};
+        if (!imu.connected) {
+          return card(mod, `<div class="sub">토픽 응답 없음</div>`, 'var(--critical)', false);
+        }
+        const a = imu.linear_acceleration || {};
+        return card(mod, `<div class="metric">${(a.z ?? 0).toFixed(1)} m/s²</div><div class="sub">가속도 Z (중력 기준)</div>`,
+          'var(--good)', false);
+      }
+      const lidar = summary.sensors.lidar || {};
+      if (!lidar.connected) {
         return card(mod, `<div class="sub">토픽 응답 없음</div>`, 'var(--critical)', false);
       }
-      const a = imu.linear_acceleration || {};
-      return card(mod, `<div class="metric">${(a.z ?? 0).toFixed(1)} m/s²</div><div class="sub">가속도 Z (중력 기준)</div>`,
+      return card(mod, `<div class="metric">${lidar.valid_point_count ?? '-'}</div><div class="sub">유효 포인트 / ${lidar.point_count ?? '-'}</div>`,
         'var(--good)', false);
     }
-    const lidar = summary.sensors.lidar || {};
-    if (!lidar.connected) {
-      return card(mod, `<div class="sub">토픽 응답 없음</div>`, 'var(--critical)', false);
+
+    // map: map_dashboard.py(:8768), SLAM Toolbox가 안 떠있으면 미연결이 정상 상태
+    const mapData = summary.map;
+    if (!mapData || !mapData.available || !mapData.connected) {
+      return card(mod, `<div class="sub">맵핑 미실행 (정상 대기 상태)</div>`, 'var(--idle)', false);
     }
-    return card(mod, `<div class="metric">${lidar.valid_point_count ?? '-'}</div><div class="sub">유효 포인트 / ${lidar.point_count ?? '-'}</div>`,
+    return card(mod, `<div class="metric">${mapData.width}×${mapData.height}</div><div class="sub">셀, ${mapData.resolution.toFixed(2)}m/셀</div>`,
       'var(--good)', false);
   }).join('');
 
