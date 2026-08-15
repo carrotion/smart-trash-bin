@@ -38,25 +38,32 @@ state = {
     "last_cmd_ts": 0.0,
 }
 
+# ThreadingHTTPServer는 요청마다 새 스레드를 띄우고, 백그라운드 폴링 스레드도
+# 따로 돌아서 같은 pyserial Serial 객체를 동시에 건드릴 수 있음(스레드 안전 아님).
+# 램프 기능으로 요청 빈도가 늘면서 실제로 겹쳐서 SerialException이 났던 버그 수정용 락.
+serial_lock = threading.Lock()
+
 
 def send(ser, cmd: bytes, wait=0.1):
-    ser.reset_input_buffer()
-    ser.write(cmd)
-    time.sleep(wait)
-    return ser.read(ser.in_waiting or 1)
+    with serial_lock:
+        ser.reset_input_buffer()
+        ser.write(cmd)
+        time.sleep(wait)
+        return ser.read(ser.in_waiting or 1)
 
 
 _MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
 
 
 def read_encoder(ser):
-    ser.reset_input_buffer()
-    ser.write(b"$upload:1#")
-    time.sleep(0.15)
-    raw = ser.read(ser.in_waiting or 1)
-    ser.write(b"$upload:0#")
-    time.sleep(0.05)
-    ser.reset_input_buffer()
+    with serial_lock:
+        ser.reset_input_buffer()
+        ser.write(b"$upload:1#")
+        time.sleep(0.15)
+        raw = ser.read(ser.in_waiting or 1)
+        ser.write(b"$upload:0#")
+        time.sleep(0.05)
+        ser.reset_input_buffer()
     # 잘린 프레임(마지막 줄이 '#'로 안 끝나는 경우)을 걸러내기 위해
     # 끝에서부터 완전한 $MAll:...# 형태와 매치되는 마지막 줄만 사용
     lines = raw.decode(errors="replace").split("\r\n")
