@@ -278,9 +278,15 @@ function startHold(cmd) {
 }
 
 function releaseHold() {
+  // 감속 램프 없이 즉시 정지. 램프로 서서히 줄이면 조종이 굼떠서 못 쓰겠다는
+  // 피드백이 반복됨. 전기적으로 즉시 끊어도 모터 관성 때문에 실제 정지는 부드럽다.
+  clearInterval(tickTimer);
+  tickTimer = null;
+  currentScale = 0;
   targetScale = 0;
-  if (!tickTimer && currentScale > 0) tickTimer = setInterval(driveTick, TICK_MS);
-  driveTick();  // 다음 틱(최대 50ms)을 기다리지 않고 즉시 감속 시작
+  prevScale = 0;
+  activeCmd = null;
+  drive({linear: 0, angular: 0}, true);  // force=true — 절대 스킵되지 않게
 }
 
 async function hardStop() {
