@@ -1,0 +1,14 @@
+[Unit]
+Description=Smart Trash Bin - Motor driver dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/usr/bin/python3 tools/motor_dashboard.py --port 8766
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,15 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
+## 🖥️ 진단 대시보드 (systemd 서비스로 자동 실행, 2026-08-15)
+
+`tools/` 밑 3개 대시보드(`power_monitor.py`, `motor_dashboard.py`, `dashboard_hub.py`)는 **systemd 서비스로 등록**돼 있어 **Pi 재부팅해도 수동으로 안 띄워도 자동 시작**됨. 유닛 파일은 `tools/systemd/*.service`에 버전관리되고, `/etc/systemd/system/`에 복사돼 `enable`된 상태(심볼릭 링크 생성됨). 죽으면 3초 후 자동 재시작(`Restart=on-failure`).
+
+- **접속 주소** (Pi IP는 유동적일 수 있음, `hostname -I`로 확인): 허브 `http://<Pi IP>:8764` (여기서 시작, 카드 클릭하면 상세로 이동), 전원 `:8765`, 모터 `:8766`.
+- **관리 명령**: `sudo systemctl status/restart/stop smart-trash-{power-monitor,motor-dashboard,dashboard-hub}.service`, 로그는 `sudo journalctl -u smart-trash-motor-dashboard -f` 식으로.
+- **motor_dashboard.py가 시리얼 포트(`/dev/ttyUSB0`)를 독점 소유**함 — 이 서비스가 떠 있는 동안은 다른 스크립트/노드가 같은 포트를 못 엶(`Device or resource busy`). 임시로 직접 `pyserial`로 테스트하려면 먼저 `sudo systemctl stop smart-trash-motor-dashboard`로 내려야 함. 나중에 `smart_trash_motion` ROS2 노드를 만들면 이 대시보드와 포트를 두고 경합하게 되므로, **그때 가서 모터 제어 소유권을 노드 쪽으로 넘기고 대시보드는 노드의 상태 토픽을 구독하는 방식으로 리팩터링 필요** (지금은 임시 진단용 구조).
+- 유닛 파일 내용을 바꾸면 `~/smart-trash-bin/tools/systemd/*.service` 원본을 고치고 `sudo cp`로 다시 복사 + `sudo systemctl daemon-reload` + 해당 서비스 `restart`까지 해야 반영됨 (자동 동기화 안 됨).
+
 ## ⚠️⚠️ 안전 경고 — 모터 드라이버 관련 (2026-08-14 사고 발생, 필독)
 
 **절대 `$mtype:3#` 또는 `$mtype:4#`를 보내지 말 것.** 이 프로젝트 모터는 **"370" 캔모터(Hall 엔코더 내장)**이지, TT모터(3번: 속도디스크 TT, 4번: TT직류감속)가 아님. **TT 프리셋(3/4)에서는 모터가 실제로 돌아도 `$MAll`/`$MTEP` 엔코더 값이 전혀 갱신 안 되고, 정지 명령(`$pwm:0,0,0,0#`/`$spd:0,0,0,0#`)도 안 먹혀서 바퀴 4개가 안 멈추는 사고가 실제로 발생했음** (배터리 커넥터로 물리 전원차단해서 겨우 정지, Pi도 비정상종료됐으나 재부팅 후 fs 손상은 없었음). **원인/해결 확정**: 아래 "확정된 모터 스펙" 섹션 참고 — TYPE=1(520프리셋)로 바꾸니 엔코더 정상 리포트 + 정지 명령도 정상 동작 확인됨(2026-08-14).
