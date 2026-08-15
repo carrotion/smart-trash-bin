@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart Trash Bin - LD06 LiDAR driver node
+After=network.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/catkin_ws
+# 2026-08-15 실측 캘리브레이션값: laser_scan_dir=false (상판 거꾸로 마운트 보정,
+# CLAUDE.md 참고), port=/dev/ttyAMA0 (GPIO UART, USB 아님)
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run ldlidar_stl_ros2 ldlidar_stl_ros2_node --ros-args -p product_name:=LDLiDAR_LD06 -p topic_name:=scan -p frame_id:=base_laser -p port_name:=/dev/ttyAMA0 -p port_baudrate:=230400 -p laser_scan_dir:=false -p enable_angle_crop_func:=false'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

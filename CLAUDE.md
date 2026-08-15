@@ -12,6 +12,10 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 - ✅ **LD06 상판 거꾸로 마운트 방향 보정 완료 (2026-08-15, 실측 캘리브레이션)**: 로봇을 방 모서리(전면벽+왼쪽벽, 벽에서 40~50cm 이격)에 놓고 `/scan` 원시 데이터에서 두 벽이 찍히는 각도를 직접 분석함. **방법론**: 벽 하나만으로는 회전 오프셋인지 좌우반전인지 구분 안 되므로, 서로 다른 두 방향(전면/왼쪽)의 벽을 동시에 써서 각도差로 판별. `laser_scan_dir=True`(기본 가정)일 땐 왼쪽 벽이 전면(≈0°) 대비 **-90°(270°) 쪽**에 나와서(정상이면 +90°) 좌우가 반전돼 있었음. `laser_scan_dir=False`로 바꾸니 왼쪽 벽이 **+90°대로 정확히 이동**(실측 265°→90°, 미러 변환 예측치 95°와 근접 일치) — 상판 거꾸로 마운트로 인한 반전이 확인/보정됨. **`mapping.launch.py`에 `laser_scan_dir: False`로 반영 완료.** 이 보정이 드라이버 레벨에서 각도 해석 자체를 바로잡아주므로 정적 tf에 별도 롤/피치 180도 회전은 불필요(z높이 0.18m만 아직 placeholder, 실측 필요).
 - **다음 단계**: `publish_placeholder_odom`이 아직 identity tf라 실제 이동 시 맵이 안 맞을 것 — Week 3 diff-drive 오도메트리 노드(`smart_trash_motion`) 완성 후 그걸로 교체 필요. 그 전까지는 로봇을 고정해두고 정적 스캔 품질만 확인하거나, 아주 살살 손으로 옮기며 SLAM Toolbox의 스캔매칭만으로 테스트하는 정도로 제한할 것.
 
+## ⏳ 다음 세션 시작할 것: 허브에 IMU/LiDAR 카드 연결
+
+`tools/sensor_dashboard.py`(:8767, IMU+LiDAR 실시간 상태 브릿지)와 systemd 서비스 3개(`smart-trash-imu`, `smart-trash-lidar`, `smart-trash-sensor-dashboard`)는 다 만들어서 정상 실행 중. **`tools/dashboard_hub.py`만 아직 옛날 버전**(IMU/LiDAR가 "미연결" 고정 표시) — `MODULES`에 `sensors: :8767` 추가하고, JS의 `summary.imu`/`summary.lidar` 참조를 `summary.sensors.imu`/`summary.sensors.lidar` 구조로 고치면 됨. README.md 등 문서에 오늘 진행상황(LD06 캘리브레이션, 대시보드 4종 등) 정리하는 것도 아직 안 함 — 사용자가 토큰 소진 우려로 중단 요청해서 다음 세션으로 넘김.
+
 ## 🖥️ 진단 대시보드 (systemd 서비스로 자동 실행, 2026-08-15)
 
 `tools/` 밑 3개 대시보드(`power_monitor.py`, `motor_dashboard.py`, `dashboard_hub.py`)는 **systemd 서비스로 등록**돼 있어 **Pi 재부팅해도 수동으로 안 띄워도 자동 시작**됨. 유닛 파일은 `tools/systemd/*.service`에 버전관리되고, `/etc/systemd/system/`에 복사돼 `enable`된 상태(심볼릭 링크 생성됨). 죽으면 3초 후 자동 재시작(`Restart=on-failure`).
