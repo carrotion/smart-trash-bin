@@ -227,17 +227,24 @@ function cmdsForSpeed() {
 // (■ 정지 버튼은 이 램프를 건너뛰고 즉시 0을 보내는 별도 hardStop — 안전 우선)
 const TICK_MS = 50;
 const RAMP_STEP = 0.1;  // tick당 목표치에 이만큼씩 접근 (약 10틱 = 500ms에 도달)
+const MAX_HOLD_MS = 2000;  // 뗀 신호(pointerup)를 못 받는 경우를 대비한 안전장치 —
+                            // 아무리 눌려 있어도 이 시간 지나면 강제로 놓은 것처럼 처리
 
 let currentScale = 0;
 let targetScale = 0;
 let activeCmd = null;
 let tickTimer = null;
+let holdStartedAt = 0;
 
 async function drive(vals) {
   await fetch('/api/drive', {method:'POST', body: JSON.stringify({pwm: vals})});
 }
 
 function driveTick() {
+  if (targetScale > 0 && performance.now() - holdStartedAt > MAX_HOLD_MS) {
+    targetScale = 0;  // 안전장치 발동 — pointerup을 못 받았어도 강제로 뗀 것처럼 처리
+  }
+
   if (currentScale < targetScale) currentScale = Math.min(currentScale + RAMP_STEP, targetScale);
   else if (currentScale > targetScale) currentScale = Math.max(currentScale - RAMP_STEP, targetScale);
 
@@ -254,6 +261,7 @@ function driveTick() {
 function startHold(cmd) {
   activeCmd = cmd;
   targetScale = 1;
+  holdStartedAt = performance.now();
   if (!tickTimer) tickTimer = setInterval(driveTick, TICK_MS);
 }
 
