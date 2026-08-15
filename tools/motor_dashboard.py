@@ -49,20 +49,22 @@ def send(ser, cmd: bytes, wait=0.1):
         ser.reset_input_buffer()
         ser.write(cmd)
         time.sleep(wait)
-        return ser.read(ser.in_waiting or 1)
+        return ser.read(ser.in_waiting)  # in_waiting=0이면 즉시 빈 바이트 반환 (블로킹 안 함)
 
 
 _MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
 
 
 def read_encoder(ser):
+    # 이 락을 오래 붙잡을수록 /api/drive 요청들이 밀려서 쌓이므로
+    # (실제로 그래서 "버튼 떼도 한참 뒤에 반응하는" 버그가 났었음) 최소한만 대기
     with serial_lock:
         ser.reset_input_buffer()
         ser.write(b"$upload:1#")
-        time.sleep(0.15)
-        raw = ser.read(ser.in_waiting or 1)
+        time.sleep(0.04)
+        raw = ser.read(ser.in_waiting)  # 위와 동일한 이유로 블로킹 방지
         ser.write(b"$upload:0#")
-        time.sleep(0.05)
+        time.sleep(0.02)
         ser.reset_input_buffer()
     # 잘린 프레임(마지막 줄이 '#'로 안 끝나는 경우)을 걸러내기 위해
     # 끝에서부터 완전한 $MAll:...# 형태와 매치되는 마지막 줄만 사용
@@ -235,9 +237,16 @@ let targetScale = 0;
 let activeCmd = null;
 let tickTimer = null;
 let holdStartedAt = 0;
+let driveInFlight = false;  // 이전 /api/drive 응답 오기 전엔 새로 안 쏨 — 요청 밀림 방지
 
 async function drive(vals) {
-  await fetch('/api/drive', {method:'POST', body: JSON.stringify({pwm: vals})});
+  if (driveInFlight) return;  // 서버가 밀려있으면 이번 틱은 건너뜀(쌓이지 않게)
+  driveInFlight = true;
+  try {
+    await fetch('/api/drive', {method:'POST', body: JSON.stringify({pwm: vals})});
+  } finally {
+    driveInFlight = false;
+  }
 }
 
 function driveTick() {
@@ -450,7 +459,7 @@ def main():
     ap.add_argument("--port", type=int, default=8766)
     args = ap.parse_args()
 
-    ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
+    ser = serial.Serial(SERIAL_PORT, BAUD, timeout=0.2)  # 방어적으로 짧게 (그래도 위 수정이 핵심)
     time.sleep(0.3)
     # 검증된 안전 설정 고정 적용 — TT 프리셋(3/4) 절대 사용 금지
     send(ser, b"$mtype:1#")
