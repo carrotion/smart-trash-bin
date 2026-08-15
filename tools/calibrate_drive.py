@@ -52,26 +52,46 @@ class CalibNode(Node):
             raise RuntimeError('odom을 못 받음 — diff_drive_node가 떠 있는지 확인')
         return dict(self.odom)
 
-    def drive(self, linear, angular, duration):
-        """지정 속도로 duration초 주행. 끝나면 확실히 정지시킴."""
+    def drive(self, linear, angular, duration, stop_at_yaw_deg=None):
+        """지정 속도로 주행. duration은 상한, stop_at_yaw_deg를 주면 그 각도에서 멈춤.
+
+        yaw는 ±180°로 wrap되므로, 연속 샘플 간 차이를 정규화해서 누적한다
+        (360° 이상 회전해도 정확히 측정하기 위함).
+        """
         msg = Twist()
         msg.linear.x = float(linear)
         msg.angular.z = float(angular)
         samples = []
+        self.total_yaw = 0.0
+        prev_yaw = self.odom['yaw'] if self.odom else 0.0
+
         start = time.time()
         while time.time() - start < duration:
+            if stop_at_yaw_deg is not None and \
+                    abs(math.degrees(self.total_yaw)) >= abs(stop_at_yaw_deg):
+                print(f'목표 {stop_at_yaw_deg}° 도달 — 정지 '
+                      f'({time.time() - start:.1f}초 소요)')
+                break
             self.pub.publish(msg)
             rclpy.spin_once(self, timeout_sec=0.05)
             if self.odom:
                 samples.append(self.odom['vx'])
-        # 정지 — 여러 번 확실히
+                d = self.odom['yaw'] - prev_yaw
+                self.total_yaw += math.atan2(math.sin(d), math.cos(d))
+                prev_yaw = self.odom['yaw']
+
+        # 정지 — 여러 번 확실히. 정지 후 관성으로 더 도는 부분까지 누적에 반영
         stop = Twist()
         for _ in range(10):
             self.pub.publish(stop)
             rclpy.spin_once(self, timeout_sec=0.02)
         time.sleep(0.5)
-        for _ in range(5):
+        for _ in range(10):
             rclpy.spin_once(self, timeout_sec=0.05)
+            if self.odom:
+                d = self.odom['yaw'] - prev_yaw
+                self.total_yaw += math.atan2(math.sin(d), math.cos(d))
+                prev_yaw = self.odom['yaw']
         return samples
 
 
@@ -82,6 +102,8 @@ def main():
     ap.add_argument('--duration', type=float, default=3.0)
     ap.add_argument('--actual', type=float, default=None,
                     help='실제 측정값 (straight=미터, rotate=도). 주면 보정계수까지 계산')
+    ap.add_argument('--target-deg', type=float, default=None,
+                    help='rotate 전용: odom 기준 이 각도에 도달하면 정지 (예: 360)')
     args = ap.parse_args()
 
     rclpy.init()
@@ -94,7 +116,10 @@ def main():
         if args.mode == 'straight':
             samples = node.drive(args.speed, 0.0, args.duration)
         elif args.mode == 'rotate':
-            samples = node.drive(0.0, args.speed, args.duration)
+            # odom 기준 목표각에서 멈춤 — 실제 각도만 재면 바로 비율이 나옴.
+            # duration은 안전용 상한으로만 작동.
+            samples = node.drive(0.0, args.speed, args.duration,
+                                 stop_at_yaw_deg=args.target_deg)
         else:  # maxspeed
             samples = node.drive(10.0, 0.0, args.duration)  # 상한에 걸려 최대 PWM로 나감
 
@@ -104,11 +129,11 @@ def main():
         dx = after['x'] - before['x']
         dy = after['y'] - before['y']
         dist = math.hypot(dx, dy)
-        dyaw = math.degrees(after['yaw'] - before['yaw'])
+        dyaw = math.degrees(getattr(node, 'total_yaw', 0.0))  # wrap 보정된 누적값
 
         print(f'\n--- odom 기준 결과 ---')
         print(f'이동 거리: {dist:.4f} m  (dx={dx:.4f}, dy={dy:.4f})')
-        print(f'회전각: {dyaw:.2f}°  (누적 wrap 주의 — 360° 넘으면 수동 계산 필요)')
+        print(f'누적 회전각: {dyaw:.2f}°')
         if samples:
             moving = [s for s in samples if abs(s) > 0.01]
             if moving:

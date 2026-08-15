@@ -24,6 +24,7 @@ import serial
 from geometry_msgs.msg import Quaternion, Twist, TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from sensor_msgs.msg import Imu
 from tf2_ros import TransformBroadcaster
 
 _MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
@@ -37,15 +38,31 @@ class DiffDriveNode(Node):
         self.declare_parameter('port', '/dev/ttyUSB0')
         self.declare_parameter('baudrate', 115200)
         self.declare_parameter('wheel_radius', 0.0335)       # 지름 67mm 실측
-        self.declare_parameter('wheel_separation', 0.17)     # 좌우 바퀴 간격 실측
-        self.declare_parameter('counts_per_rev', 899.1)      # 2026-08-15 실측 캘리브레이션
+        # ⚠️ 물리 트레드는 0.17m지만 여기 쓰는 건 "실효" 트레드(1.94배).
+        # 4WD 스키드-스티어는 제자리 회전 시 네 바퀴가 다 옆으로 미끄러져서,
+        # 엔코더가 도는 만큼 실제로 안 돌아감 (odom 373.7° vs 실제 193° 실측).
+        # 물리 치수를 그대로 넣으면 회전을 2배 과대평가하므로 반드시 실측 보정값 사용.
+        # 이 값은 바닥 재질(마루)에 의존 — 카펫 등에서는 재캘리브레이션 필요.
+        self.declare_parameter('wheel_separation', 0.3291)
+        # 손으로 10회전 돌려 구한 899.1을, 실제 1.16m 주행 대비 odom 1.106m로
+        # 나온 비율(0.953)로 보정한 값 — 주행 실측이 더 신뢰도 높음 (2026-08-15)
+        self.declare_parameter('counts_per_rev', 857.2)
         self.declare_parameter('encoder_sign', -1)           # PWM+ 전진 시 카운트 감소
         self.declare_parameter('max_pwm', 1200)
-        self.declare_parameter('max_wheel_speed', 0.35)      # m/s, max_pwm에 대응 (미실측 추정치)
+        # 모터 스펙 상한(무부하 280RPM × 바퀴원주 0.2105m ≈ 0.98m/s) 기준.
+        # PWM 343에서 0.436m/s 실측됨 — 개루프라 명령 속도와 실제가 정확히는 안 맞고,
+        # 데드존(min_pwm) 때문에 약 0.3m/s 이하로는 제어가 어려움.
+        self.declare_parameter('max_wheel_speed', 1.0)
         self.declare_parameter('min_pwm', 250)               # 데드존 — 이보다 작으면 안 움직임
         self.declare_parameter('cmd_vel_timeout', 0.5)       # 이 시간 명령 없으면 정지
         self.declare_parameter('odom_rate_hz', 20.0)
         self.declare_parameter('publish_tf', True)
+        # 회전각을 휠 엔코더 대신 IMU 자이로로 계산 (스키드-스티어 필수).
+        # 4WD 고정축이라 제자리 회전 시 바퀴가 미끄러져서 휠 기반 각도는 재현성이 없음
+        # (같은 명령에 odom 373° vs 실제 193°, 게다가 바닥/속도/전압마다 달라짐).
+        # 자이로는 미끄러짐과 무관하게 실제 각속도를 측정하므로 이쪽이 정답.
+        self.declare_parameter('use_imu_for_yaw', True)
+        self.declare_parameter('gyro_bias_samples', 100)     # 시작 시 정지 상태 바이어스 측정
 
         p = self.get_parameter
         self._wheel_radius = p('wheel_radius').value
@@ -77,16 +94,28 @@ class DiffDriveNode(Node):
         self._target_left_pwm = 0
         self._target_right_pwm = 0
 
+        # IMU 자이로 상태 (use_imu_for_yaw일 때만 사용)
+        self._use_imu = p('use_imu_for_yaw').value
+        self._gyro_bias_samples_target = p('gyro_bias_samples').value
+        self._gyro_bias = 0.0
+        self._gyro_bias_acc = 0.0
+        self._gyro_bias_count = 0
+        self._gyro_z = 0.0          # 바이어스 보정된 최신 각속도
+        self._imu_seen = False
+
         self._odom_pub = self.create_publisher(Odometry, 'odom', 10)
         self._tf_broadcaster = TransformBroadcaster(self) if self._publish_tf else None
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd_vel, 10)
+        if self._use_imu:
+            self.create_subscription(Imu, 'imu/data', self._on_imu, 20)
 
         self.create_timer(1.0 / p('odom_rate_hz').value, self._on_odom_timer)
         self.create_timer(0.1, self._on_safety_timer)
 
+        yaw_src = 'IMU 자이로' if p('use_imu_for_yaw').value else '휠 엔코더'
         self.get_logger().info(
             f'diff_drive 시작 — 바퀴반지름 {self._wheel_radius}m, 간격 {self._wheel_separation}m, '
-            f'{self._counts_per_rev}카운트/회전')
+            f'{self._counts_per_rev}카운트/회전, 회전각 출처: {yaw_src}')
 
     # --- 시리얼 ---
 
@@ -150,6 +179,25 @@ class DiffDriveNode(Node):
         self._last_cmd_time = time.time()
         self._apply_pwm(self._target_left_pwm, self._target_right_pwm)
 
+    def _on_imu(self, msg: Imu):
+        """자이로 z를 받아 바이어스 보정 후 보관. 회전각은 이 값으로 적분한다."""
+        wz = msg.angular_velocity.z
+
+        # 시작 직후 정지 상태에서 바이어스(정지 시 0이 아닌 오프셋) 측정.
+        # 이걸 안 빼면 가만히 있어도 각도가 계속 돈다.
+        if self._gyro_bias_count < self._gyro_bias_samples_target:
+            if self._target_left_pwm == 0 and self._target_right_pwm == 0:
+                self._gyro_bias_acc += wz
+                self._gyro_bias_count += 1
+                if self._gyro_bias_count == self._gyro_bias_samples_target:
+                    self._gyro_bias = self._gyro_bias_acc / self._gyro_bias_count
+                    self.get_logger().info(
+                        f'자이로 바이어스 보정 완료: {self._gyro_bias:+.5f} rad/s')
+            return
+
+        self._gyro_z = wz - self._gyro_bias
+        self._imu_seen = True
+
     def _on_safety_timer(self):
         """cmd_vel이 끊기면 자동 정지 — 명령 유실/노드 죽음 대비."""
         if (self._target_left_pwm or self._target_right_pwm) and \
@@ -185,7 +233,13 @@ class DiffDriveNode(Node):
         self._prev_odom_time = now
 
         d_center = (d_left + d_right) / 2.0
-        d_theta = (d_right - d_left) / self._wheel_separation
+
+        # 전진 거리는 휠 엔코더(미끄러짐 적음), 회전각은 IMU 자이로(미끄러짐 무관).
+        # 스키드-스티어에서 휠 기반 회전각은 바닥/속도/마모에 따라 매번 달라져서 못 씀.
+        if self._use_imu and self._imu_seen:
+            d_theta = self._gyro_z * dt
+        else:
+            d_theta = (d_right - d_left) / self._wheel_separation
 
         # 중간각 적분 — 회전 중 직선 근사보다 오차가 작음
         mid_theta = self._theta + d_theta / 2.0
@@ -239,12 +293,15 @@ def main(args=None):
     node = DiffDriveNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        # 어떤 경로로 종료되든 모터는 반드시 멈추고 나감
         node.stop_and_close()
         node.destroy_node()
-        rclpy.shutdown()
+        # systemd/pkill의 SIGTERM으로 이미 shutdown됐을 수 있어 중복 호출 방지
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
