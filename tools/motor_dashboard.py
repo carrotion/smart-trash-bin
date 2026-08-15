@@ -236,7 +236,7 @@ async function drive(vals) {
   await fetch('/api/drive', {method:'POST', body: JSON.stringify({pwm: vals})});
 }
 
-function tick() {
+function driveTick() {
   if (currentScale < targetScale) currentScale = Math.min(currentScale + RAMP_STEP, targetScale);
   else if (currentScale > targetScale) currentScale = Math.max(currentScale - RAMP_STEP, targetScale);
 
@@ -253,12 +253,12 @@ function tick() {
 function startHold(cmd) {
   activeCmd = cmd;
   targetScale = 1;
-  if (!tickTimer) tickTimer = setInterval(tick, TICK_MS);
+  if (!tickTimer) tickTimer = setInterval(driveTick, TICK_MS);
 }
 
 function releaseHold() {
   targetScale = 0;
-  if (!tickTimer && currentScale > 0) tickTimer = setInterval(tick, TICK_MS);
+  if (!tickTimer && currentScale > 0) tickTimer = setInterval(driveTick, TICK_MS);
 }
 
 async function hardStop() {
@@ -292,7 +292,6 @@ const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyV
 // 차체 사각형
 svg.appendChild(el('rect', {x:60, y:60, width:140, height:220, rx:16,
   fill:'none', stroke: cssVar('--text-muted'), 'stroke-width':2}));
-svg.appendChild(el('text', {x:130, y:52, 'text-anchor':'middle', class:'readout'}).textContent = '앞', 0);
 const frontLabel = el('text', {x:130, y:50, 'text-anchor':'middle', class:'wheel-label'});
 frontLabel.textContent = '앞';
 svg.appendChild(frontLabel);
