@@ -20,11 +20,15 @@ odom->base_link는 아직 Week 3 diff-drive 오도메트리 노드가 없으므�
 `publish_placeholder_odom`(기본 true)으로 identity tf를 임시 발행함 —
 실제 휠 오도메트리 노드가 생기면 이 launch 인자를 false로 끌 것.
 
-⚠️ TODO(실측 필요): LD06을 상판에 거꾸로(뒤집어서) 마운트함 — 아직 정확한 뒤집힘 축
-(롤/피치)을 확인 안 해서 아래 static_transform_publisher의 회전값(현재 0,0,0)과
-laser_scan_dir을 추측으로 바꾸지 않았음. 실측 후 두 군데 다 반영할 것:
-  1. base_link->base_laser 정적 tf의 롤/피치 (지금 마지막 세 인자가 전부 0)
-  2. 아래 laser_scan_dir 파라미터 (뒤집히면 실제 회전방향 해석이 반대가 될 수 있음)
+✅ LD06 상판 거꾸로 마운트 보정 완료 (2026-08-15, 실측 캘리브레이션):
+로봇을 방 모서리(전면벽+왼쪽벽)에 놓고 /scan에서 두 벽이 찍히는 각도를 실측함.
+laser_scan_dir=True(반시계, 기본 가정)일 땐 왼쪽 벽이 -90°(270°) 쪽에 나와서
+전면(0°) 대비 반대 방향으로 뒤집혀 있었음 — 상판 거꾸로 마운트로 인한 반전.
+laser_scan_dir=False(시계방향)로 바꾸니 왼쪽 벽이 +90° 쪽으로 정확히 이동(실측
+265°→90°, 미러 변환 예측치 95°와 거의 일치) — 전면=0°/왼쪽=+90° 정상 규약과 맞음.
+이 보정은 드라이버 레벨(laser_scan_dir)에서 이미 각도 해석을 바로잡아주므로,
+정적 tf에 별도 롤/피치 180도 회전은 필요 없음(아래 tf는 회전 없이 z높이만).
+z높이(0.18m)는 아직 ld06.launch.py 기본값 그대로인 placeholder — 실측 필요.
 """
 
 
@@ -65,18 +69,18 @@ def generate_launch_description():
             'frame_id': 'base_laser',
             'port_name': lidar_port,
             'port_baudrate': 230400,
-            # TODO(실측 필요, 위 모듈 docstring 참고): 상판에 거꾸로 마운트돼서
-            # 실제 회전 방향이 반대일 수 있음 — 지금은 정방향 마운트 가정값(true) 그대로 둠.
-            'laser_scan_dir': True,
+            # 상판 거꾸로 마운트 보정값, 2026-08-15 실측 캘리브레이션으로 확정
+            # (위 모듈 docstring 참고 — laser_scan_dir=True였을 땐 좌/우가 반전됐었음).
+            'laser_scan_dir': False,
             'enable_angle_crop_func': False,
             'angle_crop_min': 135.0,
             'angle_crop_max': 225.0,
         }]
     )
 
-    # TODO(실측 필요, 위 모듈 docstring 참고): 뒤집힘 축 확인되면 마지막 세 인자
-    # (roll pitch yaw, 현재 0 0 0)에 반영할 것. 높이(0.18)는 ld06.launch.py 기본값을
-    # 그대로 가져온 placeholder라 이것도 실측으로 교체 필요.
+    # 회전 보정은 laser_scan_dir(위)에서 이미 처리돼서 롤/피치는 0 그대로 둠.
+    # TODO(실측 필요): 높이(z=0.18)는 ld06.launch.py 기본값을 그대로 가져온
+    # placeholder라 실제 마운트 높이로 교체 필요.
     base_link_to_laser_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
