@@ -215,21 +215,52 @@ function cmdsForSpeed() {
   };
 }
 
-let heartbeatTimer = null;
+// 방향 버튼: 누르면 0->목표까지, 떼면 목표->0까지 약 500ms에 걸쳐 부드럽게 램프.
+// (■ 정지 버튼은 이 램프를 건너뛰고 즉시 0을 보내는 별도 hardStop — 안전 우선)
+const TICK_MS = 50;
+const RAMP_STEP = 0.1;  // tick당 목표치에 이만큼씩 접근 (약 10틱 = 500ms에 도달)
+
+let currentScale = 0;
+let targetScale = 0;
+let activeCmd = null;
+let tickTimer = null;
 
 async function drive(vals) {
   await fetch('/api/drive', {method:'POST', body: JSON.stringify({pwm: vals})});
 }
-async function stop() {
-  clearInterval(heartbeatTimer);
-  heartbeatTimer = null;
-  await fetch('/api/stop', {method:'POST'});
+
+function tick() {
+  if (currentScale < targetScale) currentScale = Math.min(currentScale + RAMP_STEP, targetScale);
+  else if (currentScale > targetScale) currentScale = Math.max(currentScale - RAMP_STEP, targetScale);
+
+  const base = activeCmd ? cmdsForSpeed()[activeCmd] : [0, 0, 0, 0];
+  drive(base.map(v => Math.round(v * currentScale)));
+
+  if (currentScale === 0 && targetScale === 0) {
+    clearInterval(tickTimer);
+    tickTimer = null;
+    activeCmd = null;
+  }
 }
+
 function startHold(cmd) {
-  // 누르고 있는 동안 슬라이더를 움직여도 즉시 반영되도록 매 하트비트마다 다시 계산
-  const tick = () => drive(cmdsForSpeed()[cmd]);
-  tick();
-  heartbeatTimer = setInterval(tick, 150);
+  activeCmd = cmd;
+  targetScale = 1;
+  if (!tickTimer) tickTimer = setInterval(tick, TICK_MS);
+}
+
+function releaseHold() {
+  targetScale = 0;
+  if (!tickTimer && currentScale > 0) tickTimer = setInterval(tick, TICK_MS);
+}
+
+async function hardStop() {
+  clearInterval(tickTimer);
+  tickTimer = null;
+  currentScale = 0;
+  targetScale = 0;
+  activeCmd = null;
+  await fetch('/api/stop', {method:'POST'});
 }
 
 document.querySelectorAll('.pad-btn').forEach(btn => {
@@ -237,9 +268,9 @@ document.querySelectorAll('.pad-btn').forEach(btn => {
   btn.addEventListener('mousedown', () => startHold(cmd));
   btn.addEventListener('touchstart', (e) => { e.preventDefault(); startHold(cmd); });
   ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev =>
-    btn.addEventListener(ev, stop));
+    btn.addEventListener(ev, releaseHold));
 });
-document.getElementById('stopBtn').addEventListener('click', stop);
+document.getElementById('stopBtn').addEventListener('click', hardStop);
 
 // 차체 SVG 그리기
 const svg = document.getElementById('chassis');
