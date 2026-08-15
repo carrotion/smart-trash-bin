@@ -179,17 +179,41 @@ PAGE = """<!doctype html>
     <div></div>
     <button id="stopBtn">■ 정지</button>
   </div>
-  <div class="warn">버튼을 누르고 있는 동안만 움직이고, 떼면 즉시 정지합니다 (최대 PWM ±1200으로 제한). 바퀴가 바닥에 닿아 있으면 실제로 움직이니 주의하세요.</div>
+  <div class="warn">버튼을 누르고 있는 동안만 움직이고, 떼면 즉시 정지합니다. 바퀴가 바닥에 닿아 있으면 실제로 움직이니 주의하세요.</div>
+</div>
+
+<div class="card">
+  <div class="status-row" style="margin-bottom:6px;">
+    <span>출력 레버</span>
+    <span id="speedLabel" style="font-variant-numeric: tabular-nums;"></span>
+  </div>
+  <input type="range" id="speedSlider" min="10" max="80" step="1" value="40" style="width:100%;">
 </div>
 
 <script>
-const SPEED = 500;
-const CMDS = {
-  fwd:   [ SPEED,  SPEED,  SPEED,  SPEED],
-  back:  [-SPEED, -SPEED, -SPEED, -SPEED],
-  left:  [-SPEED, -SPEED,  SPEED,  SPEED],
-  right: [ SPEED,  SPEED, -SPEED, -SPEED],
-};
+const MAX_PWM = 1200;  // 서버(motor_dashboard.py)의 안전 상한과 일치시킴
+const slider = document.getElementById('speedSlider');
+const speedLabel = document.getElementById('speedLabel');
+
+function currentSpeed() {
+  const pct = Number(slider.value);
+  return Math.round(MAX_PWM * pct / 100);
+}
+function updateSpeedLabel() {
+  speedLabel.textContent = `${slider.value}% (PWM ${currentSpeed()})`;
+}
+slider.addEventListener('input', updateSpeedLabel);
+updateSpeedLabel();
+
+function cmdsForSpeed() {
+  const s = currentSpeed();
+  return {
+    fwd:   [ s,  s,  s,  s],
+    back:  [-s, -s, -s, -s],
+    left:  [-s, -s,  s,  s],
+    right: [ s,  s, -s, -s],
+  };
+}
 
 let heartbeatTimer = null;
 
@@ -202,9 +226,10 @@ async function stop() {
   await fetch('/api/stop', {method:'POST'});
 }
 function startHold(cmd) {
-  const vals = CMDS[cmd];
-  drive(vals);
-  heartbeatTimer = setInterval(() => drive(vals), 150);
+  // 누르고 있는 동안 슬라이더를 움직여도 즉시 반영되도록 매 하트비트마다 다시 계산
+  const tick = () => drive(cmdsForSpeed()[cmd]);
+  tick();
+  heartbeatTimer = setInterval(tick, 150);
 }
 
 document.querySelectorAll('.pad-btn').forEach(btn => {
