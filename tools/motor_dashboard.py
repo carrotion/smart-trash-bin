@@ -234,10 +234,13 @@ let targetScale = 0;
 let activeCmd = null;
 let tickTimer = null;
 let holdStartedAt = 0;
-let driveInFlight = false;  // 이전 /api/drive 응답 오기 전엔 새로 안 쏨 — 요청 밀림 방지
+let driveInFlight = false;
+let prevScale = 0;  // 이전 /api/drive 응답 오기 전엔 새로 안 쏨 — 요청 밀림 방지
 
-async function drive(cmd) {
-  if (driveInFlight) return;  // 응답이 밀려있으면 이번 틱은 건너뜀(요청 적체 방지)
+async function drive(cmd, force) {
+  // 감속/정지 명령(force)은 절대 버리지 않는다 — 예전엔 이것도 스킵돼서
+  // 와이파이가 느릴 때 버튼을 떼도 한참 더 나가는 원인이 됐음.
+  if (driveInFlight && !force) return;
   driveInFlight = true;
   try {
     await fetch('/api/drive', {method:'POST', body: JSON.stringify(cmd)});
@@ -255,7 +258,10 @@ function driveTick() {
   else if (currentScale > targetScale) currentScale = Math.max(currentScale - RAMP_DOWN_STEP, targetScale);
 
   const base = activeCmd ? cmdsForSpeed()[activeCmd] : {linear: 0, angular: 0};
-  drive({linear: base.linear * currentScale, angular: base.angular * currentScale});
+  const decelerating = currentScale < prevScale || targetScale === 0;
+  prevScale = currentScale;
+  drive({linear: base.linear * currentScale, angular: base.angular * currentScale},
+        decelerating);
 
   if (currentScale === 0 && targetScale === 0) {
     clearInterval(tickTimer);
