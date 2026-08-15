@@ -55,7 +55,8 @@ state = {
 class TeleopNode(Node):
     def __init__(self):
         super().__init__('motor_dashboard')
-        self.pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        # 발행 큐도 1 — 오래된 조종 명령이 쌓여서 뒤늦게 전달되지 않도록
+        self.pub = self.create_publisher(Twist, 'cmd_vel', 1)
         self.create_subscription(Odometry, 'odom', self._on_odom, 10)
         self.create_subscription(Int32MultiArray, 'wheel_encoders', self._on_enc, 10)
         self._prev_enc = None
