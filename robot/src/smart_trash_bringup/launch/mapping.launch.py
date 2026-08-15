@@ -48,10 +48,11 @@ def generate_launch_description():
 
     declare_placeholder_odom_cmd = DeclareLaunchArgument(
         'publish_placeholder_odom',
-        default_value='true',
+        default_value='false',
         description=(
             'true면 odom->base_link를 identity tf로 임시 발행. '
-            'Week 3 diff-drive 오도메트리 노드가 준비되면 false로 끌 것.'))
+            '2026-08-15부터 smart_trash_motion의 diff_drive_node가 실제 오도메트리로 '
+            '이 tf를 발행하므로 기본 false — true로 켜면 TF가 중복 발행되어 깨짐.'))
 
     declare_lidar_port_cmd = DeclareLaunchArgument(
         'lidar_port',
