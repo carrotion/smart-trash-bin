@@ -1,0 +1,14 @@
+[Unit]
+Description=Smart Trash Bin - IMU publisher node (ICM-20948)
+After=network.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/catkin_ws
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
