@@ -222,7 +222,10 @@ function cmdsForSpeed() {
 // 방향 버튼: 누르면 0->목표까지, 떼면 목표->0까지 약 500ms에 걸쳐 부드럽게 램프.
 // (■ 정지 버튼은 이 램프를 건너뛰고 즉시 0을 보내는 별도 hardStop — 안전 우선)
 const TICK_MS = 50;
-const RAMP_STEP = 0.1;  // tick당 목표치에 이만큼씩 접근 (약 10틱 = 500ms에 도달)
+// 가속은 부드럽게(기계 충격 방지), 감속은 빠르게(조종 반응성/안전).
+// 예전엔 둘 다 0.1이라 버튼을 떼도 0.5초간 더 나가서 조종이 안 맞았음.
+const RAMP_UP_STEP = 0.1;    // 약 10틱 = 500ms에 최고속 도달
+const RAMP_DOWN_STEP = 0.5;  // 약 2틱 = 100ms 안에 정지
 const MAX_HOLD_MS = 2000;  // 뗀 신호(pointerup)를 못 받는 경우를 대비한 안전장치 —
                             // 아무리 눌려 있어도 이 시간 지나면 강제로 놓은 것처럼 처리
 
@@ -248,8 +251,8 @@ function driveTick() {
     targetScale = 0;  // 안전장치 발동 — pointerup을 못 받았어도 강제로 뗀 것처럼 처리
   }
 
-  if (currentScale < targetScale) currentScale = Math.min(currentScale + RAMP_STEP, targetScale);
-  else if (currentScale > targetScale) currentScale = Math.max(currentScale - RAMP_STEP, targetScale);
+  if (currentScale < targetScale) currentScale = Math.min(currentScale + RAMP_UP_STEP, targetScale);
+  else if (currentScale > targetScale) currentScale = Math.max(currentScale - RAMP_DOWN_STEP, targetScale);
 
   const base = activeCmd ? cmdsForSpeed()[activeCmd] : {linear: 0, angular: 0};
   drive({linear: base.linear * currentScale, angular: base.angular * currentScale});
@@ -271,6 +274,7 @@ function startHold(cmd) {
 function releaseHold() {
   targetScale = 0;
   if (!tickTimer && currentScale > 0) tickTimer = setInterval(driveTick, TICK_MS);
+  driveTick();  // 다음 틱(최대 50ms)을 기다리지 않고 즉시 감속 시작
 }
 
 async function hardStop() {

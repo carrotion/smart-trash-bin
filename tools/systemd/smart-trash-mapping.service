@@ -1,0 +1,17 @@
+[Unit]
+Description=Smart Trash Bin - SLAM mapping session (LiDAR + SLAM Toolbox)
+After=network.target smart-trash-diff-drive.service
+Wants=smart-trash-diff-drive.service
+# LiDAR 포트(/dev/ttyAMA0)를 이 launch가 직접 잡으므로 lidar 서비스와 동시 실행 불가.
+Conflicts=smart-trash-lidar.service
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/catkin_ws
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 launch smart_trash_bringup mapping.launch.py'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
