@@ -112,6 +112,7 @@ PAGE = """<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>모터 대시보드</title>
 <style>
   :root {
@@ -270,14 +271,25 @@ async function hardStop() {
   await fetch('/api/stop', {method:'POST'});
 }
 
+// Pointer Events로 마우스/터치를 하나로 통합 — mousedown+touchstart를 따로 걸면
+// 모바일에서 터치 후 지연된 "유령" mousedown이 한 번 더 들어와 이미 뗀 버튼을
+// 다시 누른 것처럼 재실행되는 문제가 실제로 있었음(activeCmd가 의도치 않게
+// 덮어써져서 "이전 명령이 계속 기억되어 실행되는" 증상으로 나타남).
 document.querySelectorAll('.pad-btn').forEach(btn => {
   const cmd = btn.dataset.cmd;
-  btn.addEventListener('mousedown', () => startHold(cmd));
-  btn.addEventListener('touchstart', (e) => { e.preventDefault(); startHold(cmd); });
-  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev =>
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    btn.setPointerCapture(e.pointerId);
+    startHold(cmd);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
     btn.addEventListener(ev, releaseHold));
 });
-document.getElementById('stopBtn').addEventListener('click', hardStop);
+// 정지 버튼은 안전상 지연 없이 즉시 반응해야 하므로 click 대신 pointerdown
+document.getElementById('stopBtn').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  hardStop();
+});
 
 // 차체 SVG 그리기
 const svg = document.getElementById('chassis');
