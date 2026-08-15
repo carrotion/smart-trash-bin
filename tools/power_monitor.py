@@ -91,12 +91,82 @@ def log_line(text):
         pass
 
 
+_prev_cpu = {}
+
+
+def read_system_info():
+    """Pi 자체 상태(온도/CPU/메모리/디스크/업타임). 외부 의존성 없이 /proc, /sys에서 직접 읽음."""
+    info = {}
+
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            info["cpu_temp_c"] = int(f.read().strip()) / 1000.0
+    except OSError:
+        info["cpu_temp_c"] = None
+
+    # CPU 사용률: /proc/stat의 누적 jiffies를 직전 샘플과 비교해서 계산
+    try:
+        with open("/proc/stat") as f:
+            parts = f.readline().split()
+        vals = [int(v) for v in parts[1:]]
+        idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
+        total = sum(vals)
+        if _prev_cpu:
+            d_total = total - _prev_cpu["total"]
+            d_idle = idle - _prev_cpu["idle"]
+            info["cpu_percent"] = 100.0 * (d_total - d_idle) / d_total if d_total > 0 else None
+        else:
+            info["cpu_percent"] = None
+        _prev_cpu["total"], _prev_cpu["idle"] = total, idle
+    except OSError:
+        info["cpu_percent"] = None
+
+    try:
+        mem = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, val = line.split(":", 1)
+                mem[key] = int(val.strip().split()[0])  # kB
+        total_kb = mem.get("MemTotal", 0)
+        avail_kb = mem.get("MemAvailable", 0)
+        info["mem_total_mb"] = total_kb / 1024.0
+        info["mem_used_mb"] = (total_kb - avail_kb) / 1024.0
+        info["mem_percent"] = 100.0 * (total_kb - avail_kb) / total_kb if total_kb else None
+    except OSError:
+        info["mem_total_mb"] = info["mem_used_mb"] = info["mem_percent"] = None
+
+    try:
+        import shutil
+        usage = shutil.disk_usage("/")
+        info["disk_total_gb"] = usage.total / 1e9
+        info["disk_used_gb"] = usage.used / 1e9
+        info["disk_percent"] = 100.0 * usage.used / usage.total
+    except OSError:
+        info["disk_total_gb"] = info["disk_used_gb"] = info["disk_percent"] = None
+
+    try:
+        with open("/proc/uptime") as f:
+            info["uptime_s"] = float(f.read().split()[0])
+    except OSError:
+        info["uptime_s"] = None
+
+    m = re.search(r"frequency\(\d+\)=(\d+)", run_vcgencmd(["measure_clock", "arm"]))
+    info["cpu_freq_mhz"] = int(m.group(1)) / 1e6 if m else None
+
+    return info
+
+
 def poll_loop(interval):
     prev_flags = None
     while True:
         throttled = parse_throttled(run_vcgencmd(["get_throttled"]))
         rails = parse_pmic_adc(run_vcgencmd(["pmic_read_adc"]))
-        sample = {"ts": time.time(), "throttled": throttled, "rails": rails}
+        sample = {
+            "ts": time.time(),
+            "throttled": throttled,
+            "rails": rails,
+            "system": read_system_info(),
+        }
 
         with state_lock:
             latest.clear()
@@ -118,7 +188,7 @@ PAGE = """<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>Pi5 전원 모니터</title>
+<title>Pi5 상태 모니터</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
@@ -135,7 +205,10 @@ PAGE = """<!doctype html>
 </style>
 </head>
 <body>
-<h1>Pi5 전원 상태 <span id="updated" style="font-size:0.7rem; font-weight:normal;"></span></h1>
+<h1>Pi5 상태 <span id="updated" style="font-size:0.7rem; font-weight:normal;"></span></h1>
+<h2 style="font-size:1rem;">시스템</h2>
+<table id="system"></table>
+<h2 style="font-size:1rem;">전원 경고/이력</h2>
 <div class="grid" id="flags"></div>
 <h2 style="font-size:1rem;">PMIC 레일 전압/전류</h2>
 <table id="rails"></table>
@@ -167,6 +240,19 @@ async function tick() {
     div.textContent = (bad ? "🔴 " : "🟢 ") + labels[key];
     grid.appendChild(div);
   }
+
+  const sys = res.latest.system || {};
+  const fmt = (v, d, unit) => (v === null || v === undefined) ? "-" : v.toFixed(d) + unit;
+  const uptime = sys.uptime_s == null ? "-" :
+    `${Math.floor(sys.uptime_s / 3600)}시간 ${Math.floor((sys.uptime_s % 3600) / 60)}분`;
+  document.getElementById("system").innerHTML = `
+    <tr><th>항목</th><th>값</th></tr>
+    <tr><td>CPU 온도</td><td>${fmt(sys.cpu_temp_c, 1, "°C")}</td></tr>
+    <tr><td>CPU 사용률</td><td>${fmt(sys.cpu_percent, 1, "%")}</td></tr>
+    <tr><td>CPU 클럭</td><td>${fmt(sys.cpu_freq_mhz, 0, " MHz")}</td></tr>
+    <tr><td>메모리</td><td>${fmt(sys.mem_used_mb, 0, "")} / ${fmt(sys.mem_total_mb, 0, " MB")} (${fmt(sys.mem_percent, 1, "%")})</td></tr>
+    <tr><td>디스크</td><td>${fmt(sys.disk_used_gb, 1, "")} / ${fmt(sys.disk_total_gb, 1, " GB")} (${fmt(sys.disk_percent, 1, "%")})</td></tr>
+    <tr><td>업타임</td><td>${uptime}</td></tr>`;
 
   const rails = res.latest.rails || {};
   const tbl = document.getElementById("rails");

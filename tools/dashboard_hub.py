@@ -78,6 +78,11 @@ PAGE = """<!doctype html>
   .metric { font-size: 1.6rem; font-weight: 600; margin-top: 10px;
     font-variant-numeric: tabular-nums; }
   .sub { font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px; }
+  .rows { margin-top: 10px; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+  .row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+  .row .k { color: var(--text-secondary); }
+  .row .v { font-weight: 600; }
+  .row .v.warn { color: var(--critical); }
   .updated { font-size: 0.7rem; color: var(--text-muted); margin-top: 16px; }
 </style>
 </head>
@@ -88,7 +93,7 @@ PAGE = """<!doctype html>
 
 <script>
 const MODULES = [
-  {key:'power', icon:'🔋', label:'전원', port:8765},
+  {key:'pi',    icon:'🖥️', label:'Pi', port:8765},
   {key:'motor', icon:'⚙️', label:'모터', port:8766},
   {key:'imu',   icon:'🧭', label:'IMU', port:8767},
   {key:'lidar', icon:'📡', label:'LiDAR', port:8767},
@@ -106,6 +111,14 @@ function card(mod, statusHtml, dotColor, disabled) {
   </a>`;
 }
 
+// 카드 안에 "항목: 값" 3~4줄로 핵심 정보만. 상세는 클릭해서 각 대시보드로.
+function rows(pairs) {
+  return `<div class="rows">` + pairs.map(([k, v, warn]) =>
+    `<div class="row"><span class="k">${k}</span><span class="v${warn ? ' warn' : ''}">${v}</span></div>`
+  ).join('') + `</div>`;
+}
+const f = (v, d, unit) => (v === null || v === undefined) ? '-' : v.toFixed(d) + unit;
+
 async function tick() {
   let summary;
   try { summary = await (await fetch('/api/summary')).json(); }
@@ -115,24 +128,42 @@ async function tick() {
   const sensorsAvail = summary.sensors && summary.sensors.available;
 
   grid.innerHTML = MODULES.map(mod => {
-    if (mod.key === 'power' || mod.key === 'motor') {
-      const d = summary[mod.key];
+    // Pi 자체 상태 (전원 + CPU 온도/사용률/메모리) — power_monitor.py(:8765)가 서빙
+    if (mod.key === 'pi') {
+      const d = summary.power;
       if (!d || !d.available) {
         return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
       }
-      if (mod.key === 'power') {
-        const rails = (d.latest && d.latest.rails) || {};
-        const v = rails.EXT5V_V ? rails.EXT5V_V.value.toFixed(2) + 'V' : '-';
-        const flags = (d.latest && d.latest.throttled && d.latest.throttled.flags) || {};
-        const bad = flags.under_voltage_now || flags.throttled_now;
-        return card(mod, `<div class="metric">${v}</div><div class="sub">Pi 5V 입력</div>`,
-          bad ? 'var(--critical)' : 'var(--good)', false);
+      const sys = (d.latest && d.latest.system) || {};
+      const rails = (d.latest && d.latest.rails) || {};
+      const flags = (d.latest && d.latest.throttled && d.latest.throttled.flags) || {};
+      const bad = flags.under_voltage_now || flags.throttled_now;
+      const hot = sys.cpu_temp_c != null && sys.cpu_temp_c >= 70;
+      const v = rails.EXT5V_V ? rails.EXT5V_V.value : null;
+      return card(mod, rows([
+        ['5V 입력', f(v, 2, 'V'), bad],
+        ['CPU 온도', f(sys.cpu_temp_c, 1, '°C'), hot],
+        ['CPU 사용률', f(sys.cpu_percent, 0, '%')],
+        ['메모리', f(sys.mem_percent, 0, '%')],
+      ]), (bad || hot) ? 'var(--critical)' : 'var(--good)', false);
+    }
+
+    if (mod.key === 'motor') {
+      const d = summary.motor;
+      if (!d || !d.available) {
+        return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
       }
       const connected = d.connected;
       const pwm = d.commanded_pwm || [0,0,0,0];
+      const rate = d.rate || [0,0,0,0];
       const moving = pwm.some(v => v !== 0);
-      return card(mod, `<div class="metric">${moving ? '주행 중' : '정지'}</div><div class="sub">${connected ? '드라이버 연결됨' : '연결 안 됨'}</div>`,
-        !connected ? 'var(--critical)' : (moving ? 'var(--accent)' : 'var(--good)'), false);
+      const movingWheels = rate.filter(r => Math.abs(r) > 30).length;
+      return card(mod, rows([
+        ['상태', moving ? '주행 중' : '정지'],
+        ['드라이버', connected ? '연결됨' : '연결 안 됨', !connected],
+        ['회전 중 바퀴', `${movingWheels} / 4`],
+        ['PWM', pwm.join(', ')],
+      ]), !connected ? 'var(--critical)' : (moving ? 'var(--accent)' : 'var(--good)'), false);
     }
 
     // imu / lidar는 sensor_dashboard.py(:8767) 하나가 둘 다 서빙
@@ -146,15 +177,25 @@ async function tick() {
           return card(mod, `<div class="sub">토픽 응답 없음</div>`, 'var(--critical)', false);
         }
         const a = imu.linear_acceleration || {};
-        return card(mod, `<div class="metric">${(a.z ?? 0).toFixed(1)} m/s²</div><div class="sub">가속도 Z (중력 기준)</div>`,
-          'var(--good)', false);
+        const g = imu.angular_velocity || {};
+        const accelMag = Math.hypot(a.x ?? 0, a.y ?? 0, a.z ?? 0);
+        return card(mod, rows([
+          ['가속도 크기', f(accelMag, 2, ' m/s²')],
+          ['가속도 Z', f(a.z, 2, '')],
+          ['각속도 Z', f(g.z, 3, ' rad/s')],
+          ['각속도 X/Y', `${f(g.x, 2, '')} / ${f(g.y, 2, '')}`],
+        ]), 'var(--good)', false);
       }
       const lidar = summary.sensors.lidar || {};
       if (!lidar.connected) {
         return card(mod, `<div class="sub">토픽 응답 없음</div>`, 'var(--critical)', false);
       }
-      return card(mod, `<div class="metric">${lidar.valid_point_count ?? '-'}</div><div class="sub">유효 포인트 / ${lidar.point_count ?? '-'}</div>`,
-        'var(--good)', false);
+      return card(mod, rows([
+        ['유효 포인트', `${lidar.valid_point_count ?? '-'} / ${lidar.point_count ?? '-'}`],
+        ['최소 거리', f(lidar.min_range, 2, ' m')],
+        ['평균 거리', f(lidar.avg_range, 2, ' m')],
+        ['최대 거리', f(lidar.max_range, 2, ' m')],
+      ]), 'var(--good)', false);
     }
 
     // map: map_dashboard.py(:8768), SLAM Toolbox가 안 떠있으면 미연결이 정상 상태
@@ -162,8 +203,14 @@ async function tick() {
     if (!mapData || !mapData.available || !mapData.connected) {
       return card(mod, `<div class="sub">맵핑 미실행 (정상 대기 상태)</div>`, 'var(--idle)', false);
     }
-    return card(mod, `<div class="metric">${mapData.width}×${mapData.height}</div><div class="sub">셀, ${mapData.resolution.toFixed(2)}m/셀</div>`,
-      'var(--good)', false);
+    const areaW = mapData.width * mapData.resolution;
+    const areaH = mapData.height * mapData.resolution;
+    return card(mod, rows([
+      ['그리드', `${mapData.width} × ${mapData.height}`],
+      ['실제 크기', `${areaW.toFixed(1)} × ${areaH.toFixed(1)} m`],
+      ['해상도', f(mapData.resolution, 2, ' m/셀')],
+      ['갱신', new Date(mapData.last_ts * 1000).toLocaleTimeString()],
+    ]), 'var(--good)', false);
   }).join('');
 
   document.getElementById('updated').textContent = '마지막 갱신: ' + new Date().toLocaleTimeString();
