@@ -1,0 +1,14 @@
+[Unit]
+Description=Smart Trash Bin - Periodic map autosave (guards against power-loss data loss)
+After=network.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec python3 tools/map_autosave.py --interval 60 --dir /home/carrotian/maps'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
