@@ -1,12 +1,14 @@
 [Unit]
-Description=Smart Trash Bin - Motor driver dashboard
+Description=Smart Trash Bin - Motor teleop dashboard (publishes /cmd_vel)
 After=network.target
 
 [Service]
 Type=simple
 User=carrotian
 WorkingDirectory=/home/carrotian/smart-trash-bin
-ExecStart=/usr/bin/python3 tools/motor_dashboard.py --port 8766
+# ROS2 토픽 기반이라 ROS 환경 소싱 필요. 시리얼은 diff_drive_node가 소유하므로
+# 이 서비스는 포트를 건드리지 않음 — 둘을 동시에 켜도 안전.
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec python3 tools/motor_dashboard.py --port 8766'
 Restart=on-failure
 RestartSec=3
 

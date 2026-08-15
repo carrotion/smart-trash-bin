@@ -1,0 +1,17 @@
+[Unit]
+Description=Smart Trash Bin - diff drive node (owns motor serial port, publishes /odom)
+After=network.target smart-trash-imu.service
+Wants=smart-trash-imu.service
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/catkin_ws
+# 시리얼 포트(/dev/ttyUSB0)의 유일한 소유자. motor_dashboard는 이제 토픽만 쓰므로
+# 동시 실행 안전하지만, mapping.launch.py를 쓸 땐 lidar 서비스와의 충돌만 주의.
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_motion diff_drive_node'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

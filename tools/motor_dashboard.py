@@ -1,113 +1,102 @@
 #!/usr/bin/env python3
-"""4채널 모터 드라이버 실시간 대시보드 — 바퀴별 상태 + 본체 이동방향 시각화.
+"""4채널 모터 원격 조종 + 상태 대시보드 (ROS2 토픽 기반).
 
-Yahboom 드라이버 시리얼 포트를 이 프로세스가 독점 소유하고
-(CLAUDE.md에 기록된 검증된 프로토콜: 115200 8N1, $CMD:val# ASCII,
-MOTOR_TYPE=1 고정 — TT 프리셋 절대 사용 금지), 주기적으로 엔코더를
-읽어 웹 페이지에 실시간으로 보여준다. 조작은 누르고 있는 동안만
-구동되는 hold-to-drive 방식(뗴면 즉시 정지 + 클라이언트 하트비트)으로
-제한해 오늘 겪은 "정지 명령 무시" 사고가 재발해도 노출 시간을 최소화함.
+⚠️ 2026-08-15 리팩터링: 예전에는 이 대시보드가 시리얼 포트를 직접 열어 $pwm:을
+쐈는데, 그러면 diff_drive_node와 포트를 두고 싸워서 "조종하면서 맵 그리기"가
+불가능했다. 이제는 시리얼을 전혀 안 건드리고 ROS2 토픽만 쓴다:
+
+    발행: /cmd_vel        (geometry_msgs/Twist)  — 조종 명령
+    구독: /odom           (nav_msgs/Odometry)    — 실제 이동/회전 상태
+    구독: /wheel_encoders (std_msgs/Int32MultiArray) — 바퀴별 회전 표시용
+
+따라서 diff_drive_node가 반드시 떠 있어야 동작한다(그 노드가 시리얼 유일 소유자).
+SLAM/맵핑과 동시에 켜둘 수 있어서, 무선조종 하듯 집안을 돌며 맵을 그릴 수 있다.
+
+안전장치:
+  - 버튼을 누르고 있는 동안만 주행, 떼면 램프로 감속 정지
+  - diff_drive_node의 cmd_vel 타임아웃(0.5초)이 최종 방어선 — 이 대시보드가
+    죽거나 와이파이가 끊겨도 로봇은 자동으로 멈춘다
+  - 클라이언트 측 최대 홀드 시간(2초) 제한
 
 사용법:
     python3 tools/motor_dashboard.py [--port 8766]
-    브라우저에서 http://<Pi IP>:8766 접속
 """
 import argparse
 import json
-import re
+import math
 import threading
 import time
-from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import serial
+import rclpy
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from std_msgs.msg import Int32MultiArray
 
-SERIAL_PORT = "/dev/ttyUSB0"
-BAUD = 115200
-MAX_PWM = 1200  # 안전 상한 — 오늘 검증에 쓴 값(500~1000)보다 약간 높은 정도로만 제한
-STOP_TIMEOUT_S = 0.35  # 이 시간 안에 새 명령/하트비트가 안 오면 서버가 자체적으로 정지
-
-WHEEL_NAMES = ["왼쪽뒤", "왼쪽앞", "오른쪽뒤", "오른쪽앞"]
+# 조종 상한 — diff_drive_node의 max_wheel_speed(1.0 m/s)보다 보수적으로 잡음.
+# 실내 맵핑 주행은 느릴수록 SLAM 품질이 좋아서 일부러 낮게 둔다.
+MAX_LINEAR = 0.5   # m/s
+MAX_ANGULAR = 2.5  # rad/s
+STALE_S = 2.0
 
 state_lock = threading.Lock()
 state = {
-    "connected": False,
+    "connected": False,      # diff_drive_node가 살아있고 토픽이 흐르는지
     "encoder": [0, 0, 0, 0],
-    "rate": [0.0, 0.0, 0.0, 0.0],  # counts/sec, 부호=회전방향
-    "commanded_pwm": [0, 0, 0, 0],
-    "last_cmd_ts": 0.0,
+    "rate": [0.0, 0.0, 0.0, 0.0],   # counts/sec (바퀴별 회전 표시용)
+    "linear": 0.0,           # m/s (odom 실측)
+    "angular": 0.0,          # rad/s (odom 실측)
+    "commanded": [0.0, 0.0],  # [linear, angular] 마지막 조종 명령
+    "last_ts": 0.0,
 }
 
-# ThreadingHTTPServer는 요청마다 새 스레드를 띄우고, 백그라운드 폴링 스레드도
-# 따로 돌아서 같은 pyserial Serial 객체를 동시에 건드릴 수 있음(스레드 안전 아님).
-# 램프 기능으로 요청 빈도가 늘면서 실제로 겹쳐서 SerialException이 났던 버그 수정용 락.
-serial_lock = threading.Lock()
 
+class TeleopNode(Node):
+    def __init__(self):
+        super().__init__('motor_dashboard')
+        self.pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.create_subscription(Odometry, 'odom', self._on_odom, 10)
+        self.create_subscription(Int32MultiArray, 'wheel_encoders', self._on_enc, 10)
+        self._prev_enc = None
+        self._prev_enc_ts = None
 
-def send(ser, cmd: bytes, wait=0.1):
-    with serial_lock:
-        ser.reset_input_buffer()
-        ser.write(cmd)
-        time.sleep(wait)
-        return ser.read(ser.in_waiting)  # in_waiting=0이면 즉시 빈 바이트 반환 (블로킹 안 함)
-
-
-_MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
-
-
-def read_encoder(ser):
-    # 이 락을 오래 붙잡을수록 /api/drive 요청들이 밀려서 쌓이므로
-    # (실제로 그래서 "버튼 떼도 한참 뒤에 반응하는" 버그가 났었음) 최소한만 대기
-    with serial_lock:
-        ser.reset_input_buffer()
-        ser.write(b"$upload:1#")
-        time.sleep(0.04)
-        raw = ser.read(ser.in_waiting)  # 위와 동일한 이유로 블로킹 방지
-        ser.write(b"$upload:0#")
-        time.sleep(0.02)
-        ser.reset_input_buffer()
-    # 잘린 프레임(마지막 줄이 '#'로 안 끝나는 경우)을 걸러내기 위해
-    # 끝에서부터 완전한 $MAll:...# 형태와 매치되는 마지막 줄만 사용
-    lines = raw.decode(errors="replace").split("\r\n")
-    for line in reversed(lines):
-        m = _MALL_RE.match(line.strip())
-        if m:
-            return [int(g) for g in m.groups()]
-    return None
-
-
-def watchdog_and_poll_loop(ser):
-    prev_enc = None
-    prev_ts = None
-    while True:
-        enc = read_encoder(ser)
-        now = time.time()
+    def _on_odom(self, msg: Odometry):
         with state_lock:
-            if enc is not None:
-                state["connected"] = True
-                if prev_enc is not None and prev_ts is not None:
-                    dt = max(now - prev_ts, 1e-3)
-                    state["rate"] = [(enc[i] - prev_enc[i]) / dt for i in range(4)]
-                state["encoder"] = enc
-                prev_enc, prev_ts = enc, now
-            else:
+            state["connected"] = True
+            state["last_ts"] = time.time()
+            state["linear"] = msg.twist.twist.linear.x
+            state["angular"] = msg.twist.twist.angular.z
+
+    def _on_enc(self, msg: Int32MultiArray):
+        counts = list(msg.data)
+        now = time.time()
+        if len(counts) != 4:
+            return
+        with state_lock:
+            if self._prev_enc is not None and self._prev_enc_ts is not None:
+                dt = max(now - self._prev_enc_ts, 1e-3)
+                state["rate"] = [(counts[i] - self._prev_enc[i]) / dt for i in range(4)]
+            state["encoder"] = counts
+        self._prev_enc, self._prev_enc_ts = counts, now
+
+    def send_cmd(self, linear, angular):
+        msg = Twist()
+        msg.linear.x = float(max(-MAX_LINEAR, min(MAX_LINEAR, linear)))
+        msg.angular.z = float(max(-MAX_ANGULAR, min(MAX_ANGULAR, angular)))
+        self.pub.publish(msg)
+        with state_lock:
+            state["commanded"] = [msg.linear.x, msg.angular.z]
+
+
+def staleness_watchdog():
+    """diff_drive_node가 죽으면 '연결 안 됨'으로 표시 (가짜 초록불 방지)."""
+    while True:
+        with state_lock:
+            if state["connected"] and time.time() - state["last_ts"] > STALE_S:
                 state["connected"] = False
-
-            # 워치독: 마지막 명령/하트비트가 STOP_TIMEOUT_S 넘게 안 오면 강제 정지
-            if state["commanded_pwm"] != [0, 0, 0, 0] and now - state["last_cmd_ts"] > STOP_TIMEOUT_S:
-                state["commanded_pwm"] = [0, 0, 0, 0]
-                send(ser, b"$pwm:0,0,0,0#", wait=0.02)
-
-        time.sleep(0.15)
-
-
-def apply_drive(ser, m1, m2, m3, m4):
-    vals = [max(-MAX_PWM, min(MAX_PWM, int(v))) for v in (m1, m2, m3, m4)]
-    cmd = f"$pwm:{vals[0]},{vals[1]},{vals[2]},{vals[3]}#".encode()
-    send(ser, cmd, wait=0.02)
-    with state_lock:
-        state["commanded_pwm"] = vals
-        state["last_cmd_ts"] = time.time()
+                state["rate"] = [0.0, 0.0, 0.0, 0.0]
+        time.sleep(0.5)
 
 
 PAGE = """<!doctype html>
@@ -201,27 +190,32 @@ PAGE = """<!doctype html>
 </div>
 
 <script>
-const MAX_PWM = 1200;  // 서버(motor_dashboard.py)의 안전 상한과 일치시킴
+// 서버(motor_dashboard.py)의 상한과 일치. PWM이 아니라 cmd_vel 속도 단위.
+const MAX_LINEAR = 0.5;   // m/s
+const MAX_ANGULAR = 2.5;  // rad/s
 const slider = document.getElementById('speedSlider');
 const speedLabel = document.getElementById('speedLabel');
 
-function currentSpeed() {
-  const pct = Number(slider.value);
-  return Math.round(MAX_PWM * pct / 100);
+function speedFrac() {
+  return Number(slider.value) / 100;
 }
 function updateSpeedLabel() {
-  speedLabel.textContent = `${slider.value}% (PWM ${currentSpeed()})`;
+  const f = speedFrac();
+  speedLabel.textContent =
+    `${slider.value}% (${(MAX_LINEAR * f).toFixed(2)} m/s · ${(MAX_ANGULAR * f).toFixed(1)} rad/s)`;
 }
 slider.addEventListener('input', updateSpeedLabel);
 updateSpeedLabel();
 
 function cmdsForSpeed() {
-  const s = currentSpeed();
+  const f = speedFrac();
+  const v = MAX_LINEAR * f;
+  const w = MAX_ANGULAR * f;
   return {
-    fwd:   [ s,  s,  s,  s],
-    back:  [-s, -s, -s, -s],
-    left:  [-s, -s,  s,  s],
-    right: [ s,  s, -s, -s],
+    fwd:   {linear:  v, angular: 0},
+    back:  {linear: -v, angular: 0},
+    left:  {linear: 0, angular:  w},   // ROS 표준: +z = 반시계 = 좌회전
+    right: {linear: 0, angular: -w},
   };
 }
 
@@ -239,11 +233,11 @@ let tickTimer = null;
 let holdStartedAt = 0;
 let driveInFlight = false;  // 이전 /api/drive 응답 오기 전엔 새로 안 쏨 — 요청 밀림 방지
 
-async function drive(vals) {
-  if (driveInFlight) return;  // 서버가 밀려있으면 이번 틱은 건너뜀(쌓이지 않게)
+async function drive(cmd) {
+  if (driveInFlight) return;  // 응답이 밀려있으면 이번 틱은 건너뜀(요청 적체 방지)
   driveInFlight = true;
   try {
-    await fetch('/api/drive', {method:'POST', body: JSON.stringify({pwm: vals})});
+    await fetch('/api/drive', {method:'POST', body: JSON.stringify(cmd)});
   } finally {
     driveInFlight = false;
   }
@@ -257,8 +251,8 @@ function driveTick() {
   if (currentScale < targetScale) currentScale = Math.min(currentScale + RAMP_STEP, targetScale);
   else if (currentScale > targetScale) currentScale = Math.max(currentScale - RAMP_STEP, targetScale);
 
-  const base = activeCmd ? cmdsForSpeed()[activeCmd] : [0, 0, 0, 0];
-  drive(base.map(v => Math.round(v * currentScale)));
+  const base = activeCmd ? cmdsForSpeed()[activeCmd] : {linear: 0, angular: 0};
+  drive({linear: base.linear * currentScale, angular: base.angular * currentScale});
 
   if (currentScale === 0 && targetScale === 0) {
     clearInterval(tickTimer);
@@ -366,10 +360,11 @@ async function tick() {
 
   const connected = res.connected;
   document.getElementById('connDot').style.background = connected ? 'var(--good)' : 'var(--critical)';
-  document.getElementById('connText').textContent = connected ? '드라이버 연결됨' : '드라이버 응답 없음';
+  document.getElementById('connText').textContent =
+    connected ? 'diff_drive 연결됨' : 'diff_drive 응답 없음 (노드 실행 필요)';
 
   const rate = res.rate;
-  const pwm = res.commanded_pwm;
+  const cmd = res.commanded || [0, 0];
   rate.forEach((r, i) => {
     const moving = Math.abs(r) > 30;
     wheelRects[i].setAttribute('fill', moving ? cssVar('--accent') : cssVar('--wheel-idle'));
@@ -377,25 +372,23 @@ async function tick() {
     wheelArrows[i].setAttribute('fill', moving ? 'white' : cssVar('--text-primary'));
   });
 
-  // 본체 이동방향 추정: 좌측평균(M1,M2) vs 우측평균(M3,M4)
-  const leftAvg = (rate[0] + rate[1]) / 2;
-  const rightAvg = (rate[2] + rate[3]) / 2;
-  const linear = (leftAvg + rightAvg) / 2;  // 부호는 엔코더 규약(양수=반시계=왼쪽바퀴 전진 방향)
-  const angular = rightAvg - leftAvg;
+  // 이동 방향은 odom 실측값으로 판정 (회전은 IMU 자이로 기반이라 엔코더 추정보다 정확)
+  const linear = res.linear || 0;
+  const angular = res.angular || 0;
 
   let moveText = '정지';
   let arrow = '';
-  if (Math.abs(linear) > 40 && Math.abs(angular) < Math.abs(linear) * 0.5) {
-    // 직진/후진 위주 — 부호는 왼쪽 바퀴 기준(양수=CCW=전진)
+  if (Math.abs(linear) > 0.03 && Math.abs(angular) < 0.3) {
     if (linear > 0) { moveText = '전진'; arrow = '↑'; }
     else { moveText = '후진'; arrow = '↓'; }
-  } else if (Math.abs(angular) > 40) {
-    if (angular > 0) { moveText = '우회전'; arrow = '↻'; }
-    else { moveText = '좌회전'; arrow = '↺'; }
+  } else if (Math.abs(angular) > 0.15) {
+    if (angular > 0) { moveText = '좌회전'; arrow = '↺'; }
+    else { moveText = '우회전'; arrow = '↻'; }
   }
   bodyArrow.textContent = arrow;
+  const moving = Math.abs(cmd[0]) > 1e-3 || Math.abs(cmd[1]) > 1e-3;
   document.getElementById('moveText').textContent = moveText +
-    (pwm.some(v => v !== 0) ? ` (PWM ${pwm.join(',')})` : '');
+    (moving ? ` (명령 ${cmd[0].toFixed(2)} m/s, ${cmd[1].toFixed(1)} rad/s)` : '');
 }
 
 tick();
@@ -405,53 +398,45 @@ setInterval(tick, 200);
 </html>
 """
 
-
 class Handler(BaseHTTPRequestHandler):
-    ser = None
+    node = None
 
     def log_message(self, *a):
         pass
 
-    def _send_json(self, obj, code=200):
-        body = json.dumps(obj).encode("utf-8")
+    def _send(self, code, body, ctype):
         self.send_response(code)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):
-            body = PAGE.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
         elif self.path == "/api/status":
             with state_lock:
-                self._send_json(dict(state))
+                self._send(200, json.dumps(state).encode("utf-8"), "application/json")
         else:
-            self._send_json({"error": "not found"}, 404)
+            self._send(404, b"not found", "text/plain")
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length) if length else b"{}"
         try:
-            payload = json.loads(raw or b"{}")
+            payload = json.loads(self.rfile.read(length) or b"{}") if length else {}
         except json.JSONDecodeError:
             payload = {}
 
         if self.path == "/api/drive":
-            pwm = payload.get("pwm", [0, 0, 0, 0])
-            if isinstance(pwm, list) and len(pwm) == 4:
-                apply_drive(Handler.ser, *pwm)
-            self._send_json({"ok": True})
+            Handler.node.send_cmd(payload.get("linear", 0.0), payload.get("angular", 0.0))
+            self._send(200, b'{"ok":true}', "application/json")
         elif self.path == "/api/stop":
-            apply_drive(Handler.ser, 0, 0, 0, 0)
-            self._send_json({"ok": True})
+            # 정지는 유실되면 안 되므로 여러 번 발행
+            for _ in range(3):
+                Handler.node.send_cmd(0.0, 0.0)
+            self._send(200, b'{"ok":true}', "application/json")
         else:
-            self._send_json({"error": "not found"}, 404)
+            self._send(404, b"not found", "text/plain")
 
 
 def main():
@@ -459,21 +444,22 @@ def main():
     ap.add_argument("--port", type=int, default=8766)
     args = ap.parse_args()
 
-    ser = serial.Serial(SERIAL_PORT, BAUD, timeout=0.2)  # 방어적으로 짧게 (그래도 위 수정이 핵심)
-    time.sleep(0.3)
-    # 검증된 안전 설정 고정 적용 — TT 프리셋(3/4) 절대 사용 금지
-    send(ser, b"$mtype:1#")
-    send(ser, b"$deadzone:1900#")
-    send(ser, b"$wdiameter:67.00#")
-    send(ser, b"$pwm:0,0,0,0#")
+    rclpy.init()
+    node = TeleopNode()
+    Handler.node = node
 
-    Handler.ser = ser
-    t = threading.Thread(target=watchdog_and_poll_loop, args=(ser,), daemon=True)
-    t.start()
+    threading.Thread(target=staleness_watchdog, daemon=True).start()
+    threading.Thread(target=lambda: rclpy.spin(node), daemon=True).start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
-    print(f"모터 대시보드 시작: http://<Pi IP>:{args.port}")
-    server.serve_forever()
+    print(f"모터 조종 대시보드 시작: http://<Pi IP>:{args.port}", flush=True)
+    try:
+        server.serve_forever()
+    finally:
+        try:
+            node.send_cmd(0.0, 0.0)  # 종료 시 반드시 정지 명령
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

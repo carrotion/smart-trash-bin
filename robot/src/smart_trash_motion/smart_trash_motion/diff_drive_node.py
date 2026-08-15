@@ -25,6 +25,7 @@ from geometry_msgs.msg import Quaternion, Twist, TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
+from std_msgs.msg import Int32MultiArray
 from tf2_ros import TransformBroadcaster
 
 _MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
@@ -104,6 +105,9 @@ class DiffDriveNode(Node):
         self._imu_seen = False
 
         self._odom_pub = self.create_publisher(Odometry, 'odom', 10)
+        # 4채널 원시 엔코더 누적값 — 웹 대시보드가 바퀴별 상태를 그리는 데 씀
+        # (대시보드는 시리얼을 직접 못 열므로 이 노드가 유일한 창구)
+        self._encoder_pub = self.create_publisher(Int32MultiArray, 'wheel_encoders', 10)
         self._tf_broadcaster = TransformBroadcaster(self) if self._publish_tf else None
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd_vel, 10)
         if self._use_imu:
@@ -214,6 +218,10 @@ class DiffDriveNode(Node):
         now = time.time()
         if counts is None:
             return
+
+        enc_msg = Int32MultiArray()
+        enc_msg.data = [int(c) for c in counts]
+        self._encoder_pub.publish(enc_msg)
 
         if self._prev_counts is None:
             self._prev_counts = counts
