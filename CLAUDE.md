@@ -2,6 +2,43 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
+## 🎯 Nav2 경로계획 파이프라인 첫 성공 + 버그 5건 (2026-08-16 밤)
+
+`ComputePathToPose`가 여러 목표에 대해 전부 `error_code: 0` SUCCEEDED. **아직 실제
+주행(explore_lite)은 안 돌림** — 경로계획까지만 검증됨. 검증은 새로 추가한
+`enable_explore:=false` 런치 인자로 했음(Nav2만 뜨고 목표를 보내는 주체가 없어
+**로봇이 절대 안 움직임**). 설정 검증은 앞으로도 이 모드로 할 것.
+
+찾아낸 버그와 원인:
+
+1. **🔴 라이다가 로봇 자기 구조물을 봄 — 이게 진짜 원인.** 마운트/상판이 360°
+   전방향 0.06~0.10m에 153포인트로 찍혀서, 로봇 자기 위치가 맵에 장애물로 박히고
+   코스트맵엔 로봇을 감싼 lethal 링이 생김 → **어떤 목표도 경로가 안 나옴.**
+   실측 히스토그램상 0.10~0.30m가 완전히 비어 있어 임계값 **0.15m**로 확정.
+   - 해결: `smart_trash_sensors/scan_filter_node.py` 신규(드라이버 `scan_raw` →
+     필터 → `scan`). 다른 노드는 전부 기존처럼 `scan`만 보면 되므로 수정 불필요.
+   - ⚠️ **slam_toolbox에는 `min_laser_range` 파라미터가 아예 없다**(`max_laser_range`만
+     있음). yaml에 적어도 조용히 무시됨 — 여기 기대다가 한참 헤맸음.
+   - ⚠️ 필터 발행 QoS는 **RELIABLE**이어야 함. BEST_EFFORT로 뒀더니 RELIABLE로
+     구독하는 `sensor_dashboard`가 조용히 끊김(SLAM/Nav2는 BEST_EFFORT라 괜찮았음).
+2. **global_costmap이 `/map`을 영원히 못 받음.** 코스트맵은 `/global_costmap`
+   네임스페이스 안의 별도 노드라 상대 토픽명 `"map"`이 `/global_costmap/map`으로
+   해석됨. → **`map_topic: "/map"`처럼 절대경로로** 써야 함. `map_subscribe_transient_local: true`도 필요(SLAM이 TRANSIENT_LOCAL로 발행).
+3. **lifecycle_manager `node_names`에 코스트맵을 넣으면 안 됨.** 코스트맵은
+   planner/controller가 자기 `on_configure`에서 직접 전이시킴 — 표준 nav2_bringup의
+   `lifecycle_nodes` 목록에도 코스트맵은 없음.
+4. **EKF가 세션 간에 상태를 넘김.** `diff_drive`만 재시작하고 `ekf`를 안 했더니
+   누적 yaw −60.6°를 그대로 들고 시작함(맵 방향이 통째로 틀어짐).
+   → **매핑 세션 시작 전 `smart-trash-diff-drive`와 `smart-trash-ekf`를 같이 재시작할 것.**
+5. **`kill -9` 후 DDS 공유메모리 잠금파일이 남아 SLAM이 안 뜸**
+   (`Failed init_port fastrtps_portNNNN`). 좀비 프로세스가 `_el` 파일을 잡고 있는
+   게 원인. `pgrep`으로 잔존 프로세스를 **0이 될 때까지** 확실히 죽인 뒤,
+   `lsof`로 살아있는 프로세스가 쓰는 파일을 제외하고 고아 파일만 지울 것.
+
+**진단 시 주의**: `ros2 param get /planner_server global_costmap.*`는 항상
+"Parameter not set"이 나온다 — 코스트맵은 `/planner_server`가 아니라
+**`/global_costmap/global_costmap`** 노드다. 이걸 몰라서 멀쩡한 YAML을 한참 의심했음.
+
 ## 🧭 자율주행 프론티어 탐색 첫 통합 (2026-08-16, 실주행 테스트 전)
 
 `robot/src/m-explore-ros2`(서브모듈, `feature/slam_toolbox_compat` 브랜치 — main엔
@@ -12,9 +49,11 @@ SLAM Toolbox와 같이 쓸 때 나던 seg fault가 있어서 이걸 씀) + Nav2�
   직접 구독(코스트맵 안 거침).
 - 로봇 실측 20x20cm(사용자 확인) 기준 robot_radius=0.18m, 속도는 보수적
   (max 0.20m/s, 0.8rad/s) — 오늘 실주행에서 0.3m/s가 맵 품질에 적절했던 것 참고.
-- **⚠️ 아직 실제로 자율주행 테스트를 안 해봤음.** 범퍼/낙하 센서가 없어 라이다
-  단독 회피만 가능 — 첫 실행은 반드시 사람이 옆에서 지켜보고 즉시 개입
-  가능한 상태로 할 것.
+- **진행상황(2026-08-16 밤 갱신)**: 경로계획까지는 검증 완료(위 "Nav2 경로계획
+  파이프라인 첫 성공" 절 참고). **explore_lite로 실제 주행하는 건 아직 안 해봄.**
+  범퍼/낙하 센서가 없어 라이다 단독 회피만 가능 — 첫 실주행은 반드시 사람이
+  옆에서 지켜보고 즉시 개입 가능한 상태로 할 것(맵 대시보드 `:8768`에 비상정지
+  버튼 있음).
 - 다음 단계(사용자 요청): 탐색 중 `tools/wifi_signal_logger.py`도 같이 돌려서
   위치별 WiFi 신호 기록 → 맵 위에 커버리지 히트맵 시각화 → 커버리지 나쁜
   구역은 Nav2 Keepout Zones 코스트맵 필터로 자율주행 금지구역 지정 (아직 미착수).

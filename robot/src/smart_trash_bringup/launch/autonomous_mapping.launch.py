@@ -3,6 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -34,6 +35,10 @@ def generate_launch_description():
     declare_explore_params_cmd = DeclareLaunchArgument(
         'explore_params_file',
         default_value=os.path.join(bringup_share, 'config', 'explore_params.yaml'))
+    # enable_explore:=false로 두면 Nav2 스택만 뜨고 아무도 목표를 안 보낸다 =
+    # 로봇이 절대 안 움직임. 설정/코스트맵 검증을 안전하게 하기 위한 스위치.
+    declare_enable_explore_cmd = DeclareLaunchArgument(
+        'enable_explore', default_value='true')
 
     mapping_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -72,11 +77,13 @@ def generate_launch_description():
         package='explore_lite', executable='explore',
         name='explore_node', output='screen',
         parameters=[explore_params_file],
-        remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')])
+        remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
+        condition=IfCondition(LaunchConfiguration('enable_explore')))
 
     ld = LaunchDescription()
     ld.add_action(declare_nav2_params_cmd)
     ld.add_action(declare_explore_params_cmd)
+    ld.add_action(declare_enable_explore_cmd)
     ld.add_action(mapping_launch)
     ld.add_action(controller_server)
     ld.add_action(planner_server)

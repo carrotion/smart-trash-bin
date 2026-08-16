@@ -103,8 +103,10 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.3
-    default_nav_to_pose_bt_xml: ""
-    default_nav_through_poses_bt_xml: ""
+    # 빈 문자열로 두면 "Empty Tree" 에러로 목표마다 즉시 실패함(2026-08-16
+    # 첫 테스트에서 발견) — nav2_bt_navigator가 제공하는 표준 기본 트리로 지정.
+    default_nav_to_pose_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
+    default_nav_through_poses_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
 
 global_costmap:
   global_costmap:
@@ -121,8 +123,14 @@ global_costmap:
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
-        map_topic: "map"
-        subscribe_to_updates: true
+        # ⚠️ 반드시 앞에 "/"를 붙인 절대경로여야 함. 이 코스트맵은 /global_costmap
+        # 네임스페이스 안의 노드라, 상대명 "map"은 /global_costmap/map으로 해석돼서
+        # 존재하지 않는 토픽을 구독하고 "no map received"로 조용히 실패한다
+        # (2026-08-16 첫 자율주행 테스트가 실패한 실제 원인).
+        map_topic: "/map"
+        # SLAM Toolbox의 /map은 TRANSIENT_LOCAL durability로 나오므로 구독자도
+        # 맞춰줘야 붙는다(안 맞으면 QoS 불일치로 조용히 아무것도 안 받음).
+        map_subscribe_transient_local: true
         transform_tolerance: 0.3
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -136,10 +144,20 @@ global_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 12.0
           obstacle_max_range: 12.0
+          # ⚠️ 로봇 자기 구조물(라이다 마운트/상판)이 360° 전방향 0.06~0.10m에
+          # 찍힌다 — 안 걸러내면 코스트맵에 로봇을 감싼 장애물 링이 생겨서
+          # 어떤 경로도 못 낸다. 실측상 0.10~0.30m가 빈 구간이라 0.15m로 컷.
+          # (SLAM 쪽 min_laser_range와 같은 값으로 맞춰둘 것)
+          obstacle_min_range: 0.15
+          raytrace_min_range: 0.15
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
         inflation_radius: 0.3
+      # 기본값(false)이면 활성화 직후 1회만 전체 코스트맵을 내보내고 그 뒤론
+      # 증분 업데이트만 발행해서, 나중에 붙은 구독자(진단 스크립트/대시보드)가
+      # 전체 그림을 못 받는다. 진단 편의를 위해 매 주기 전체 발행.
+      always_send_full_costmap: true
 
 local_costmap:
   local_costmap:
@@ -167,16 +185,25 @@ local_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 12.0
           obstacle_max_range: 12.0
+          # ⚠️ 로봇 자기 구조물(라이다 마운트/상판)이 360° 전방향 0.06~0.10m에
+          # 찍힌다 — 안 걸러내면 코스트맵에 로봇을 감싼 장애물 링이 생겨서
+          # 어떤 경로도 못 낸다. 실측상 0.10~0.30m가 빈 구간이라 0.15m로 컷.
+          # (SLAM 쪽 min_laser_range와 같은 값으로 맞춰둘 것)
+          obstacle_min_range: 0.15
+          raytrace_min_range: 0.15
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
         inflation_radius: 0.3
       always_send_full_costmap: true
 
-lifecycle_manager:
+lifecycle_manager_navigation:
   ros__parameters:
     autostart: true
+    # ⚠️ 코스트맵(global_costmap/global_costmap 등)은 여기 넣으면 안 됨 —
+    # planner_server/controller_server가 자기 on_configure에서 내부 코스트맵을
+    # 직접 생성·전이시키므로, lifecycle_manager가 또 전이시키면 이중 전이가 된다.
+    # 표준 nav2_bringup의 lifecycle_nodes 목록에도 코스트맵은 없음(2026-08-16 확인).
     node_names:
-      ["controller_server", "planner_server", "behavior_server", "bt_navigator",
-       "global_costmap/global_costmap", "local_costmap/local_costmap"]
+      ["controller_server", "planner_server", "behavior_server", "bt_navigator"]
     bond_timeout: 10.0

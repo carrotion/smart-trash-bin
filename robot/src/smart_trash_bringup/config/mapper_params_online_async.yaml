@@ -22,8 +22,11 @@ slam_toolbox:
     transform_publish_period: 0.02
     map_update_interval: 5.0
     resolution: 0.05
-    # LD06 spec: 12m range, ~2cm blind zone (docs/phase0_hardware_ros2_guide.md)
-    min_laser_range: 0.02
+    # ⚠️ slam_toolbox에는 `min_laser_range` 파라미터가 존재하지 않는다
+    # (`ros2 param list /slam_toolbox`에 max_laser_range만 있음, 2026-08-16 확인).
+    # 예전에 여기 min_laser_range: 0.02가 적혀 있었지만 조용히 무시되고 있었고,
+    # 그것도 모른 채 이 값을 올려서 자기반사를 거르려다 한참 헤맸음.
+    # 근거리 자기반사 제거는 scan_filter_node(스캔 소스 단)가 담당한다.
     max_laser_range: 12.0
     minimum_time_interval: 0.5
     transform_timeout: 0.2
