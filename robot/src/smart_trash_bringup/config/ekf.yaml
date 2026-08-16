@@ -1,0 +1,35 @@
+# robot_localization EKF — 휠 오도메트리(odom0) + IMU 자이로(imu0) 융합.
+# 2026-08-16 도입. 설계: 전진거리/x,y는 휠 오도메트리, 회전각(yaw/vyaw)은 IMU
+# 자이로 전담 — diff_drive_node가 발행하는 /odom은 이제 순수 휠 기반(자이로
+# 융합 없음)이라 여기서 처음이자 유일하게 IMU 자이로가 섞인다(이중계산 방지).
+# CLAUDE.md "오도메트리 설계" 절 및 diff_drive_node.py 주석 참고.
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    two_d_mode: true
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+    publish_tf: true
+
+    odom0: odom
+    # [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+    odom0_config: [true,  true,  false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, false,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    imu0: imu/data
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 20
+    imu0_remove_gravitational_acceleration: true

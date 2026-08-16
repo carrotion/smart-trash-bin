@@ -58,6 +58,12 @@ class ImuPublisherNode(Node):
         # that downstream. Mark orientation unknown per REP-145.
         msg.orientation_covariance[0] = -1.0
 
+        # EKF가 신뢰도 가중에 쓰는 값. ICM-20948 자이로/가속도계 노이즈에 대한
+        # 보수적인 추정치(정밀 캘리브레이션 전) — 대각항만 채움, 축간 상관 없음으로 가정.
+        for i in (0, 4, 8):
+            msg.angular_velocity_covariance[i] = 0.0004       # (rad/s)^2
+            msg.linear_acceleration_covariance[i] = 0.02      # (m/s^2)^2
+
         self._pub.publish(msg)
 
 

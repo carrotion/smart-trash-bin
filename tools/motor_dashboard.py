@@ -6,7 +6,9 @@
 불가능했다. 이제는 시리얼을 전혀 안 건드리고 ROS2 토픽만 쓴다:
 
     발행: /cmd_vel        (geometry_msgs/Twist)  — 조종 명령
-    구독: /odom           (nav_msgs/Odometry)    — 실제 이동/회전 상태
+    구독: /odometry/filtered (nav_msgs/Odometry) — EKF(robot_localization) 융합 후
+                              실제 이동/회전 상태 (2026-08-16 도입). /odom(원본,
+                              순수 휠 기반)은 회전각 신뢰도가 낮아서 대신 이걸 씀.
     구독: /wheel_encoders (std_msgs/Int32MultiArray) — 바퀴별 회전 표시용
 
 따라서 diff_drive_node가 반드시 떠 있어야 동작한다(그 노드가 시리얼 유일 소유자).
@@ -58,7 +60,7 @@ class TeleopNode(Node):
         super().__init__('motor_dashboard')
         # 발행 큐도 1 — 오래된 조종 명령이 쌓여서 뒤늦게 전달되지 않도록
         self.pub = self.create_publisher(Twist, 'cmd_vel', 1)
-        self.create_subscription(Odometry, 'odom', self._on_odom, 10)
+        self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
         self.create_subscription(Int32MultiArray, 'wheel_encoders', self._on_enc, 10)
         self._prev_enc = None
         self._prev_enc_ts = None
@@ -474,7 +476,8 @@ def main():
     Handler.node = node
 
     threading.Thread(target=staleness_watchdog, daemon=True).start()
-    threading.Thread(target=lambda: rclpy.spin(node), daemon=True).start()
+    spin_thread = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
+    spin_thread.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
 
@@ -491,6 +494,19 @@ def main():
     finally:
         try:
             node.send_cmd(0.0, 0.0)  # 종료 시 반드시 정지 명령
+        except Exception:
+            pass
+        # rclpy.spin()이 백그라운드 데몬 스레드에서 도는 채로 인터프리터가
+        # 그냥 종료되면, 그 스레드가 DDS 콜백 도중 거칠게 죽으면서
+        # "terminate called without an active exception"로 core dump 나는
+        # 문제가 있었음(2026-08-16, ROS 그래프에 노드가 많아지면서 레이스가
+        # 잘 걸림). rclpy.shutdown()으로 spin()을 먼저 정상 반환시키고
+        # 스레드가 실제로 끝나길 기다린 뒤에 노드를 정리해야 안전하다.
+        if rclpy.ok():
+            rclpy.shutdown()
+        spin_thread.join(timeout=2.0)
+        try:
+            node.destroy_node()
         except Exception:
             pass
 

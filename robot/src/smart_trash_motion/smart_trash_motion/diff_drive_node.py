@@ -62,12 +62,19 @@ class DiffDriveNode(Node):
         self.declare_parameter('min_pwm', 120)
         self.declare_parameter('cmd_vel_timeout', 0.5)       # 이 시간 명령 없으면 정지
         self.declare_parameter('odom_rate_hz', 20.0)
-        self.declare_parameter('publish_tf', True)
-        # 회전각을 휠 엔코더 대신 IMU 자이로로 계산 (스키드-스티어 필수).
-        # 4WD 고정축이라 제자리 회전 시 바퀴가 미끄러져서 휠 기반 각도는 재현성이 없음
-        # (같은 명령에 odom 373° vs 실제 193°, 게다가 바닥/속도/전압마다 달라짐).
-        # 자이로는 미끄러짐과 무관하게 실제 각속도를 측정하므로 이쪽이 정답.
-        self.declare_parameter('use_imu_for_yaw', True)
+        # 2026-08-16 EKF(robot_localization) 도입 이후 기본값 False로 변경.
+        # odom->base_link TF는 이제 ekf_node가 전담 발행함 — 이 노드가 같이 발행하면
+        # 두 노드가 같은 TF를 발행하는 충돌(깜빡임/불일치)이 생김.
+        self.declare_parameter('publish_tf', False)
+        # 2026-08-16 EKF 도입 이후 기본값 False로 변경. 예전엔 이 노드가 직접
+        # 자이로를 섞어 odom의 yaw를 계산했는데, 이제 그 융합은 ekf_node가
+        # (원본 /imu/data를 직접 구독해서) 전담한다. 이 노드가 내부적으로 이미
+        # 자이로를 섞은 odom을 내보내면서 EKF에도 같은 원본 자이로를 또 넣으면
+        # 같은 물리 측정값을 이중으로 반영하는 셈이라(공분산이 부당하게 좁아짐),
+        # 여기서는 순수 휠 기반 odom만 내보내고 IMU 자이로 융합은 EKF에 맡긴다.
+        # (휠 기반 회전각이 부정확한 건 알려진 사실이지만, 그래서 아래 공분산에서
+        # yaw/vyaw를 일부러 크게 잡아 EKF가 이 값을 불신하도록 만들어뒀다.)
+        self.declare_parameter('use_imu_for_yaw', False)
         self.declare_parameter('gyro_bias_samples', 100)     # 시작 시 정지 상태 바이어스 측정
 
         p = self.get_parameter
@@ -277,6 +284,17 @@ class DiffDriveNode(Node):
         odom.pose.pose.orientation = q
         odom.twist.twist.linear.x = d_center / dt
         odom.twist.twist.angular.z = d_theta / dt
+
+        # EKF(robot_localization)가 이 값으로 신뢰도를 판단한다. 휠 기반 선속도/거리는
+        # 비교적 정확하지만(직선 주행 검증 완료), 회전각은 스키드-스티어 미끄러짐 때문에
+        # 신뢰 불가 — yaw/vyaw 분산을 크게 잡아 EKF가 IMU 쪽을 우선하게 만든다.
+        # 6x6 대각행렬만 채움(row-major, [x,y,z,roll,pitch,yaw] 순서).
+        odom.pose.covariance[0] = 0.02    # x, m^2
+        odom.pose.covariance[7] = 0.02    # y, m^2
+        odom.pose.covariance[35] = 999.0  # yaw, rad^2 — 사실상 무시하라는 신호
+        odom.twist.covariance[0] = 0.02   # vx, (m/s)^2
+        odom.twist.covariance[35] = 999.0  # vyaw, (rad/s)^2 — 사실상 무시
+
         self._odom_pub.publish(odom)
 
         if self._tf_broadcaster is not None:
