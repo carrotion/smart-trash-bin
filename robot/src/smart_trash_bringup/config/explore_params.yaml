@@ -12,10 +12,18 @@
     visualize: true
     planner_frequency: 0.15
     progress_timeout: 30.0
-    potential_scale: 3.0
+    # ⚠️ 3.0(기본값)은 "가까운 프론티어"를 너무 강하게 선호한다. 그러면 탐색
+    # 초기에 0.2m짜리 목표를 고르는데, 그 거리는 SLAM Toolbox의 노드 추가
+    # 임계값(minimum_travel_distance 0.3m)보다 짧아서 **맵이 자라지 않는다**.
+    # 맵이 안 자라니 새 프론티어도 안 생기고 explore가 "All frontiers
+    # traversed"로 멈춰버린다 — 2026-08-16 첫 실주행이 정확히 이 교착이었다.
+    # 1.0으로 낮춰 프론티어 크기(gain_scale)의 비중을 키우면 더 멀고 실속 있는
+    # 목표를 골라서 매 이동이 맵 성장으로 이어진다.
+    potential_scale: 1.0
     orientation_scale: 0.0
     gain_scale: 1.0
     transform_tolerance: 0.3
-    # 방이 작고 로봇도 20cm급이라 기본값(0.75m)보다 낮춰서 더 꼼꼼히 탐색.
-    min_frontier_size: 0.4
+    # 방이 작고 로봇도 20cm급이라 기본값(0.75m)보다는 낮추되, 너무 낮추면
+    # 자잘한 프론티어를 쫓느라 이동거리가 짧아져 위 교착에 다시 빠진다.
+    min_frontier_size: 0.5
     return_to_init: false

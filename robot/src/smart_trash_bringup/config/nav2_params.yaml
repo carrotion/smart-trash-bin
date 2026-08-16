@@ -3,8 +3,9 @@
 # 실시간으로 제공하므로 global_costmap의 static_layer가 그 /map을 직접 구독한다
 # (Nav2 공식 "Navigating While Mapping" 패턴).
 #
-# 로봇 실측: 차체 약 20x20cm(사용자 확인, 2026-08-16) -> 대각선 절반 ~0.141m에
-# 여유를 더해 robot_radius 0.18m. 속도는 맵 품질/안전 우선으로 보수적으로 잡음
+# 로봇 실측: 차체 약 20x20cm(사용자 확인, 2026-08-16) -> 대각선 절반 ~0.141m.
+# robot_radius는 처음 0.18로 잡았다가 실주행에서 로봇을 가둬버려 0.15로 낮춤
+# (아래 global_costmap 주석 참고). 속도는 맵 품질/안전 우선으로 보수적으로 잡음
 # (오늘 실주행 테스트에서 0.3m/s가 SLAM 품질에 적절했던 것 참고). 범퍼/낙하
 # 센서가 아직 없어(로드맵의 VL53L1X 미장착) 라이다 단독 회피만 가능 —
 # 첫 자율주행은 반드시 사람이 옆에서 지켜보고 즉시 개입 가능한 상태로 할 것.
@@ -26,7 +27,11 @@ controller_server:
 
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.2
+      # ⚠️ 0.2는 자율탐색에 너무 크다. explore가 고른 짧은 목표(0.19m)가 이미
+      # 허용오차 안이라 로봇이 **한 발짝도 안 움직이고** "Reached the goal"이
+      # 돼버렸다(2026-08-16 실주행에서 확인). 0.10으로 줄여 짧은 목표도 실제
+      # 이동을 요구하게 한다.
+      xy_goal_tolerance: 0.10
       yaw_goal_tolerance: 0.3
       stateful: true
 
@@ -93,7 +98,11 @@ behavior_server:
     global_frame: odom
     robot_base_frame: base_link
     transform_tolerance: 0.3
-    simulate_ahead_time: 2.0
+    # 2.0이면 2초 앞을 시뮬레이션하는데, 좁은 곳에선 어느 방향으로 돌려도
+    # 충돌 판정이 나서 복구 동작을 **아예 시도조차 안 한다**
+    # ("Collision Ahead - Exiting Spin/DriveOnHeading"). 1.0으로 낮춰
+    # 좁은 곳에서도 조금씩 빠져나올 여지를 준다.
+    simulate_ahead_time: 1.0
     max_rotational_vel: 0.6
     min_rotational_vel: 0.2
     rotational_acc_lim: 1.5
@@ -118,7 +127,12 @@ global_costmap:
       transform_tolerance: 0.3
       rolling_window: false
       track_unknown_space: true
-      robot_radius: 0.18
+      # ⚠️ 0.18은 20x20cm 차체의 외접반경(0.141)에 여유를 더한 값이었는데,
+      # 실주행에서 이게 로봇을 가둬버렸다. 주방에서 냉장고 옆 10cm 지점에
+      # 붙자 "로봇 중심이 벽에서 0.18m 이상"을 만족 못 해 **자기가 서 있는
+      # 셀이 통행불가**가 됐고, 회전·후진·경로계획이 전부 거부됐다.
+      # 0.15로 낮춤 — 외접반경 0.141보다는 여전히 크므로 물리적 안전은 유지된다.
+      robot_radius: 0.15
       resolution: 0.05
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
@@ -153,7 +167,10 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.3
+        # 0.3이면 폭 0.6m 미만 통로가 사실상 전부 고비용/통행불가로 칠해진다.
+        # 집 안엔 폭 0.5m급 통로(주방 냉장고 옆 등)가 흔해서 0.20으로 낮춤.
+        # robot_radius(0.15)보다는 커야 벽에 붙는 경로를 억제할 수 있다.
+        inflation_radius: 0.20
       # 기본값(false)이면 활성화 직후 1회만 전체 코스트맵을 내보내고 그 뒤론
       # 증분 업데이트만 발행해서, 나중에 붙은 구독자(진단 스크립트/대시보드)가
       # 전체 그림을 못 받는다. 진단 편의를 위해 매 주기 전체 발행.
@@ -171,7 +188,7 @@ local_costmap:
       width: 4
       height: 4
       resolution: 0.05
-      robot_radius: 0.18
+      robot_radius: 0.15
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -194,7 +211,10 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.3
+        # 0.3이면 폭 0.6m 미만 통로가 사실상 전부 고비용/통행불가로 칠해진다.
+        # 집 안엔 폭 0.5m급 통로(주방 냉장고 옆 등)가 흔해서 0.20으로 낮춤.
+        # robot_radius(0.15)보다는 커야 벽에 붙는 경로를 억제할 수 있다.
+        inflation_radius: 0.20
       always_send_full_costmap: true
 
 lifecycle_manager_navigation:
