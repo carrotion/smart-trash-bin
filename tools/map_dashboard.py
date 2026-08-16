@@ -15,11 +15,14 @@
 import argparse
 import base64
 import json
+import signal
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
+from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 
@@ -27,11 +30,27 @@ state_lock = threading.Lock()
 state = {"connected": False, "last_ts": 0.0}
 STALE_S = 5.0
 
+# 자율주행(Nav2+explore_lite) 프로세스를 찾아 죽일 때 매칭할 패턴들.
+# 2026-08-16: 비상정지 버튼 추가 — carrotian 소유 프로세스라 sudo 없이
+# pkill 가능(같은 유저면 자기 프로세스는 권한 없이도 kill 가능).
+AUTONOMOUS_PROC_PATTERNS = [
+    "autonomous_mapping.launch.py",
+    "explore_lite", "controller_server", "planner_server",
+    "bt_navigator", "behavior_server",
+]
+
 
 class MapBridge(Node):
     def __init__(self):
         super().__init__('map_dashboard_bridge')
         self.create_subscription(OccupancyGrid, 'map', self._on_map, 1)
+        # 비상정지용 — 자율주행이 계속 새 명령을 낼 수도 있으니 여러 번 강제로 0 발행.
+        self._cmd_pub = self.create_publisher(Twist, 'cmd_vel', 1)
+
+    def emergency_stop(self):
+        for _ in range(5):
+            self._cmd_pub.publish(Twist())
+            time.sleep(0.05)
 
     def _on_map(self, msg: OccupancyGrid):
         # OccupancyGrid.data는 int8[] (-1=unknown, 0=free, 100=occupied).
@@ -101,10 +120,18 @@ PAGE = """<!doctype html>
   .status-row { display: flex; justify-content: space-between; font-size: 0.85rem;
     color: var(--text-secondary); margin-top: 8px; font-variant-numeric: tabular-nums; }
   .empty { text-align: center; color: var(--text-muted); padding: 60px 0; }
+  #estopBtn { display: block; width: 100%; padding: 18px 0; margin: 16px 0;
+    background: var(--critical); color: white; border: none; border-radius: 12px;
+    font-size: 1.2rem; font-weight: 700; letter-spacing: 0.05em; cursor: pointer; }
+  #estopBtn:active { filter: brightness(0.85); }
+  #estopMsg { text-align: center; font-size: 0.85rem; margin-top: -8px; margin-bottom: 8px;
+    color: var(--text-secondary); min-height: 1.2em; }
 </style>
 </head>
 <body>
 <h1><span class="dot" id="connDot" style="background:var(--critical)"></span> 맵 대시보드</h1>
+<button id="estopBtn">🛑 비상정지 (자율주행 전체 중단)</button>
+<div id="estopMsg"></div>
 <div class="card">
   <canvas id="mapCanvas" width="10" height="10"></canvas>
   <div id="emptyMsg" class="empty">맵 데이터 없음 — SLAM Toolbox(mapping.launch.py)를 실행하면 여기 실시간으로 채워집니다.</div>
@@ -168,6 +195,19 @@ async function tick() {
 
 tick();
 setInterval(tick, 1500);
+
+document.getElementById('estopBtn').addEventListener('click', async () => {
+  const msg = document.getElementById('estopMsg');
+  msg.textContent = '정지 명령 전송 중...';
+  try {
+    const res = await (await fetch('/api/estop', {method: 'POST'})).json();
+    msg.textContent = res.killed && res.killed.length
+      ? `정지됨 — 종료된 프로세스: ${res.killed.join(', ')}`
+      : '정지 명령 발행됨 (실행 중이던 자율주행 프로세스는 없었음)';
+  } catch (e) {
+    msg.textContent = '정지 요청 실패 — 네트워크 확인 필요';
+  }
+});
 </script>
 </body>
 </html>
@@ -194,6 +234,24 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, b"not found", "text/plain")
 
+    def do_POST(self):
+        if self.path == "/api/estop":
+            # 1) 즉시 0 속도 발행 (아래 pkill이 조금 늦어도 이게 먼저 먹힘)
+            Handler.node.emergency_stop()
+            # 2) 자율주행 프로세스 자체를 죽여서 새 명령이 더 안 나오게 함.
+            #    같은 유저(carrotian) 프로세스라 sudo 불필요.
+            killed = []
+            for pattern in AUTONOMOUS_PROC_PATTERNS:
+                r = subprocess.run(["pkill", "-f", pattern], capture_output=True)
+                if r.returncode == 0:
+                    killed.append(pattern)
+            # 3) 혹시 남은 게 있으면 한 번 더 0 속도 발행
+            Handler.node.emergency_stop()
+            self._send(200, json.dumps({"ok": True, "killed": killed}).encode("utf-8"),
+                       "application/json")
+        else:
+            self._send(404, b"not found", "text/plain")
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -202,13 +260,32 @@ def main():
 
     rclpy.init()
     node = MapBridge()
+    Handler.node = node
 
     threading.Thread(target=staleness_watchdog, daemon=True).start()
-    threading.Thread(target=lambda: rclpy.spin(node), daemon=True).start()
+    spin_thread = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
+    spin_thread.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
+
+    # 2026-08-16: 다른 대시보드들과 동일한 이유로 SIGTERM 핸들러 +
+    # spin 스레드 정리 추가 (재부팅/재시작 시 지연·core dump 방지).
+    def _sig_handler(signum, frame):
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, _sig_handler)
+    signal.signal(signal.SIGINT, _sig_handler)
+
     print(f"맵 대시보드 시작: http://<Pi IP>:{args.port}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+        spin_thread.join(timeout=2.0)
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
