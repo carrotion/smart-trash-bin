@@ -230,8 +230,11 @@ const TICK_MS = 50;
 // 예전엔 둘 다 0.1이라 버튼을 떼도 0.5초간 더 나가서 조종이 안 맞았음.
 const RAMP_UP_STEP = 0.1;    // 약 10틱 = 500ms에 최고속 도달
 const RAMP_DOWN_STEP = 0.5;  // 약 2틱 = 100ms 안에 정지
-const MAX_HOLD_MS = 2000;  // 뗀 신호(pointerup)를 못 받는 경우를 대비한 안전장치 —
+const MAX_HOLD_MS = 5000;  // 뗀 신호(pointerup)를 못 받는 경우를 대비한 안전장치 —
                             // 아무리 눌려 있어도 이 시간 지나면 강제로 놓은 것처럼 처리
+                            // (2026-08-16: 2초는 의도적으로 길게 누르는 조종에 너무
+                            // 짧아서 5초로 완화 — diff_drive_node의 cmd_vel_timeout
+                            // 0.5초가 진짜 최종 안전장치라 이건 여유있게 잡아도 됨)
 
 let currentScale = 0;
 let targetScale = 0;
