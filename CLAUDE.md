@@ -46,6 +46,23 @@ LD06이 로봇 자신의 데크 구조물(배선·기둥)을 보고 있었음. �
 **증상 감별법**: 필터 노드는 "N% 걸러냄"이라고 정상 로그를 찍는데 `/scan`엔 여전히
 0.08m 반사가 보이면 이 상황이다. `ros2 topic info /scan --verbose`로 발행자 수를 볼 것.
 
+## 💾 부팅 순서 — microSD를 꽂아도 SSD로 부팅하도록 변경 (2026-08-17)
+
+**문제**: Pi5 기본 `BOOT_ORDER=0xf461`은 오른쪽부터 읽어 `1(SD) → 6(NVMe) → 4(USB) → f(재시도)`
+순서라 **SD카드를 제일 먼저 시도한다.** 부팅 가능한 microSD를 꽂으면 SSD 대신 그 카드로
+부팅해버린다 — 그래서 그동안 "SSD와 SD 동시 사용은 어렵다"고 봤던 것.
+
+**해결**: `BOOT_ORDER=0xf14`로 변경 = `4(USB) → 1(SD) → f(재시도)`.
+SSD가 항상 먼저고, SD는 SSD가 없을 때만 폴백으로 쓰인다.
+- 적용: `sudo rpi-eeprom-config --apply <파일>` → SPI 칩에 직접 기록됨(flashrom VERIFY 성공).
+  `rpi-eeprom-config`는 **실행 중인** 부트로더 설정을 보여주므로 재부팅 전까지 옛값이 나온다.
+  칩 내용 확인은 `sudo flashrom -p linux_spi:dev=/dev/spidev10.0,spispeed=16000 -r <파일>`
+  후 `rpi-eeprom-config <파일>`.
+- 원복용 백업: `~/eeprom_backup_20260817.txt`
+- **결과: microSD를 상시 꽂아둔 채 SSD로 부팅할 수 있다** → SD를 USB와 독립된
+  블랙박스(로그 기록용)로 쓸 수 있게 됨. USB 링크가 죽어도 SD는 살아있으므로
+  프리즈 순간의 증거를 남길 수 있다(netconsole과 달리 WiFi에 의존하지 않음).
+
 ## 🧊 디스크 행 프리즈 — 하드웨어 워치독으로 못 잡는 고장 (2026-08-17 01:07)
 
 자율탐색 중 주방에서 복구동작을 반복하던 시점에 시스템이 얼어붙음. **원인 미확정**이지만
