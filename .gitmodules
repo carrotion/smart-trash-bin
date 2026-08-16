@@ -1,3 +1,7 @@
 [submodule "robot/src/ldlidar_stl_ros2"]
 	path = robot/src/ldlidar_stl_ros2
 	url = https://github.com/carrotion/ldlidar_stl_ros2.git
+[submodule "robot/src/m-explore-ros2"]
+	path = robot/src/m-explore-ros2
+	url = https://github.com/robo-friends/m-explore-ros2.git
+	branch = feature/slam_toolbox_compat
