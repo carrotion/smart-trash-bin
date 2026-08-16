@@ -2,6 +2,23 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
+## 🧭 자율주행 프론티어 탐색 첫 통합 (2026-08-16, 실주행 테스트 전)
+
+`robot/src/m-explore-ros2`(서브모듈, `feature/slam_toolbox_compat` 브랜치 — main엔
+SLAM Toolbox와 같이 쓸 때 나던 seg fault가 있어서 이걸 씀) + Nav2로 자율 프론티어
+탐색 구성 완료. `ros2 launch smart_trash_bringup autonomous_mapping.launch.py`.
+- map_server/amcl 없이 SLAM Toolbox의 /map을 Nav2 global_costmap이 직접 구독
+  ("매핑 중 네비게이션" 표준 패턴). explore_lite도 같은 /map, /map_updates를
+  직접 구독(코스트맵 안 거침).
+- 로봇 실측 20x20cm(사용자 확인) 기준 robot_radius=0.18m, 속도는 보수적
+  (max 0.20m/s, 0.8rad/s) — 오늘 실주행에서 0.3m/s가 맵 품질에 적절했던 것 참고.
+- **⚠️ 아직 실제로 자율주행 테스트를 안 해봤음.** 범퍼/낙하 센서가 없어 라이다
+  단독 회피만 가능 — 첫 실행은 반드시 사람이 옆에서 지켜보고 즉시 개입
+  가능한 상태로 할 것.
+- 다음 단계(사용자 요청): 탐색 중 `tools/wifi_signal_logger.py`도 같이 돌려서
+  위치별 WiFi 신호 기록 → 맵 위에 커버리지 히트맵 시각화 → 커버리지 나쁜
+  구역은 Nav2 Keepout Zones 코스트맵 필터로 자율주행 금지구역 지정 (아직 미착수).
+
 ## ⚠️ 미해결: TCP 서비스만 응답불능 (2026-08-16 오후, 원인 미상)
 
 **증상**: 매핑 세션 진행 중 대시보드 무응답 + SSH 접속 안 됨(오래 기다려도 안 풀려서 전원버튼으로 강제 종료 후 재부팅). 공유기에서 보면 WiFi는 계속 연결 상태 유지. Pi 녹색 LED 켜짐, SSD LED 계속 깜빡임(단, 이건 `power_monitor.py`가 매초 fsync하는 정상 동작 패턴일 수 있어 증거로는 약함).
