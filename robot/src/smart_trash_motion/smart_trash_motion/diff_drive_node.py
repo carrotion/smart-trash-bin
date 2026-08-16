@@ -60,6 +60,30 @@ class DiffDriveNode(Node):
         # 뭉개졌고, 슬라이더 20%와 40%의 체감 속도가 같아지는 버그가 있었음.
         # PWM 343에서 0.436m/s가 실측됐으니 저속 구간은 이보다 훨씬 아래에 있음.
         self.declare_parameter('min_pwm', 120)
+        # 직진 트림 보정. 2026-08-16 사용자 관찰: 전진 명령을 줘도 미세하게
+        # 오른쪽으로 쏠림 — 2026-08-14 기록된 M4(오른쪽앞) 인코더 반응 저하와
+        # 일치(같은 PWM에도 오른쪽이 덜 밀림 → 우측으로 쏠림). 양수면 오른쪽
+        # 바퀴를 더 세게, 왼쪽을 더 약하게 돌려 직진을 보정한다. 순수 직진/
+        # 후진(각속도 0)일 때만 적용 — 회전 중엔 트림이 오히려 방해가 됨.
+        # 실측 캘리브레이션(2026-08-16, 0.3m/s 직진 테스트, cliff test로 범위까지 확정):
+        #   trim=0      -> 1.250m 이동, 우측 78mm(앞)/73mm(뒤)
+        #   trim=0.016  -> 1.125m 이동, 우측 63mm(앞)/48mm(뒤)
+        #   trim=0.11   -> 1.185m 이동, 우측 43mm(앞)/32mm(뒤)
+        #   trim=0.248  -> 0.970m 이동, 우측 25mm(앞)/15mm(뒤)
+        #   trim=0.35   -> 0.540m 이동, 쏠림 없음
+        #   trim=0.5    -> 0.788m 이동, 우측 4mm(앞)/0mm(뒤)
+        #   trim=0.7    -> 우측 0mm(앞)/좌측 2mm(뒤) — 부호 전환 확인
+        # trim을 올릴수록 개선 기울기가 급격히 줄어드는 것처럼 보였는데(수확체감),
+        # 사용자가 지적한 대로 원인은 두 가지가 섞여 있었기 때문: ①주행 중 편향
+        # (trim으로 보정되는 부분, 실제로 계속 선형에 가깝게 줄어듦)과 ②정지 시
+        # 관성으로 원래 기계적 얼라인먼트로 되돌아가는 편향(trim과 무관하게 항상
+        # 존재, 같은 방향으로 고정). trim이 커질수록 ①은 0에 가까워지지만 ②는
+        # 안 줄어드니 총합이 잘 안 줄어드는 것처럼 보인 것. 다만 실제 조종에서도
+        # 버튼을 누르고 뗄 때마다 ②가 똑같이 일어나므로, "정지 후 최종 위치 편차"
+        # 자체가 실사용과 가까운 지표라 이 기준으로 캘리브레이션하는 게 맞음.
+        # 0.5~0.7 구간에서 오차 1% 미만(부호 전환 지점 포함) 확인 -> 중간값 채택.
+        # 사용 가능 범위(오차 <1%): trim 0.5~0.7. 채택값: 0.6.
+        self.declare_parameter('straight_trim', 0.6)
         self.declare_parameter('cmd_vel_timeout', 0.5)       # 이 시간 명령 없으면 정지
         self.declare_parameter('odom_rate_hz', 20.0)
         # 2026-08-16 EKF(robot_localization) 도입 이후 기본값 False로 변경.
@@ -86,6 +110,7 @@ class DiffDriveNode(Node):
         self._max_wheel_speed = p('max_wheel_speed').value
         self._min_pwm = p('min_pwm').value
         self._cmd_vel_timeout = p('cmd_vel_timeout').value
+        self._straight_trim = p('straight_trim').value
         self._publish_tf = p('publish_tf').value
 
         # 카운트 → 미터
@@ -193,6 +218,10 @@ class DiffDriveNode(Node):
         half_track = self._wheel_separation / 2.0
         left_speed = v - w * half_track
         right_speed = v + w * half_track
+
+        if w == 0.0 and self._straight_trim != 0.0:
+            left_speed *= (1.0 - self._straight_trim)
+            right_speed *= (1.0 + self._straight_trim)
 
         self._target_left_pwm = self._speed_to_pwm(left_speed)
         self._target_right_pwm = self._speed_to_pwm(right_speed)
