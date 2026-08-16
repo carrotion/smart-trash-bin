@@ -45,6 +45,22 @@ SESSION_EXECUTABLES = {
 SESSION_LAUNCH_FILES = ("autonomous_mapping.launch.py", "mapping.launch.py")
 
 
+def process_name(args):
+    """프로세스의 '실질 이름'을 뽑는다.
+
+    ⚠️ 파이썬으로 작성된 ROS 노드는 `argv[0]`가 `/usr/bin/python3`이고 실제
+    노드 이름은 `argv[1]`(스크립트 경로)에 있다. argv[0]만 보면 이런 노드는
+    영영 안 잡힌다 — 실제로 `scan_filter_node` 고아가 6개까지 쌓였다.
+    """
+    exe = os.path.basename(args[0])
+    if exe.startswith('python'):
+        for a in args[1:]:
+            if a.startswith('-'):
+                continue  # -c, -u 같은 인터프리터 플래그
+            return os.path.basename(a)
+    return exe
+
+
 def find_session_processes():
     """세션 소속 프로세스 [(pid, 설명)] 반환. 자기 자신은 제외."""
     me = os.getpid()
@@ -62,7 +78,7 @@ def find_session_processes():
             continue
         if not args:
             continue  # 커널 스레드
-        exe = os.path.basename(args[0])
+        exe = process_name(args)
         if exe in SESSION_EXECUTABLES:
             found.append((pid, exe))
         elif any(a.endswith(lf) for a in args for lf in SESSION_LAUNCH_FILES):
@@ -91,16 +107,28 @@ def kill_session(max_rounds=4):
 
 
 def shm_files_in_use():
-    """지금 살아있는 프로세스가 열고 있는 /dev/shm 파일 경로 집합."""
+    """지금 살아있는 프로세스가 쓰고 있는 /dev/shm 파일 경로 집합.
+
+    ⚠️ **`/proc/<pid>/fd`만 보면 안 된다.** FastDDS는 공유메모리 파일을 mmap한 뒤
+    파일 디스크립터를 닫아버려서, 여전히 쓰고 있는데도 fd 목록에는 안 나온다.
+    반드시 `/proc/<pid>/maps`(메모리 매핑)도 같이 봐야 한다.
+
+    2026-08-16: 이걸 몰라서 fd 기준으로만 "고아"를 판정하고 지웠다가, **살아있는
+    프로세스가 매핑 중인 파일 83개를 삭제**했다. 그 결과 대시보드의 ROS publish가
+    먹통이 돼 비상정지가 죽고, EKF/SLAM이 `Failed init_port`로 기동 실패하는 등
+    하루 종일 원인 모를 DDS 증상에 시달렸다. `/proc/*/maps`에 `(deleted)` 표시가
+    붙은 fastrtps 파일이 보이면 이미 이 사고가 난 것 — 전체 재시작이 필요하다.
+    """
     in_use = set()
     for entry in os.listdir('/proc'):
         if not entry.isdigit():
             continue
+        # (1) 열린 파일 디스크립터
         fd_dir = f'/proc/{entry}/fd'
         try:
             fds = os.listdir(fd_dir)
         except OSError:
-            continue  # 권한 없음(다른 유저) 또는 이미 종료
+            fds = []  # 권한 없음(다른 유저) 또는 이미 종료
         for fd in fds:
             try:
                 target = os.readlink(f'{fd_dir}/{fd}')
@@ -108,6 +136,19 @@ def shm_files_in_use():
                 continue
             if target.startswith('/dev/shm/'):
                 in_use.add(target)
+        # (2) 메모리 매핑 (fd를 닫았어도 여기 남는다 — FastDDS가 정확히 이 패턴)
+        try:
+            with open(f'/proc/{entry}/maps') as m:
+                for line in m:
+                    idx = line.find('/dev/shm/')
+                    if idx >= 0:
+                        path = line[idx:].strip()
+                        # 이미 삭제된 매핑은 " (deleted)" 접미사가 붙어서 나옴
+                        if path.endswith(' (deleted)'):
+                            path = path[:-len(' (deleted)')]
+                        in_use.add(path)
+        except OSError:
+            continue
     return in_use
 
 

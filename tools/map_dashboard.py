@@ -79,7 +79,15 @@ def kill_autonomous_processes():
         if not args:
             continue  # 커널 스레드
 
+        # 파이썬 노드는 argv[0]가 python3이고 실제 이름은 argv[1]에 있다 —
+        # 지금 대상은 전부 C++ 바이너리지만, 나중에 파이썬 노드가 대상에
+        # 추가돼도 조용히 안 잡히는 일이 없도록 여기서도 같이 처리한다.
         exe = os.path.basename(args[0])
+        if exe.startswith('python'):
+            for a in args[1:]:
+                if not a.startswith('-'):
+                    exe = os.path.basename(a)
+                    break
         if exe in AUTONOMOUS_EXECUTABLES:
             match = exe
         elif any(a.endswith(AUTONOMOUS_LAUNCH_FILE) for a in args):
