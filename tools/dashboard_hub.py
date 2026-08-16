@@ -238,7 +238,7 @@ async function tick() {
       const wifi = (d.latest && d.latest.wifi) || {};
       // -70dBm 아래는 통상 "약함"으로 보는 기준 — 음영지역 감시용
       const wifiRows = Object.values(wifi).map(w =>
-        [`WiFi(${w.label})`, `${w.level_dbm.toFixed(0)} dBm`, w.level_dbm < -70]);
+        [`WiFi(${w.label})`, `${w.ssid || '-'} · ${w.level_dbm.toFixed(0)}dBm`, w.level_dbm < -70]);
       const body = `<div class="wide-body">
         ${rows([
           ['5V 입력', f(v, 2, 'V'), bad],
