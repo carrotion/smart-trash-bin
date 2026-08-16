@@ -199,6 +199,29 @@ def append_trace(sample):
         pass
 
 
+_WIRELESS_RE = re.compile(r"^\s*(\S+):\s+\S+\s+([\-\d.]+)\.\s+([\-\d.]+)\.")
+WIFI_IFACES = {"wlan0": "내장", "wlx00e04c4d96cb": "USB(5G)"}
+
+
+def read_wifi_signal():
+    """/proc/net/wireless에서 두 WiFi 인터페이스 신호세기 읽기 (2026-08-16,
+    tools/wifi_signal_logger.py와 같은 파싱 로직 — 대시보드 표시용으로 여기도 추가)."""
+    out = {}
+    try:
+        with open("/proc/net/wireless") as f:
+            for line in f:
+                m = _WIRELESS_RE.match(line)
+                if m and m.group(1) in WIFI_IFACES:
+                    out[m.group(1)] = {
+                        "label": WIFI_IFACES[m.group(1)],
+                        "level_dbm": float(m.group(3)),
+                        "quality": float(m.group(2)),
+                    }
+    except OSError:
+        pass
+    return out
+
+
 def poll_loop(interval):
     prev_flags = None
     while True:
@@ -209,6 +232,7 @@ def poll_loop(interval):
             "throttled": throttled,
             "rails": rails,
             "system": read_system_info(),
+            "wifi": read_wifi_signal(),
         }
 
         with state_lock:
@@ -253,6 +277,8 @@ PAGE = """<!doctype html>
 <h1>Pi5 상태 <span id="updated" style="font-size:0.7rem; font-weight:normal;"></span></h1>
 <h2 style="font-size:1rem;">시스템</h2>
 <table id="system"></table>
+<h2 style="font-size:1rem;">WiFi 신호</h2>
+<table id="wifi"></table>
 <h2 style="font-size:1rem;">전원 경고/이력</h2>
 <div class="grid" id="flags"></div>
 <h2 style="font-size:1rem;">PMIC 레일 전압/전류</h2>
@@ -298,6 +324,12 @@ async function tick() {
     <tr><td>메모리</td><td>${fmt(sys.mem_used_mb, 0, "")} / ${fmt(sys.mem_total_mb, 0, " MB")} (${fmt(sys.mem_percent, 1, "%")})</td></tr>
     <tr><td>디스크</td><td>${fmt(sys.disk_used_gb, 1, "")} / ${fmt(sys.disk_total_gb, 1, " GB")} (${fmt(sys.disk_percent, 1, "%")})</td></tr>
     <tr><td>업타임</td><td>${uptime}</td></tr>`;
+
+  const wifi = res.latest.wifi || {};
+  document.getElementById("wifi").innerHTML =
+    Object.values(wifi).map(w =>
+      `<tr><td>WiFi (${w.label})</td><td>${w.level_dbm.toFixed(0)} dBm</td></tr>`
+    ).join('') || '<tr><td colspan="2">연결된 WiFi 없음</td></tr>';
 
   const rails = res.latest.rails || {};
   const tbl = document.getElementById("rails");
