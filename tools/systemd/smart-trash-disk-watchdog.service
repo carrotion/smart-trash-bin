@@ -1,0 +1,24 @@
+[Unit]
+# 디스크 쓰기가 막히면 강제 재부팅 (2026-08-17 01:07 프리즈 대응).
+# systemd의 하드웨어 워치독은 이 고장을 못 잡는다 — 커널/PID1이 살아있어서
+# 워치독을 계속 쓰다듬기 때문. 상세 근거는 tools/disk_hang_watchdog.py docstring 참고.
+Description=Smart Trash Bin - reboot if disk writes hang (hardware watchdog can't catch this)
+DefaultDependencies=no
+After=local-fs.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/carrotian/smart-trash-bin/tools/disk_hang_watchdog.py
+Restart=always
+RestartSec=5
+# 이 서비스 자신이 워치독 때문에 죽는 일이 없도록 로그는 kmsg로만 남긴다.
+StandardOutput=null
+StandardError=journal
+# 종료 중에는 검사하지 않는다 — 종료 절차의 정상적인 I/O 지연을 오탐하지 않도록.
+KillSignal=SIGTERM
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
