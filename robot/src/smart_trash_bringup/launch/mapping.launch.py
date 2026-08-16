@@ -66,7 +66,10 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'product_name': 'LDLiDAR_LD06',
-            'topic_name': 'scan',
+            # 드라이버는 원시 스캔을 scan_raw로 내보내고, scan_filter_node가
+            # 로봇 자기 구조물 반사(0.06~0.10m)를 걸러서 scan으로 재발행한다.
+            # 이렇게 하면 SLAM/Nav2/대시보드는 전부 기존처럼 scan만 보면 됨.
+            'topic_name': 'scan_raw',
             'frame_id': 'base_laser',
             'port_name': lidar_port,
             'port_baudrate': 230400,
@@ -76,6 +79,21 @@ def generate_launch_description():
             'enable_angle_crop_func': False,
             'angle_crop_min': 135.0,
             'angle_crop_max': 225.0,
+        }]
+    )
+
+    # 로봇 자기 구조물 반사 제거 (scan_raw -> scan). 안 넣으면 로봇 자기 위치가
+    # 맵에 장애물로 박혀서 Nav2가 어떤 경로도 못 낸다 — 상세 근거는
+    # smart_trash_sensors/scan_filter_node.py의 docstring 참고.
+    scan_filter_node = Node(
+        package='smart_trash_sensors',
+        executable='scan_filter_node',
+        name='scan_filter_node',
+        output='screen',
+        parameters=[{
+            'input_topic': 'scan_raw',
+            'output_topic': 'scan',
+            'range_min': 0.15,
         }]
     )
 
@@ -113,6 +131,7 @@ def generate_launch_description():
     ld.add_action(declare_placeholder_odom_cmd)
     ld.add_action(declare_lidar_port_cmd)
     ld.add_action(ldlidar_node)
+    ld.add_action(scan_filter_node)
     ld.add_action(base_link_to_laser_tf)
     ld.add_action(placeholder_odom_tf)
     ld.add_action(slam_toolbox_launch)
