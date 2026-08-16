@@ -1,0 +1,21 @@
+# explore_lite 설정 (2026-08-16). costmap_topic/costmap_updates_topic을
+# Nav2 costmap이 아니라 SLAM Toolbox가 직접 내는 /map, /map_updates로 잡음 —
+# 기본값이 이미 이 이름이라 별도 리매핑 불필요(feature/slam_toolbox_compat
+# 브랜치가 정확히 이 조합에서 나던 seg fault/멈춤을 고친 버전이라 이걸 씀).
+# 프론티어 목표는 여기서 정하고, 실제 그 지점까지의 안전한 경로/장애물 회피는
+# controller_server/planner_server(각자의 costmap, 인플레이션 포함)가 담당.
+/**:
+  ros__parameters:
+    robot_base_frame: base_link
+    costmap_topic: map
+    costmap_updates_topic: map_updates
+    visualize: true
+    planner_frequency: 0.15
+    progress_timeout: 30.0
+    potential_scale: 3.0
+    orientation_scale: 0.0
+    gain_scale: 1.0
+    transform_tolerance: 0.3
+    # 방이 작고 로봇도 20cm급이라 기본값(0.75m)보다 낮춰서 더 꼼꼼히 탐색.
+    min_frontier_size: 0.4
+    return_to_init: false
