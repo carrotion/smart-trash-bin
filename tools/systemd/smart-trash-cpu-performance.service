@@ -1,0 +1,10 @@
+[Unit]
+Description=Smart Trash Bin - pin CPU governor to performance (low-latency control priority)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/carrotian/smart-trash-bin/tools/set_cpu_performance.sh
+
+[Install]
+WantedBy=multi-user.target
