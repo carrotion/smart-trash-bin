@@ -2,6 +2,20 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
+## ⚠️ 미해결: TCP 서비스만 응답불능 (2026-08-16 오후, 원인 미상)
+
+**증상**: 매핑 세션 진행 중 대시보드 무응답 + SSH 접속 안 됨(오래 기다려도 안 풀려서 전원버튼으로 강제 종료 후 재부팅). 공유기에서 보면 WiFi는 계속 연결 상태 유지. Pi 녹색 LED 켜짐, SSD LED 계속 깜빡임(단, 이건 `power_monitor.py`가 매초 fsync하는 정상 동작 패턴일 수 있어 증거로는 약함).
+
+**중요 반증**: `power_trace.csv`로 정지 직전(전원버튼 3초 전, 14:43:00)까지 확인한 결과 **메모리 63.3~63.5%로 완전히 평평**(스왑 근처도 안 감), CPU 8~20%, 전압 5.20V 안정 — 스왑 스래싱 가설은 데이터로 반증됨. 커널 로그도 이 구간 전혀 에러 없음(`journalctl -b -1 -k` 확인). `map_autosave`(ROS2/DDS, UDP 기반)는 14:43:00까지 정상적으로 60초 간격 맵 저장 계속함 — **즉 ROS2/DDS 트래픽은 살아있었는데 TCP 서비스(SSH, 대시보드)만 응답불능**이었던 비대칭적 증상. 원인 특정 못함 — 그럴듯한 이야기 지어내지 말 것.
+
+**다음 재발 시를 위한 대비**: `~/tcp_heartbeat.log`에 5초 간격으로 SSH(22)/대시보드허브(8764) 로컬 loopback 연결 성공 여부 + `ss -tan established` 연결 수를 기록하는 백그라운드 스크립트를 세션에서 임시로 띄워둠(재부팅하면 안 살아있음 — 재현 조사 재개 시 다시 띄울 것, 스크립트 원본은 이 세션의 scratchpad에만 있으므로 필요하면 다시 작성). 재발하면 이 로그로 정확히 언제부터 TCP가 막혔는지 좁힐 수 있음.
+
+## ✅ robot_localization EKF 도입 + 직진 트림 캘리브레이션 (2026-08-16)
+
+- **EKF 설계**: `diff_drive_node`는 순수 휠 기반 odom만 발행(자체 IMU 융합·TF 발행 중단, `use_imu_for_yaw`/`publish_tf` 기본값 False). 새 `smart-trash-ekf.service`(`robot_localization`의 `ekf_node`, 상시 구동)가 원본 `/imu/data` 자이로를 직접 구독해 회전각 융합을 전담, `/odometry/filtered` + `odom->base_link` TF 발행. 설정은 `robot/src/smart_trash_bringup/config/ekf.yaml`. odom 메시지에 공분산도 추가함(x,y,vx는 신뢰도 높게, yaw/vyaw는 낮게 — 이중계산 방지).
+- **직진 트림 보정** (`diff_drive_node.py`의 `straight_trim` 파라미터, 기본값 **0.6**): 전진 명령에도 우측으로 쏠리는 현상(2026-08-14 기록된 M4 인코더 반응 저하와 일치하는 것으로 추정)을 실측 기반으로 보정. 0.3m/s 직진 테스트를 반복하며 cliff test로 범위 확정 — **사용 가능 범위 0.5~0.7(오차 <1%), 채택값 0.6**. 상세 실측 이력은 `diff_drive_node.py`의 `straight_trim` 선언부 주석 참고. **중요 통찰**: 총 편차는 "주행 중 편향"(trim으로 보정됨)과 "정지 시 관성으로 원래 기계 얼라인먼트로 복귀하는 편향"(trim과 무관, 항상 존재)의 합이라 trim을 올려도 개선이 완전히 선형으로 줄진 않음 — 다만 실제 조종도 버튼 On/Off를 반복하므로 이 "정지 후 최종 위치 편차" 자체가 실사용과 가까운 지표라 이 기준으로 캘리브레이션하는 게 맞음.
+- 부수 발견: `motor_dashboard.py`/`sensor_dashboard.py`가 `rclpy.spin()`을 데몬 스레드로 돌리고 정리 없이 인터프리터를 종료하는 구조라, ROS 그래프가 커지자(ekf_node 추가 등) 종료 시 `terminate called without an active exception`으로 core dump 나는 문제 발견/수정함(`rclpy.shutdown()`→`spin_thread.join()`→`node.destroy_node()` 순서로 명시적 정리). 재현 테스트로 반복 검증 완료.
+
 ## ⚠️ 두 개의 별개 사고를 하나로 착각했던 기록 정정 (2026-08-16)
 
 2026-08-16 새벽~아침에 **서로 다른 원인의 사고 두 건**이 시간상 겹쳐서 발생했음. 최초엔 하나로 묶어서 "전부 배터리 방전"이라고 잘못 기록했다가 사용자가 정정함. 반드시 구분해서 볼 것:
@@ -27,10 +41,10 @@ EXT4-fs (sda2): Remounting filesystem read-only
 - USB 전원관리는 확인해봤는데 정상(`/sys/bus/usb/devices/3-1/power/control` = `on`, autosuspend 아님 — 이건 원인에서 제외됨).
 - `fstrim.timer`가 매주 활성화돼 있음(주기적 TRIM) — UASP 브릿지와 상성이 안 좋은 대표적 트리거라 의심 후보.
 
-**알려진 해결법(다음 세션에 적용할 것, 아직 미적용)**:
-1. **UAS 비활성화하고 구식 usb-storage(BOT) 드라이버로 강제 전환** — 가장 표준적이고 확실한 픽스. `/boot/firmware/cmdline.txt`에 `usb-storage.quirks=174c:55aa:u` 추가 후 재부팅. (`u` 플래그 = 이 vendor:product 조합에서 UAS 비활성화, 다른 장치엔 영향 없음.) 순차 전송속도는 다소 떨어지지만 부팅 디스크 안정성이 압도적으로 우선.
-2. `fstrim.timer` 비활성화 검토(`sudo systemctl disable --now fstrim.timer`) — 위 1번으로 안 잡히면 2차 조치.
-3. 1번 적용 후 재발하면 케이블/커넥터 물리 점검, 또는 브릿지칩 자체 결함으로 보고 케이스 교체 고려.
+**해결법 적용 완료 (2026-08-16)**:
+1. **UAS 비활성화, 구식 usb-storage(BOT) 드라이버로 강제 전환 — 적용됨.** `/boot/firmware/cmdline.txt`에 `usb-storage.quirks=174c:55aa:u` 추가 후 재부팅. `lsusb -t`로 `Driver=usb-storage`(uas 아님) 확인됨. 이후 여러 시간 재부팅/매핑 세션 동안 I/O 에러 재발 없음.
+2. `fstrim.timer` 비활성화도 같이 적용함(`sudo systemctl disable --now fstrim.timer`).
+3. 재발하면 케이블/커넥터 물리 점검, 또는 브릿지칩 자체 결함으로 보고 케이스 교체 고려 — 아직 필요했던 적 없음.
 
 ## 🎉 LD06 LiDAR 연결 + SLAM Toolbox 파이프라인 첫 성공 (2026-08-15)
 
