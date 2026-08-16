@@ -121,6 +121,22 @@ class DiffDriveNode(Node):
         time.sleep(0.3)
         self._configure_driver()
 
+        # 엔코더 폴링을 ROS 콜백에서 분리한 이유(2026-08-16): 시리얼 왕복(약 60ms,
+        # sleep 0.04+0.02)이 odom_rate_hz(20Hz=50ms 주기)보다 길어서, 이 폴링을
+        # ROS 타이머 콜백에서 직접 하면 단일 스레드 실행기가 구조적으로 항상
+        # 밀려있는 상태가 됨 — 그 사이 도착한 cmd_vel(버튼 명령)을 실행기가
+        # 처리를 시작조차 못 해서 "버튼이 씹히는" 현상으로 나타났음(실측: /odom
+        # 목표 20Hz인데 실제 12~19Hz, 지연 최대 363ms 관측). 별도 스레드가
+        # 백그라운드로 계속 폴링하고, ROS 타이머는 캐시된 최신값만 읽어서
+        # 즉시 발행 — cmd_vel 콜백이 더 이상 엔코더 폴링에 막히지 않는다.
+        self._counts_lock = threading.Lock()
+        self._latest_counts = None
+        self._latest_counts_ts = None
+        self._encoder_thread_stop = threading.Event()
+        self._encoder_thread = threading.Thread(
+            target=self._encoder_poll_loop, daemon=True)
+        self._encoder_thread.start()
+
         # 오도메트리 상태
         self._x = 0.0
         self._y = 0.0
@@ -194,6 +210,26 @@ class DiffDriveNode(Node):
                 return [int(g) for g in m.groups()]
         return None
 
+    def _encoder_poll_loop(self):
+        """백그라운드 스레드: 시리얼 왕복(~60ms)이 걸리는 엔코더 폴링을 ROS
+        실행기 스레드 밖에서 계속 반복한다. cmd_vel 콜백이 이 폴링에 막히지
+        않게 하는 게 목적 — 클래스 docstring 및 __init__ 주석 참고."""
+        while not self._encoder_thread_stop.is_set():
+            counts = self._read_encoder()
+            if counts is not None:
+                now = time.time()
+                with self._counts_lock:
+                    self._latest_counts = counts
+                    self._latest_counts_ts = now
+                enc_msg = Int32MultiArray()
+                enc_msg.data = [int(c) for c in counts]
+                try:
+                    self._encoder_pub.publish(enc_msg)
+                except Exception:
+                    pass  # 노드 종료 중 퍼블리셔가 이미 정리됐을 수 있음
+            else:
+                time.sleep(0.02)  # 응답 없을 때 바쁜 대기 방지
+
     def _apply_pwm(self, left_pwm, right_pwm):
         # 채널 순서 M1(왼쪽뒤) M2(왼쪽앞) M3(오른쪽뒤) M4(오른쪽앞) — CLAUDE.md 매핑
         # 4채널 전부 양수 = 전진 (좌우 부호 반전 불필요, 실측 확인됨)
@@ -259,14 +295,17 @@ class DiffDriveNode(Node):
     # --- 오도메트리 ---
 
     def _on_odom_timer(self):
-        counts = self._read_encoder()
-        now = time.time()
+        # 실제 시리얼 폴링은 백그라운드 스레드(_encoder_poll_loop)가 하고,
+        # 여기서는 캐시된 최신값만 읽는다 — 이 콜백이 절대 블로킹하지 않아야
+        # 같은 ROS 실행기를 쓰는 cmd_vel 콜백이 밀리지 않는다.
+        with self._counts_lock:
+            counts = self._latest_counts
+            now = self._latest_counts_ts
         if counts is None:
             return
 
-        enc_msg = Int32MultiArray()
-        enc_msg.data = [int(c) for c in counts]
-        self._encoder_pub.publish(enc_msg)
+        if self._prev_odom_time is not None and now == self._prev_odom_time:
+            return  # 백그라운드 스레드가 아직 새 값을 못 읽음 — 중복 계산 방지
 
         if self._prev_counts is None:
             self._prev_counts = counts
@@ -344,11 +383,13 @@ class DiffDriveNode(Node):
         return q
 
     def stop_and_close(self):
+        self._encoder_thread_stop.set()
         try:
             for _ in range(3):
                 self._apply_pwm(0, 0)
                 time.sleep(0.05)
         finally:
+            self._encoder_thread.join(timeout=1.0)
             self._ser.close()
 
 
@@ -358,6 +399,11 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    except rclpy._rclpy_pybind11.RCLError:
+        # 종료 신호와 타이머 콜백의 publish()가 겹치면 "context is invalid"로
+        # 뜨는 무해한 경합(2026-08-16 확인) — finally에서 정리는 어차피 되므로
+        # 그냥 삼킨다. 안 잡으면 매 재시작마다 지저분한 트레이스백만 남았음.
         pass
     finally:
         # 어떤 경로로 종료되든 모터는 반드시 멈추고 나감
