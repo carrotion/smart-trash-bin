@@ -10,6 +10,10 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 
 **다음 재발 시를 위한 대비**: `~/tcp_heartbeat.log`에 5초 간격으로 SSH(22)/대시보드허브(8764) 로컬 loopback 연결 성공 여부 + `ss -tan established` 연결 수를 기록하는 백그라운드 스크립트를 세션에서 임시로 띄워둠(재부팅하면 안 살아있음 — 재현 조사 재개 시 다시 띄울 것, 스크립트 원본은 이 세션의 scratchpad에만 있으므로 필요하면 다시 작성). 재발하면 이 로그로 정확히 언제부터 TCP가 막혔는지 좁힐 수 있음.
 
+**Davi(antigravity) 감사 리포트 검토 결과 (2026-08-16, `docs/audit/2026-08-16_ssh_unresponsive_incident_report.md`)**: "WiFi silent stall"(공유기가 명시적 deauth 없이 무선 링크만 조용히 죽는 현상) 가설을 제시했으나, 리포트가 핵심 근거로 든 로그(`14:25:56 cmd_vel 타임아웃`)는 사실 Remi가 직진 트림 캘리브레이션 중 실행한 테스트 명령의 정상 종료 로그였음(무선과 무관) — 검증 후 정정함. 가설 자체는 직접 증거 없이 여전히 "가능성 있는 후보" 중 하나일 뿐, 확정 아님. 다만 근본원인 확정 여부와 무관하게 안전한 하드닝으로 판단해 다음 2가지는 적용함:
+- `tools/wifi_watchdog.sh` + `smart-trash-wifi-watchdog.timer`(30초 간격): 게이트웨이 응답없으면 `wpa_cli reassociate`로 wlan0 재연결.
+- SSH `ClientAliveInterval 15`/`ClientAliveCountMax 3` (`/etc/ssh/sshd_config.d/keepalive.conf`).
+
 ## ✅ robot_localization EKF 도입 + 직진 트림 캘리브레이션 (2026-08-16)
 
 - **EKF 설계**: `diff_drive_node`는 순수 휠 기반 odom만 발행(자체 IMU 융합·TF 발행 중단, `use_imu_for_yaw`/`publish_tf` 기본값 False). 새 `smart-trash-ekf.service`(`robot_localization`의 `ekf_node`, 상시 구동)가 원본 `/imu/data` 자이로를 직접 구독해 회전각 융합을 전담, `/odometry/filtered` + `odom->base_link` TF 발행. 설정은 `robot/src/smart_trash_bringup/config/ekf.yaml`. odom 메시지에 공분산도 추가함(x,y,vx는 신뢰도 높게, yaw/vyaw는 낮게 — 이중계산 방지).
