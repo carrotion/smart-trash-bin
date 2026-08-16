@@ -46,6 +46,8 @@ PAGE = """<!doctype html>
     --border: rgba(11,11,11,0.10);
     --accent: #2a78d6;
     --good: #0ca30c; --critical: #d03b3b; --idle: #898781;
+    --series-cpu: #2a78d6; --series-mem: #eb6834;
+    --grid-line: rgba(11,11,11,0.16);
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -54,6 +56,8 @@ PAGE = """<!doctype html>
       --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
       --border: rgba(255,255,255,0.10);
       --accent: #3987e5; --good: #0ca30c; --critical: #e66767; --idle: #6b6a66;
+      --series-cpu: #3987e5; --series-mem: #d95926;
+      --grid-line: rgba(255,255,255,0.16);
     }
   }
   :root[data-theme="dark"] {
@@ -62,17 +66,20 @@ PAGE = """<!doctype html>
     --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
     --border: rgba(255,255,255,0.10);
     --accent: #3987e5; --good: #0ca30c; --critical: #e66767; --idle: #6b6a66;
+    --series-cpu: #3987e5; --series-mem: #d95926;
+    --grid-line: rgba(255,255,255,0.16);
   }
   body { background: var(--page); color: var(--text-primary);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     max-width: 640px; margin: 24px auto; padding: 0 16px; }
   h1 { font-size: 1.3rem; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; position: relative; }
   a.card { display: block; background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 14px; padding: 16px; text-decoration: none; color: inherit;
     transition: border-color 0.15s; }
   a.card:hover { border-color: var(--accent); }
   a.card.disabled { opacity: 0.55; pointer-events: none; }
+  a.card.wide { grid-column: span 2; }
   .card-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
   .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .metric { font-size: 1.6rem; font-weight: 600; margin-top: 10px;
@@ -84,11 +91,25 @@ PAGE = """<!doctype html>
   .row .v { font-weight: 600; }
   .row .v.warn { color: var(--critical); }
   .updated { font-size: 0.7rem; color: var(--text-muted); margin-top: 16px; }
+  .wide-body { display: flex; gap: 20px; margin-top: 10px; }
+  .wide-body .rows { flex: 0 0 auto; min-width: 150px; margin-top: 0; }
+  .chart-col { flex: 1 1 auto; min-width: 0; }
+  .chart-legend { display: flex; gap: 14px; font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; }
+  .chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .chart-legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .spark-wrap { position: relative; }
+  .spark-wrap svg { display: block; width: 100%; height: 68px; overflow: visible; }
+  .chart-tip { position: fixed; display: none; pointer-events: none; z-index: 5;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 8px; font-size: 0.72rem; color: var(--text-primary);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15); white-space: nowrap; }
+  .chart-tip .k { color: var(--text-secondary); }
 </style>
 </head>
 <body>
 <h1>🗑️ 스마트 쓰레기통 — 시스템 대시보드</h1>
 <div class="grid" id="grid"></div>
+<div class="chart-tip" id="chartTip"></div>
 <div class="updated" id="updated"></div>
 
 <script>
@@ -100,9 +121,9 @@ const MODULES = [
   {key:'map',   icon:'🗺️', label:'맵', port:8768},
 ];
 
-function card(mod, statusHtml, dotColor, disabled) {
+function card(mod, statusHtml, dotColor, disabled, wide) {
   const href = mod.port ? `http://${location.hostname}:${mod.port}/` : '#';
-  return `<a class="card ${disabled ? 'disabled' : ''}" href="${href}">
+  return `<a class="card ${disabled ? 'disabled' : ''} ${wide ? 'wide' : ''}" href="${href}">
     <div class="card-head">
       <span class="dot" style="background:${dotColor}"></span>
       <span>${mod.icon} ${mod.label}</span>
@@ -110,6 +131,80 @@ function card(mod, statusHtml, dotColor, disabled) {
     ${statusHtml}
   </a>`;
 }
+
+// 최근 5분 CPU/메모리 스파크라인 (history: [{ts, system:{cpu_percent, mem_percent}}, ...])
+function sparkChart(history) {
+  const pts = (history || []).filter(s => s.system &&
+    s.system.cpu_percent != null && s.system.mem_percent != null);
+  if (pts.length < 2) {
+    return `<div class="sub">이력 쌓는 중…</div>`;
+  }
+  const W = 240, H = 68;
+  const x = i => (i / (pts.length - 1)) * W;
+  const y = v => H - Math.max(0, Math.min(100, v)) / 100 * H;
+  const line = key => pts.map((s, i) => `${x(i).toFixed(1)},${y(s.system[key]).toFixed(1)}`).join(' ');
+  const last = pts[pts.length - 1];
+  const dot = (key, color) => {
+    const cx = x(pts.length - 1), cy = y(last.system[key]);
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4" style="fill:${color}" />
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4" style="fill:none;stroke:var(--surface-1);stroke-width:2" />`;
+  };
+  const histJson = JSON.stringify(pts.map(s => ({ ts: s.ts, cpu: s.system.cpu_percent, mem: s.system.mem_percent })))
+    .replace(/"/g, '&quot;');
+  return `
+    <div class="chart-legend">
+      <span><i style="background:var(--series-cpu)"></i>CPU ${last.system.cpu_percent.toFixed(0)}%</span>
+      <span><i style="background:var(--series-mem)"></i>메모리 ${last.system.mem_percent.toFixed(0)}%</span>
+      <span style="margin-left:auto;color:var(--text-muted)">최근 5분</span>
+    </div>
+    <div class="spark-wrap" data-history="${histJson}">
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <line x1="0" y1="${y(100).toFixed(1)}" x2="${W}" y2="${y(100).toFixed(1)}" stroke="var(--grid-line)" stroke-width="1" />
+        <line x1="0" y1="${y(50).toFixed(1)}" x2="${W}" y2="${y(50).toFixed(1)}" stroke="var(--grid-line)" stroke-width="1" />
+        <line x1="0" y1="${y(0).toFixed(1)}" x2="${W}" y2="${y(0).toFixed(1)}" stroke="var(--grid-line)" stroke-width="1" />
+        <polyline points="${line('mem_percent')}" fill="none" style="stroke:var(--series-mem)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        <polyline points="${line('cpu_percent')}" fill="none" style="stroke:var(--series-cpu)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        ${dot('mem_percent', 'var(--series-mem)')}
+        ${dot('cpu_percent', 'var(--series-cpu)')}
+        <line class="crosshair" x1="0" y1="0" x2="0" y2="${H}" stroke="var(--text-muted)" stroke-width="1" style="display:none" />
+      </svg>
+    </div>`;
+}
+
+// 차트 hover는 #grid가 매 tick마다 innerHTML로 통째로 갈아끼워지므로,
+// 개별 svg에 리스너를 다는 대신 #grid에 한 번만 위임 리스너를 건다.
+(function setupChartHover() {
+  const grid = document.getElementById('grid');
+  const tip = document.getElementById('chartTip');
+  grid.addEventListener('mousemove', (e) => {
+    const wrap = e.target.closest('.spark-wrap');
+    if (!wrap) { tip.style.display = 'none';
+      grid.querySelectorAll('.crosshair').forEach(c => c.style.display = 'none');
+      return; }
+    const hist = JSON.parse(wrap.dataset.history);
+    const rect = wrap.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const idx = Math.round(frac * (hist.length - 1));
+    const s = hist[idx];
+    const cross = wrap.querySelector('.crosshair');
+    if (cross) {
+      cross.style.display = '';
+      const cx = (idx / (hist.length - 1)) * 240;
+      cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+    }
+    const time = new Date(s.ts * 1000).toLocaleTimeString();
+    tip.innerHTML = `<div>${time}</div>
+      <div><span class="k">CPU</span> ${s.cpu.toFixed(1)}%</div>
+      <div><span class="k">메모리</span> ${s.mem.toFixed(1)}%</div>`;
+    tip.style.left = (e.clientX + 14) + 'px';
+    tip.style.top = (e.clientY - 10) + 'px';
+    tip.style.display = 'block';
+  });
+  grid.addEventListener('mouseleave', () => {
+    tip.style.display = 'none';
+    grid.querySelectorAll('.crosshair').forEach(c => c.style.display = 'none');
+  });
+})();
 
 // 카드 안에 "항목: 값" 3~4줄로 핵심 정보만. 상세는 클릭해서 각 대시보드로.
 function rows(pairs) {
@@ -140,12 +235,16 @@ async function tick() {
       const bad = flags.under_voltage_now || flags.throttled_now;
       const hot = sys.cpu_temp_c != null && sys.cpu_temp_c >= 70;
       const v = rails.EXT5V_V ? rails.EXT5V_V.value : null;
-      return card(mod, rows([
-        ['5V 입력', f(v, 2, 'V'), bad],
-        ['CPU 온도', f(sys.cpu_temp_c, 1, '°C'), hot],
-        ['CPU 사용률', f(sys.cpu_percent, 0, '%')],
-        ['메모리', f(sys.mem_percent, 0, '%')],
-      ]), (bad || hot) ? 'var(--critical)' : 'var(--good)', false);
+      const body = `<div class="wide-body">
+        ${rows([
+          ['5V 입력', f(v, 2, 'V'), bad],
+          ['CPU 온도', f(sys.cpu_temp_c, 1, '°C'), hot],
+          ['CPU 사용률', f(sys.cpu_percent, 0, '%')],
+          ['메모리', f(sys.mem_percent, 0, '%')],
+        ])}
+        <div class="chart-col">${sparkChart(d.history)}</div>
+      </div>`;
+      return card(mod, body, (bad || hot) ? 'var(--critical)' : 'var(--good)', false, true);
     }
 
     if (mod.key === 'motor') {

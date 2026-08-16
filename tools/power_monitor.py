@@ -325,7 +325,7 @@ class Handler(BaseHTTPRequestHandler):
             with state_lock:
                 body = json.dumps({
                     "latest": latest,
-                    "history": list(history)[-120:],
+                    "history": list(history)[-300:],
                 }).encode("utf-8")
             self._send(200, body, "application/json")
         elif self.path == "/api/log":
