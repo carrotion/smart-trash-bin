@@ -158,9 +158,20 @@ def read_system_info():
     return info
 
 
+# fsync는 매초 대신 이 간격으로만 강제 (2026-08-16 완화). 기존엔 SSD 원인 불명
+# 크래시에 대비해 매초 fsync했는데, 그날 이후 SSD 픽스(UAS→usb-storage)+배터리
+# 교체+하드웨어 워치독+journald 5초 동기화까지 갖춰져서 이렇게까지 공격적일
+# 필요가 줄었음. journald 동기화 주기와 맞춰 5초로 완화 — SSD 쓰기 마모 감소
+# (SMART 확인 결과 누적 9.7TB 기록됨, 새 드라이브 아니라 마모 신경쓸 가치 있음).
+# write()/flush()는 여전히 매초 해서 OS 페이지캐시까지는 항상 최신 유지.
+FSYNC_INTERVAL_S = 5.0
+_last_fsync_ts = 0.0
+
+
 def append_trace(sample):
-    """매 샘플을 CSV 한 줄로 append. 전원이 갑자기 끊겨도 직전까지 남도록
-    매번 flush한다 (버퍼에만 있으면 사고 순간 기록이 통째로 날아감)."""
+    """매 샘플을 CSV 한 줄로 append. flush()는 매번, 실제 디스크 fsync는
+    FSYNC_INTERVAL_S마다만 — 완전 무손실은 아니지만 SSD 쓰기 마모를 줄인다."""
+    global _last_fsync_ts
     try:
         new_file = not os.path.exists(TRACE_PATH)
         sysinfo = sample.get("system", {})
@@ -180,7 +191,10 @@ def append_trace(sample):
                 sample.get("throttled", {}).get("bitmask", ""),
             ]) + "\n")
             f.flush()
-            os.fsync(f.fileno())
+            now = time.time()
+            if now - _last_fsync_ts >= FSYNC_INTERVAL_S:
+                os.fsync(f.fileno())
+                _last_fsync_ts = now
     except OSError:
         pass
 
