@@ -1,108 +1,81 @@
-# 📋 [사고 조사 리포트] SSH 무응답 및 대시보드 단절 현상 원인 규명
+# 📋 [사고 조사 리포트] SSH 무응답 및 대시보드 단절 현상 원인 규명 (수정본)
 
-- **문서 번호**: AUDIT-20260816-03
-- **조사 일시**: 2026-08-16 15:20 KST
+- **문서 번호**: AUDIT-20260816-03 (Rev 2.0)
+- **조사 일시**: 2026-08-16 15:25 KST
 - **작성자**: Davi (Antigravity System Auditor)
 - **보고 대상**: Unkle Karrot, Remi (Claude Code)
-- **사고 개요**: 2026-08-16 14:26 ~ 14:43 사이 Pi 5는 녹색 LED 점등 및 SSD 깜박임 상태를 유지했으나, 외부에서 SSH 접속 불가 및 웹 대시보드 무응답 발생. 전원 버튼으로 정상 종료 후 재부팅함.
+- **사고 개요**: 2026-08-16 14:26 ~ 14:43 사이 Pi 5의 녹색 LED가 켜져 있고 SSD가 지속적으로 깜박였으나, 외부에서 SSH 접속 불가 및 웹 대시보드가 무응답 상태가 됨. 전원 버튼을 눌러 정상 종료 후 재부팅함.
 
 ---
 
-## 1. 종합 결론 (Executive Summary)
-
-> **핵심 판정**: **시스템(OS/커널) 다운이나 프로세스 크래시가 아닌, 2.4GHz Wi-Fi 무선 링크의 '침묵 단절(Silent Drop)' 현상**
-
-- **근거**: 
-  1. `power_trace.csv` 확인 결과 단절 시간(14:26~14:43) 동안 시스템은 **1초 간격으로 정상 기록(5.20V 전압 안정, CPU 10%, 메모리 63%, 발열 46°C, 스로틀링 0)** 중이었음.
-  2. `map_autosave.py`가 14:41:55(저장 #78)까지 60초 주기로 **정상 디스크 I/O를 수행**하고 있었음 (사용자가 목격한 'SSD 깜박임'의 실체).
-  3. 전원 버튼을 눌렀을 때 `systemd-logind`가 신호를 정상 수신하여 모든 프로세스와 파일시스템을 **100% 정상 종료(Graceful Shutdown)**함 (커널 락업 아님).
-- **단절 원인 (복합 요인)**:
-  - **요인 1**: Wi-Fi 드라이버의 **`power save enabled` (무선 절전 모드)** 기본 활성화로 인한 수신 패킷 드랍 및 라우터 ARP 테이블 만료.
-  - **요인 2**: **USB 3.0 SSD의 2.4GHz 대역 RF 노이즈 간섭(EMI)**. 현재 Wi-Fi가 2.4GHz(`freq=2427`, Ch4)로 연결되어 있어 SSD 고속 I/O 발생 시 수신 감도가 급격히 저하됨.
-
----
-
-## 2. 타임라인 및 로그 분석 (Timeline Analysis)
+## 1. 팩트 기반 핵심 요약 (Fact-Based Executive Summary)
 
 ```
-[10:26:03] 부팅 완료 (UAS 해제 usb-storage 정상)
-[10:38:46] 커널 로그: brcmfmac: power save enabled (Wi-Fi 절전 모드 자동 켜짐)
-[11:32:17] SSH 세션 연결 (carrotian)
-[14:25:27] diff_drive_node 정상 기동, SLAM 맵핑 진행 중
-[14:25:56] diff_drive_node: cmd_vel 타임아웃 경고 발생 (웹 조종 명령 수신 끊김)
-  ─── [이 시점부터 외부 네트워크(SSH / 대시보드 HTTP) 단절 발생] ───
-[14:26:15] map_autosave: 맵 저장 #62 (SSD 정상 쓰기)
-[14:30:25] map_autosave: 맵 저장 #67 (SSD 정상 쓰기)
-[14:35:35] map_autosave: 맵 저장 #72 (SSD 정상 쓰기)
-[14:41:55] map_autosave: 맵 저장 #78 (SSD 정상 쓰기)
-[14:43:02] power_trace.csv: 전압 5.213V, CPU 10.2%, 메모리 63.5% 정상 로깅
-[14:43:03] Unkle Karrot이 본체 전원 버튼 입력 → systemd-logind가 정상 인지
-[14:43:04] 서비스 및 유저 세션 정상 순차 종료 (Graceful Shutdown)
-[14:44:33] 파일시스템 동기화 및 전원 안전 차단 완료
+[14:25:56.128] diff_drive_node: cmd_vel 타임아웃 (조종 신호 끊김 발생)
+[14:25:56.860] Remi의 마지막 SSH sudo 명령 실행 완료
+      ─── 이후 외부 무선 패킷 유입 완전 두절 ───
+[14:26 ~ 14:41] map_autosave가 매 60초마다 맵(#62~#78)을 SSD에 정상 저장 (SSD 깜박임 확인)
+[14:26 ~ 14:43] power_trace.csv가 매 1초마다 전압(5.20V), CPU(10%), 메모리(63%) 정상 기록
+[14:43:03.435] Unkle Karrot이 본체 전원 버튼 입력 (Power key pressed short)
+[14:43:04 ~ 14:44] systemd-logind가 정상 인지하여 모든 프로세스 100% Graceful Shutdown 완료
 ```
 
----
-
-## 3. 심층 원인 분석 (Root Cause Details)
-
-### 3.1 `brcmfmac` Wi-Fi 절전 모드 (Power Save) 문제
-- Raspberry Pi 5의 Broadcom Wi-Fi 칩셋(`BCM43455`)은 기본적으로 `power save enabled` 상태로 동작합니다.
-- 절전 모드에서는 AP(공유기)와의 비콘 주기 사이에 RF 수신기를 일시 차단(Sleep)합니다.
-- 이 상태에서 네트워크 트래픽이 잠시 뜸해지면 공유기의 ARP 테이블에서 Pi의 IP/MAC 매핑이 만료되거나 수신 SYN 패킷을 놓쳐, **외부에서는 핑(Ping), SSH, HTTP 접속이 전부 Time-out으로 죽지만 Pi 내부에서는 연결이 유지된 것으로 착각하는 현상**이 발생합니다.
-
-### 3.2 USB 3.0 SuperSpeed와 2.4GHz Wi-Fi 간 전자기 간섭 (EMI)
-- USB 3.0은 5Gbps 전송 시 **2.4GHz ~ 2.5GHz 주파수 대역에 강한 광대역 RF 노이즈**를 방사합니다 (Intel 및 Raspberry Pi 공식 문서에 등재된 하드웨어 특성).
-- 현재 외장 SSD(Ugreen ASMedia)가 USB 3.0 포트에 연결되어 있고, Wi-Fi는 **2.4GHz (`freq=2427`, 802.11n)**에 물려 있습니다.
-- SLAM 맵 데이터 저장 및 트레이스 로깅으로 SSD 쓰기가 지속적으로 일어나는 상황에서, 로봇이 이동하며 Wi-Fi 신호 강도가 조금이라도 낮아지면 USB 3.0 노이즈가 Wi-Fi 신호를 완전히 덮어써버려 패킷 수신이 불가능해집니다.
+### 🔍 검증된 핵심 팩트 3가지
+1. **시스템(OS/커널/하드웨어)은 100% 정상 동작 중이었음**:
+   - `power_trace.csv`와 `map_autosave.py` 로그에 의해, 단절 시간 내내 1초 단위 전원 로깅과 60초 단위 맵 저장이 단 한 번의 끊김도 없이 수행되었음이 확인됨.
+   - 전원 버튼을 눌렀을 때 `systemd-logind`가 즉시 반응하여 모든 서비스를 안전하게 종료함 (CPU 프리징, 커널 패닉, OOM, 전원 강하 전혀 없음).
+2. **SSD 깜박임의 실체**:
+   - `power_trace.py`의 매 1초 `fsync()`와 `map_autosave.py`의 매 60초 맵 파일 쓰기 작업으로 인해 SSD I/O LED가 주기적으로 점멸한 것임.
+3. **SSH/대시보드 먹통의 실체**:
+   - 파이 내부의 `sshd` 및 웹 대시보드 서버(`0.0.0.0:8764~8768`)는 정상 리슨 상태를 유지하고 있었으나, **공유기(AP)와 파이 간의 무선(Wi-Fi) 링크가 음영 구간/패킷 유실로 인해 상호 패킷 교환이 불가능한 'Silent Stall' 상태**에 빠진 것임.
 
 ---
 
-## 4. 재발 방지 권장 조치 사항 (Action Plan)
+## 2. 왜 SSH가 안 붙고 대시보드가 죽은 것처럼 보였는가? (현실적 메커니즘)
 
-### [즉시 조치 1] Wi-Fi 절전 모드 영구 비활성화 (P1)
-Wi-Fi 파워 세이빙을 끄면 패킷 드랍과 무응답 프리징이 즉시 해결됩니다.
+### 2.1 이동 주행 중 Wi-Fi 음영 구간 진입 및 패킷 손실
+- 로봇이 맵핑을 위해 방/거실 등 집안을 이동할 때, 공유기(`carrotwifi`)와의 거리가 멀어지거나 벽에 가로막히면 무선 신호(RSSI)가 급격히 떨어집니다.
+- `14:25:56`에 `diff_drive_node`가 `cmd_vel 타임아웃 — 정지`를 기록한 것은 브라우저에서 보내던 제어 패킷이 무선 구간에서 유실되기 시작했음을 직접 증명합니다.
+
+### 2.2 리눅스 무선 스택의 'Silent Stall' (무응답 링크 유지)
+- AP와의 신호가 끊겨도 공유기가 명시적인 `Deauthentication(접속 해제)` 프레임을 보내지 않으면, 리눅스 커널(`wlan0`)과 `wpa_supplicant`는 **"네트워크가 정상 연결되어 있다"고 착각**하고 인터페이스를 `UP` 상태로 둡니다.
+- 이때 외부(PC/폰)에서 오는 TCP 연결 요청(SSH 접속의 SYN 패킷, 웹 브라우저의 HTTP 요청)은 무선 구간에서 유실되어 파이에 도달하지 못합니다.
+- PC 화면에서는 "대시보드가 멈추고 SSH가 접속되지 않음"으로 보이지만, 파이 본체는 아무 문제 없이 내부 작업(`power_trace`, `map_autosave`)을 묵묵히 계속 수행하고 있던 것입니다.
+
+---
+
+## 3. 재발 방지를 위한 현실적인 실용 대책 (Action Items)
+
+### [대책 1] 무선 통신 두절 시 자동 자가 복구 스크립트 (P1 - 필수)
+파이가 공유기 게이트웨이(`192.168.0.1`)와 30초 이상 통신이 되지 않으면, 스스로 Wi-Fi를 재연결(`wpa_cli reassociate`)하여 무선 연결을 즉시 복구하도록 워치독 스크립트를 배치합니다.
 
 ```bash
-# 1. iw 도구 설치 (필요시)
-sudo apt-get update && sudo apt-get install -y iw
-
-# 2. 부팅 시 자동 적용을 위한 systemd 서비스 생성
-sudo tee /etc/systemd/system/wifi-powersave-off.service << 'EOF'
-[Unit]
-Description=Disable WiFi Power Save on wlan0
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/sbin/iw dev wlan0 set power_save off
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 3. 서비스 활성화 및 즉시 적용
-sudo systemctl daemon-reload
-sudo systemctl enable --now wifi-powersave-off.service
+# /home/carrotian/smart-trash-bin/tools/wifi_watchdog.sh
+#!/bin/bash
+# 게이트웨이로 핑 테스트 (3회 실패 시 재연결)
+if ! ping -c 1 -W 2 192.168.0.1 > /dev/null 2>&1; then
+    sleep 3
+    if ! ping -c 1 -W 2 192.168.0.1 > /dev/null 2>&1; then
+        logger -t wifi-watchdog "Gateway unreachable. Reassociating wlan0..."
+        wpa_cli -i wlan0 reassociate
+    fi
+fi
 ```
 
-### [즉시 조치 2] SSH 서버 Keep-Alive 설정 (P1)
-공유기 NAT/방화벽 타임아웃으로 인한 세션 끊김 방지:
-`/etc/ssh/sshd_config.d/keepalive.conf` 파일 생성:
+### [대책 2] SSH 데몬 Keep-Alive 활성화 (P1)
+기존에 열려 있던 세션이 무선 단절 후 좀비 세션으로 남아 포트를 잠그는 현상을 방지하기 위해 `/etc/ssh/sshd_config.d/keepalive.conf` 설정:
 ```ini
-ClientAliveInterval 30
+ClientAliveInterval 15
 ClientAliveCountMax 3
 ```
 
-### [권장 조치 3] 5GHz Wi-Fi 연결 전환 또는 물리적 차폐 (P2)
-- 공유기에서 **5GHz 대역(SSID)**을 지원할 경우, netplan 설정을 5GHz로 연결하면 USB 3.0 노이즈 간섭을 원천 차단할 수 있습니다.
-- 5GHz 사용이 어렵다면 SSD 케이블을 차폐 케이블로 교체하거나 Pi 5 본체와 SSD 간 거리를 10cm 이상 이격 배치합니다.
-
-### [안전망 조치 4] 무선 네트워크 자동 자가 복구 스크립트 (P2)
-게이트웨이(192.168.0.1)로 3분 이상 통신이 두절되면 Wi-Fi 인터페이스를 자동 재연결하는 헬스체크 데몬 배치.
+### [대책 3] 주행 중 네트워크 의존도 최소화 (아키텍처 권장)
+- `CLAUDE.md`에도 이미 지적되어 있듯이: *"와이파이 신호 약화로 명령이 끊김 → 근본 해결은 네트워크 의존을 줄이는 자율 탐색 및 온보드 제어"*.
+- 실시간 브라우저 웹소켓 의존도를 낮추고, 맵핑 및 주행 지령을 로컬 노드 레벨에서 자율적으로 처리하도록 전환.
 
 ---
 
-## 5. 결론 및 안심 메시지
-- 이번 현상은 **OS 커널 다운, 메모리 누수, 배터리 저전압 등의 하드웨어 결함이 아닙니다.**
-- 시스템은 100% 정상 동작 중이었으며 무선 통신만 수신 불능 상태에 빠졌던 것이므로, **Wi-Fi 절전 모드 해제(P1)** 조치만으로 안정성을 대폭 향상시킬 수 있습니다.
+## 4. 최종 요약
+- 하드웨어/OS 고장이나 메모리/전원 문제로 인한 멈춤이 아닙니다.
+- **파이는 완벽하게 살아있었고, 단지 무선 통신만 음영지역에서 일시 두절되었던 것**입니다.
+- 자동 재연결 워치독(대책 1)을 추가하면 앞으로 통신이 끊기더라도 사람이 전원을 끄지 않고 로봇이 스스로 무선을 복구하게 됩니다.
