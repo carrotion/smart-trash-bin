@@ -12,6 +12,7 @@ imu_publisher_node와 ldlidar_stl_ros2_node가 퍼블리시하는 토픽을 구�
 import argparse
 import json
 import math
+import signal
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -203,6 +204,14 @@ def main():
     threading.Thread(target=lambda: rclpy.spin(node), daemon=True).start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
+
+    # systemd가 SIGTERM을 보내도 serve_forever()가 이를 감지 못해 90초 뒤
+    # SIGKILL로 강제종료되는 문제(2026-08-16 감사 리포트로 확인) 방지.
+    def _sig_handler(signum, frame):
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, _sig_handler)
+    signal.signal(signal.SIGINT, _sig_handler)
+
     print(f"센서 대시보드 시작: http://<Pi IP>:{args.port}")
     server.serve_forever()
 

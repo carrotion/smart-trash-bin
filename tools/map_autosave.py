@@ -17,6 +17,7 @@ import time
 
 import rclpy
 from nav_msgs.msg import OccupancyGrid
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 
@@ -80,7 +81,7 @@ def main():
     node = MapAutoSaver(args.dir, args.interval)
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
