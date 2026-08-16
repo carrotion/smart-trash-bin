@@ -46,6 +46,34 @@ LD06이 로봇 자신의 데크 구조물(배선·기둥)을 보고 있었음. �
 **증상 감별법**: 필터 노드는 "N% 걸러냄"이라고 정상 로그를 찍는데 `/scan`엔 여전히
 0.08m 반사가 보이면 이 상황이다. `ros2 topic info /scan --verbose`로 발행자 수를 볼 것.
 
+## 📼 블랙박스 — microSD에 사고 순간을 남긴다 (2026-08-17)
+
+`tools/blackbox_recorder.py` + `smart-trash-blackbox.service` (상시).
+**microSD(`/dev/mmcblk0p1` → `/var/log/blackbox`)는 SoC 내장 SDIO(`platform/axi`)에
+직결돼 USB와 완전히 독립이다.** USB SSD가 죽어도 이쪽은 계속 기록한다.
+netconsole과 달리 WiFi에도 의존하지 않아 음영지역(주방)에서도 확실히 남는다.
+
+**남기는 것**
+- `heartbeat.log` (1초): 마지막 줄 시각 = **프리즈가 일어난 정확한 시점**.
+  `D=`(D 상태 프로세스 수), `stuck=`(5초 이상 지속된 것), `inflight=`(진행 중 I/O).
+- `kernel.log`: `/dev/kmsg` 실시간 전달. 디스크 워치독이 재부팅 직전에 찍는
+  **sysrq 'w' 블록 태스크 콜 트레이스**가 여기 들어온다 — 지금까지 한 번도
+  못 봤던 정보. 검증에서 `io_schedule` 대기 스택까지 그대로 잡혔다.
+
+**설계상 반드시 지킬 것**
+- 이 서비스는 **SSD를 절대 건드리면 안 된다.** `StandardOutput/Error=null`로
+  journald(→SSD)를 차단했다. 읽는 곳은 `/proc`, `/sys`, `/dev/kmsg` 뿐.
+- `sustained` 필터 필수: D 상태는 정상 운영 중에도 순간적으로 뜬다
+  (`jbd2` 저널 커밋, `vcgencmd` 펌웨어 호출). 5초 이상 지속된 것만 이상으로 본다.
+- fstab에 **`nofail` + `x-systemd.device-timeout=5s`** — 카드를 빼도 부팅이
+  막히면 안 된다.
+- `/dev/kmsg`는 비ASCII를 `\xNN`으로 이스케이프하므로 한글이 깨진다 →
+  `unescape_kmsg()`로 복원.
+
+**microSD 전환은 아직 아님** (사용자와 합의, 2026-08-17): 원인이 USB로 확정되지
+않았고, 컴파일·맵작성 부하에는 SSD가 맞다. 디스크 워치독으로 위험이 낮아진
+지금은 SSD 위에서 증거를 모으는 게 맞다. 카드는 **블랙박스 용도로만** 쓴다.
+
 ## 💾 부팅 순서 — microSD를 꽂아도 SSD로 부팅하도록 변경 (2026-08-17)
 
 **문제**: Pi5 기본 `BOOT_ORDER=0xf461`은 오른쪽부터 읽어 `1(SD) → 6(NVMe) → 4(USB) → f(재시도)`

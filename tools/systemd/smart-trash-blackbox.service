@@ -1,0 +1,24 @@
+[Unit]
+# 프리즈 순간의 증거를 microSD(USB와 독립된 저장경로)에 남긴다.
+# 근거: 2026-08-17 01:07 프리즈에서 커널이 에러를 쓰려던 대상이 바로 죽은
+# 디스크였던 탓에 증거가 통째로 사라짐. 상세는 tools/blackbox_recorder.py 참고.
+Description=Smart Trash Bin - blackbox recorder on microSD (survives USB SSD hang)
+# SD가 마운트된 뒤에 시작. 카드가 없으면 조건 불충족으로 조용히 건너뛴다.
+After=var-log-blackbox.mount
+Requires=var-log-blackbox.mount
+ConditionPathIsMountPoint=/var/log/blackbox
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/carrotian/smart-trash-bin/tools/blackbox_recorder.py --dir /var/log/blackbox
+Restart=always
+RestartSec=5
+# ⚠️ 로그를 journald로 보내지 않는다 — journald는 SSD에 쓰므로, SSD가 죽는
+#    순간 이 서비스까지 같이 막혀버린다. 기록은 전부 SD로만 나간다.
+StandardOutput=null
+StandardError=null
+# 사고 중에도 살아있어야 하므로 OOM 킬러 우선순위를 낮춘다.
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
