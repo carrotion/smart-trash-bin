@@ -15,8 +15,8 @@
 import argparse
 import base64
 import json
+import os
 import signal
-import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,14 +30,69 @@ state_lock = threading.Lock()
 state = {"connected": False, "last_ts": 0.0}
 STALE_S = 5.0
 
-# 자율주행(Nav2+explore_lite) 프로세스를 찾아 죽일 때 매칭할 패턴들.
-# 2026-08-16: 비상정지 버튼 추가 — carrotian 소유 프로세스라 sudo 없이
-# pkill 가능(같은 유저면 자기 프로세스는 권한 없이도 kill 가능).
-AUTONOMOUS_PROC_PATTERNS = [
-    "autonomous_mapping.launch.py",
-    "explore_lite", "controller_server", "planner_server",
-    "bt_navigator", "behavior_server",
-]
+# 비상정지 대상: 로봇에 cmd_vel을 만들어 보낼 수 있는 프로세스들.
+# 2026-08-16: 전부 carrotian 소유라 같은 유저인 대시보드가 권한 없이 신호를 보낼 수 있다.
+#
+# ⚠️ **실행파일 이름(argv[0]의 basename)으로 정확히 일치**시킨다. 예전엔 명령줄
+# 전체에 대한 부분문자열 매칭이었는데, 그러면 "bt_navigator" 같은 흔한 문자열이
+# 들어간 **무관한 프로세스까지 죽인다**. 실제로 진단용 셸(`pgrep -f
+# 'nav2_bt_navigator|...'`)이 비상정지에 휘말려 죽는 걸 확인했다 — 실전에서는
+# 사용자의 SSH 세션이나 모니터링 명령이 같은 이유로 죽을 수 있어서 위험하다.
+AUTONOMOUS_EXECUTABLES = {
+    "controller_server",   # Nav2 컨트롤러 — cmd_vel을 직접 발행하는 주범
+    "planner_server",
+    "bt_navigator",
+    "behavior_server",     # 복구 동작(회전/후진)도 cmd_vel을 냄
+    "explore",             # explore_lite의 실행파일 이름
+}
+# 런치 프로세스는 argv[0]이 python이라 실행파일명으로는 못 잡는다 — 인자로 판별.
+AUTONOMOUS_LAUNCH_FILE = "autonomous_mapping.launch.py"
+
+
+def kill_autonomous_processes():
+    """자율주행 프로세스를 /proc 직접 스캔 + os.kill로 죽인다. 목록을 반환.
+
+    ⚠️ 예전엔 `subprocess.run(["pkill", "-f", p], capture_output=True)`를 썼는데,
+    **죽일 프로세스가 실제로 있을 때만 응답이 안 돌아오는** 현상을 재현 확인했다
+    (죽일 게 없으면 0.4초, 있으면 무한 대기). 비상정지 경로에서 서브프로세스와
+    파이프에 의존하는 것 자체가 위험하다고 판단해, 외부 프로세스를 아예 안 쓰는
+    방식으로 바꿨다. /proc 읽기와 os.kill은 블로킹될 여지가 없다.
+
+    자기 자신(대시보드)은 반드시 제외한다 — 패턴이 자기 명령줄에 걸리면
+    비상정지를 누르는 순간 대시보드가 자살한다.
+    """
+    me = os.getpid()
+    killed = []
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid == me:
+            continue
+        try:
+            with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                # cmdline은 인자들이 NUL로 구분돼 있음 — 리스트로 복원
+                args = f.read().decode('utf-8', 'replace').split('\0')
+        except OSError:
+            continue  # 그 사이 종료됐거나 권한 없음
+        args = [a for a in args if a]
+        if not args:
+            continue  # 커널 스레드
+
+        exe = os.path.basename(args[0])
+        if exe in AUTONOMOUS_EXECUTABLES:
+            match = exe
+        elif any(a.endswith(AUTONOMOUS_LAUNCH_FILE) for a in args):
+            match = AUTONOMOUS_LAUNCH_FILE
+        else:
+            continue
+
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed.append(f'{match}({pid})')
+        except OSError:
+            pass
+    return killed
 
 
 class MapBridge(Node):
@@ -267,15 +322,7 @@ class Handler(BaseHTTPRequestHandler):
             # (cmd_vel_timeout), 소스를 죽이면 0.5초 안에 반드시 선다.
             # 0 속도 발행은 그 0.5초를 더 앞당기는 보조 수단일 뿐이라 나중에,
             # 그리고 멈춰도 응답을 막지 않도록 타임아웃을 걸고 돌린다.
-            killed = []
-            for pattern in AUTONOMOUS_PROC_PATTERNS:
-                try:
-                    r = subprocess.run(["pkill", "-f", pattern],
-                                       capture_output=True, timeout=5)
-                    if r.returncode == 0:
-                        killed.append(pattern)
-                except subprocess.TimeoutExpired:
-                    pass
+            killed = kill_autonomous_processes()
             zero_ok = Handler.node.emergency_stop_async(timeout=1.5)
             self._send(200, json.dumps({
                 "ok": True, "killed": killed,
