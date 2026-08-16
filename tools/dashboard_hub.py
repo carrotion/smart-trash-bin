@@ -253,15 +253,15 @@ async function tick() {
         return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
       }
       const connected = d.connected;
-      const pwm = d.commanded_pwm || [0,0,0,0];
       const rate = d.rate || [0,0,0,0];
-      const moving = pwm.some(v => v !== 0);
+      const cmd = d.commanded || [0,0];
       const movingWheels = rate.filter(r => Math.abs(r) > 30).length;
+      const moving = movingWheels > 0;
       return card(mod, rows([
         ['상태', moving ? '주행 중' : '정지'],
         ['드라이버', connected ? '연결됨' : '연결 안 됨', !connected],
         ['회전 중 바퀴', `${movingWheels} / 4`],
-        ['PWM', pwm.join(', ')],
+        ['명령 속도', `${f(cmd[0], 2, ' m/s')} / ${f(cmd[1], 2, ' rad/s')}`],
       ]), !connected ? 'var(--critical)' : (moving ? 'var(--accent)' : 'var(--good)'), false);
     }
 
