@@ -1,0 +1,10 @@
+[Unit]
+Description=Smart Trash Bin - run WiFi gateway watchdog every 30s
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

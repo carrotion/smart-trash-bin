@@ -1,0 +1,9 @@
+[Unit]
+Description=Smart Trash Bin - WiFi gateway watchdog (reassociate on silent stall)
+After=network.target
+
+[Service]
+# root로 실행 — wpa_cli가 wpa_supplicant 제어소켓(/var/run/wpa_supplicant/wlan0)에
+# 접근하려면 root 권한이 필요함(carrotian 계정으로는 Permission denied 확인됨).
+Type=oneshot
+ExecStart=/bin/bash /home/carrotian/smart-trash-bin/tools/wifi_watchdog.sh
