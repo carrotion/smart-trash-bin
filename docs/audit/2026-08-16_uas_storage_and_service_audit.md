@@ -103,3 +103,30 @@ finally:
 ```bash
 sudo systemctl disable --now smartmontools
 ```
+
+---
+
+## 4. 감사결과에 대한 의견 (Claude Code 검토, 2026-08-16)
+
+사용자 지시에 따라 100% 신뢰하지 않고 ① 팩트체크 → ② 우리 상황에 대한 유용성 논의 → ③ 적용 여부 결정 순으로 검토함.
+
+### 4.1 팩트체크 결과
+
+| 주장 | 검증 방법 | 결과 |
+|---|---|---|
+| usb-storage 전환 정상, I/O 에러 0건 | 직접 재확인(`lsusb -t`, dmesg) | ✅ 사실 |
+| 5V 레일/CPU 온도/워치독 수치 | 직접 재확인 | ✅ 사실 |
+| `/imu/data` 49.99Hz, `/odom` 16.16Hz | `ros2 topic hz` 직접 재측정 | ✅ 사실 (실측 49.95~50.01Hz, 16.14~16.15Hz) |
+| `/scan` **12.85Hz** | `ros2 topic hz` 직접 재측정 | ❌ **틀림** — 실측 정확히 **10.0Hz** (LD06 스펙 그대로, 과거 여러 차례 측정값과 일치). 이 리포트에서 유일하게 틀린 수치. |
+| 대시보드 종료 시 90초 지연 후 SIGKILL | `time sudo systemctl stop ...`로 직접 재현 | ✅ **완전히 재현됨** — 정확히 90.1초, `ExternalShutdownException` 트레이스백과 `stop-sigterm timed out. Killing.` 로그까지 리포트 서술과 100% 일치 |
+| `smartmontools` failed | 기존에 이미 알고 있던 사실 | ✅ 사실 |
+
+**결론**: 정성적 진단(원인 분석, 90초 지연 문제)은 정확하고 재현 가능했음. 단, 숫자 하나(`/scan` Hz)는 실측과 달랐음 — 감사 리포트의 구체적 수치도 그대로 믿지 말고 중요한 판단에 쓰기 전엔 재확인이 필요하다는 근거로 기록해둠.
+
+### 4.2 적용 결정
+
+- **Action 1 (SIGTERM 핸들러) 적용함**: `tools/motor_dashboard.py`, `tools/sensor_dashboard.py`에 `signal.signal(SIGTERM/SIGINT, ...)` → `server.shutdown()` 별도 스레드 호출 패턴으로 추가. 적용 후 재측정: 모터 대시보드 90초→3.7초, 센서 대시보드 90초→0.5초로 확인.
+- **Action 2 (ROS2 종료 예외 처리) 적용함**: `imu_publisher_node.py`, `tools/map_autosave.py`에 `ExternalShutdownException` catch 추가(`map_autosave.py`는 `KeyboardInterrupt`/`rclpy.ok()` 가드가 이미 있었고 `ExternalShutdownException`만 누락돼 있어 추가). 재시작 로그에서 트레이스백 사라진 것 확인.
+- **Action 3 (smartmontools 비활성화) 적용함**: `sudo systemctl disable --now smartmontools` 실행, `disabled` 확인.
+
+세 항목 모두 검증됐고, 작고 안전한 변경이라 논의 없이 바로 적용하기로 함(2026-08-16, 사용자 승인).

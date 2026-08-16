@@ -24,6 +24,7 @@ SLAM/맵핑과 동시에 켜둘 수 있어서, 무선조종 하듯 집안을 돌
 import argparse
 import json
 import math
+import signal
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -476,6 +477,14 @@ def main():
     threading.Thread(target=lambda: rclpy.spin(node), daemon=True).start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
+
+    # systemd가 SIGTERM을 보내도 serve_forever()가 이를 감지 못해 90초 뒤
+    # SIGKILL로 강제종료되는 문제(2026-08-16 감사 리포트로 확인) 방지.
+    def _sig_handler(signum, frame):
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, _sig_handler)
+    signal.signal(signal.SIGINT, _sig_handler)
+
     print(f"모터 조종 대시보드 시작: http://<Pi IP>:{args.port}", flush=True)
     try:
         server.serve_forever()
