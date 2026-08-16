@@ -48,9 +48,26 @@ class MapBridge(Node):
         self._cmd_pub = self.create_publisher(Twist, 'cmd_vel', 1)
 
     def emergency_stop(self):
+        """0 속도를 여러 번 발행. **호출자는 이게 멈출 수 있다고 가정해야 한다.**
+
+        2026-08-16: DDS 상태가 꼬이면(대량 kill -9 / /dev/shm 정리 후 등) 이
+        publish가 무한정 안 돌아오는 걸 실제로 겪음 — 그때 비상정지 API 전체가
+        응답을 안 했다. 그래서 이건 이제 '보조 수단'이고, 진짜 정지는
+        프로세스를 죽이는 쪽(아래 do_POST)이 담당한다.
+        """
         for _ in range(5):
             self._cmd_pub.publish(Twist())
             time.sleep(0.05)
+
+    def emergency_stop_async(self, timeout=1.5):
+        """emergency_stop을 별도 스레드로 돌려서, 멈춰도 호출자를 막지 않게 한다.
+
+        반환값은 시간 내에 끝났는지 여부(진단용).
+        """
+        t = threading.Thread(target=self.emergency_stop, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+        return not t.is_alive()
 
     def _on_map(self, msg: OccupancyGrid):
         # OccupancyGrid.data는 int8[] (-1=unknown, 0=free, 100=occupied).
@@ -201,9 +218,14 @@ document.getElementById('estopBtn').addEventListener('click', async () => {
   msg.textContent = '정지 명령 전송 중...';
   try {
     const res = await (await fetch('/api/estop', {method: 'POST'})).json();
-    msg.textContent = res.killed && res.killed.length
+    const base = res.killed && res.killed.length
       ? `정지됨 — 종료된 프로세스: ${res.killed.join(', ')}`
       : '정지 명령 발행됨 (실행 중이던 자율주행 프로세스는 없었음)';
+    // zero_published=false면 ROS 발행이 막힌 것. 프로세스는 죽였으므로
+    // diff_drive의 cmd_vel_timeout(0.5초)으로 정지는 되지만, 알려는 준다.
+    msg.textContent = res.zero_published === false
+      ? base + ' ⚠️ 0속도 발행 실패 — 0.5초 내 자동정지로 대체됨'
+      : base;
   } catch (e) {
     msg.textContent = '정지 요청 실패 — 네트워크 확인 필요';
   }
@@ -236,19 +258,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/api/estop":
-            # 1) 즉시 0 속도 발행 (아래 pkill이 조금 늦어도 이게 먼저 먹힘)
-            Handler.node.emergency_stop()
-            # 2) 자율주행 프로세스 자체를 죽여서 새 명령이 더 안 나오게 함.
-            #    같은 유저(carrotian) 프로세스라 sudo 불필요.
+            # ⚠️ 순서가 중요하다. 예전엔 0 속도 발행을 먼저 했는데, DDS가 꼬여서
+            # publish가 안 돌아오면 뒤의 pkill까지 영영 도달을 못 했다(실제로
+            # 2026-08-16에 비상정지 API가 통째로 응답불능이 된 걸 확인).
+            #
+            # 진짜 정지는 "명령을 만들어내는 프로세스를 죽이는 것"이다 —
+            # diff_drive_node가 cmd_vel이 0.5초만 끊겨도 스스로 정지하므로
+            # (cmd_vel_timeout), 소스를 죽이면 0.5초 안에 반드시 선다.
+            # 0 속도 발행은 그 0.5초를 더 앞당기는 보조 수단일 뿐이라 나중에,
+            # 그리고 멈춰도 응답을 막지 않도록 타임아웃을 걸고 돌린다.
             killed = []
             for pattern in AUTONOMOUS_PROC_PATTERNS:
-                r = subprocess.run(["pkill", "-f", pattern], capture_output=True)
-                if r.returncode == 0:
-                    killed.append(pattern)
-            # 3) 혹시 남은 게 있으면 한 번 더 0 속도 발행
-            Handler.node.emergency_stop()
-            self._send(200, json.dumps({"ok": True, "killed": killed}).encode("utf-8"),
-                       "application/json")
+                try:
+                    r = subprocess.run(["pkill", "-f", pattern],
+                                       capture_output=True, timeout=5)
+                    if r.returncode == 0:
+                        killed.append(pattern)
+                except subprocess.TimeoutExpired:
+                    pass
+            zero_ok = Handler.node.emergency_stop_async(timeout=1.5)
+            self._send(200, json.dumps({
+                "ok": True, "killed": killed,
+                # false면 ROS 발행이 멈춘 것 — 그래도 위에서 소스를 죽였으므로
+                # cmd_vel_timeout으로 정지는 보장된다. UI에 경고로 표시.
+                "zero_published": zero_ok,
+            }).encode("utf-8"), "application/json")
         else:
             self._send(404, b"not found", "text/plain")
 
