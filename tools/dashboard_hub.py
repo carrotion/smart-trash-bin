@@ -235,12 +235,17 @@ async function tick() {
       const bad = flags.under_voltage_now || flags.throttled_now;
       const hot = sys.cpu_temp_c != null && sys.cpu_temp_c >= 70;
       const v = rails.EXT5V_V ? rails.EXT5V_V.value : null;
+      const wifi = (d.latest && d.latest.wifi) || {};
+      // -70dBm 아래는 통상 "약함"으로 보는 기준 — 음영지역 감시용
+      const wifiRows = Object.values(wifi).map(w =>
+        [`WiFi(${w.label})`, `${w.level_dbm.toFixed(0)} dBm`, w.level_dbm < -70]);
       const body = `<div class="wide-body">
         ${rows([
           ['5V 입력', f(v, 2, 'V'), bad],
           ['CPU 온도', f(sys.cpu_temp_c, 1, '°C'), hot],
           ['CPU 사용률', f(sys.cpu_percent, 0, '%')],
           ['메모리', f(sys.mem_percent, 0, '%')],
+          ...wifiRows,
         ])}
         <div class="chart-col">${sparkChart(d.history)}</div>
       </div>`;
