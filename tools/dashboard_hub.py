@@ -45,7 +45,7 @@ PAGE = """<!doctype html>
     --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
     --border: rgba(11,11,11,0.10);
     --accent: #2a78d6;
-    --good: #0ca30c; --critical: #d03b3b; --idle: #898781;
+    --good: #0ca30c; --critical: #d03b3b; --warning: #c98500; --idle: #898781;
     --series-cpu: #2a78d6; --series-mem: #eb6834;
     --grid-line: rgba(11,11,11,0.16);
   }
@@ -55,7 +55,7 @@ PAGE = """<!doctype html>
       --surface-1: #1a1a19; --page: #0d0d0d;
       --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
       --border: rgba(255,255,255,0.10);
-      --accent: #3987e5; --good: #0ca30c; --critical: #e66767; --idle: #6b6a66;
+      --accent: #3987e5; --good: #0ca30c; --critical: #e66767; --warning: #eda100; --idle: #6b6a66;
       --series-cpu: #3987e5; --series-mem: #d95926;
       --grid-line: rgba(255,255,255,0.16);
     }
@@ -207,12 +207,22 @@ function sparkChart(history) {
 })();
 
 // 카드 안에 "항목: 값" 3~4줄로 핵심 정보만. 상세는 클릭해서 각 대시보드로.
+// 3번째 값은 boolean(true=critical 빨강, 기존 동작 그대로) 또는 색상 문자열
+// (예: 'var(--warning)')을 직접 지정 — WiFi처럼 3단계 이상 등급이 필요할 때 씀.
 function rows(pairs) {
-  return `<div class="rows">` + pairs.map(([k, v, warn]) =>
-    `<div class="row"><span class="k">${k}</span><span class="v${warn ? ' warn' : ''}">${v}</span></div>`
-  ).join('') + `</div>`;
+  return `<div class="rows">` + pairs.map(([k, v, warn]) => {
+    const style = typeof warn === 'string' ? ` style="color:${warn}"` : '';
+    const cls = warn === true ? ' warn' : '';
+    return `<div class="row"><span class="k">${k}</span><span class="v${cls}"${style}>${v}</span></div>`;
+  }).join('') + `</div>`;
 }
 const f = (v, d, unit) => (v === null || v === undefined) ? '-' : v.toFixed(d) + unit;
+// WiFi 신호 등급별 색상 — "얼마가 좋은 숫자냐"는 질문에 답한 기준표 그대로 적용.
+function wifiColor(dbm) {
+  if (dbm >= -60) return 'var(--good)';       // 매우 좋음/좋음
+  if (dbm >= -70) return 'var(--warning)';    // 양호/보통
+  return 'var(--critical)';                    // 약함/매우 약함
+}
 
 async function tick() {
   let summary;
@@ -238,7 +248,7 @@ async function tick() {
       const wifi = (d.latest && d.latest.wifi) || {};
       // -70dBm 아래는 통상 "약함"으로 보는 기준 — 음영지역 감시용
       const wifiRows = Object.values(wifi).map(w =>
-        [`WiFi(${w.label})`, `${w.ssid || '-'} · ${w.level_dbm.toFixed(0)}dBm`, w.level_dbm < -70]);
+        [`WiFi(${w.label})`, `${w.ssid || '-'} · ${w.level_dbm.toFixed(0)}dBm`, wifiColor(w.level_dbm)]);
       const body = `<div class="wide-body">
         ${rows([
           ['5V 입력', f(v, 2, 'V'), bad],

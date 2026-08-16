@@ -310,6 +310,12 @@ const labels = {
   freq_capped_since_boot: "클럭제한 이력", soft_temp_limit_since_boot: "온도제한 이력",
 };
 let lastLog = [];
+// WiFi 신호 등급별 색상 (dashboard_hub.py와 동일 기준)
+function wifiColor(dbm) {
+  if (dbm >= -60) return '#0ca30c';   // 매우 좋음/좋음
+  if (dbm >= -70) return '#c98500';   // 양호/보통
+  return '#d03b3b';                    // 약함/매우 약함
+}
 
 async function tick() {
   let res;
@@ -343,7 +349,7 @@ async function tick() {
   const wifi = res.latest.wifi || {};
   document.getElementById("wifi").innerHTML =
     Object.values(wifi).map(w =>
-      `<tr><td>WiFi (${w.label})</td><td>${w.ssid || '-'} · ${w.level_dbm.toFixed(0)} dBm</td></tr>`
+      `<tr><td>WiFi (${w.label})</td><td style="color:${wifiColor(w.level_dbm)}">${w.ssid || '-'} · ${w.level_dbm.toFixed(0)} dBm</td></tr>`
     ).join('') || '<tr><td colspan="2">연결된 WiFi 없음</td></tr>';
 
   const rails = res.latest.rails || {};
