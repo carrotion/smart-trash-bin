@@ -203,9 +203,23 @@ _WIRELESS_RE = re.compile(r"^\s*(\S+):\s+\S+\s+([\-\d.]+)\.\s+([\-\d.]+)\.")
 WIFI_IFACES = {"wlan0": "내장", "wlx00e04c4d96cb": "USB(5G)"}
 
 
+WIFI_STATUS_FILE = "/run/wifi_status.json"
+
+
 def read_wifi_signal():
     """/proc/net/wireless에서 두 WiFi 인터페이스 신호세기 읽기 (2026-08-16,
-    tools/wifi_signal_logger.py와 같은 파싱 로직 — 대시보드 표시용으로 여기도 추가)."""
+    tools/wifi_signal_logger.py와 같은 파싱 로직 — 대시보드 표시용으로 여기도 추가).
+    SSID는 wpa_cli 소켓이 root 그룹 소유라 이 프로세스(carrotian) 권한으로 직접
+    못 읽음 — 대신 root로 도는 tools/wifi_watchdog.sh(타이머, 30초 간격)가
+    world-readable 파일로 남겨둔 걸 읽는다. 워치독이 아직 한 번도 안 돌았으면
+    파일이 없을 수 있고, 그럴 땐 SSID 없이 신호세기만 표시된다."""
+    ssids = {}
+    try:
+        with open(WIFI_STATUS_FILE) as f:
+            ssids = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+
     out = {}
     try:
         with open("/proc/net/wireless") as f:
@@ -214,6 +228,7 @@ def read_wifi_signal():
                 if m and m.group(1) in WIFI_IFACES:
                     out[m.group(1)] = {
                         "label": WIFI_IFACES[m.group(1)],
+                        "ssid": ssids.get(m.group(1)),
                         "level_dbm": float(m.group(3)),
                         "quality": float(m.group(2)),
                     }
@@ -328,7 +343,7 @@ async function tick() {
   const wifi = res.latest.wifi || {};
   document.getElementById("wifi").innerHTML =
     Object.values(wifi).map(w =>
-      `<tr><td>WiFi (${w.label})</td><td>${w.level_dbm.toFixed(0)} dBm</td></tr>`
+      `<tr><td>WiFi (${w.label})</td><td>${w.ssid || '-'} · ${w.level_dbm.toFixed(0)} dBm</td></tr>`
     ).join('') || '<tr><td colspan="2">연결된 WiFi 없음</td></tr>';
 
   const rails = res.latest.rails || {};
