@@ -201,7 +201,8 @@ def main():
     node = SensorBridge()
 
     threading.Thread(target=staleness_watchdog, daemon=True).start()
-    threading.Thread(target=lambda: rclpy.spin(node), daemon=True).start()
+    spin_thread = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
+    spin_thread.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
 
@@ -213,7 +214,19 @@ def main():
     signal.signal(signal.SIGINT, _sig_handler)
 
     print(f"센서 대시보드 시작: http://<Pi IP>:{args.port}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        # motor_dashboard.py와 동일한 이유(2026-08-16) — spin() 데몬 스레드를
+        # 정리 안 하고 인터프리터를 그냥 종료하면 ROS 그래프가 클 때
+        # "terminate called without an active exception"로 core dump 남.
+        if rclpy.ok():
+            rclpy.shutdown()
+        spin_thread.join(timeout=2.0)
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

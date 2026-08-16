@@ -1,0 +1,15 @@
+[Unit]
+Description=Smart Trash Bin - robot_localization EKF (odom + IMU gyro fusion, publishes odom->base_link TF)
+After=network.target smart-trash-diff-drive.service smart-trash-imu.service
+Wants=smart-trash-diff-drive.service smart-trash-imu.service
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/catkin_ws
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run robot_localization ekf_node --ros-args --params-file /home/carrotian/catkin_ws/install/smart_trash_bringup/share/smart_trash_bringup/config/ekf.yaml'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
