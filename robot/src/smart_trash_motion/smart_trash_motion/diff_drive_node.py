@@ -84,6 +84,12 @@ class DiffDriveNode(Node):
         # 0.5~0.7 구간에서 오차 1% 미만(부호 전환 지점 포함) 확인 -> 중간값 채택.
         # 사용 가능 범위(오차 <1%): trim 0.5~0.7. 채택값: 0.6.
         self.declare_parameter('straight_trim', 0.6)
+        # 회전 시 파워 부스트. 스키드-스티어는 제자리 회전할 때 바퀴가 옆으로
+        # 미끄러지는 마찰을 이겨내야 해서 직진보다 훨씬 큰 토크가 필요함 —
+        # 사용자가 "좌회전이 잘 안 돈다"고 보고(2026-08-16). 회전 성분(각속도로
+        # 인한 좌우 속도차)에만 곱해서 부스트하고 직진(v) 성분은 그대로 둔다.
+        # 실측 캘리브레이션 전 초기값 — 필요시 straight_trim처럼 실측으로 조정.
+        self.declare_parameter('turn_boost', 1.4)
         self.declare_parameter('cmd_vel_timeout', 0.5)       # 이 시간 명령 없으면 정지
         self.declare_parameter('odom_rate_hz', 20.0)
         # 2026-08-16 EKF(robot_localization) 도입 이후 기본값 False로 변경.
@@ -111,6 +117,7 @@ class DiffDriveNode(Node):
         self._min_pwm = p('min_pwm').value
         self._cmd_vel_timeout = p('cmd_vel_timeout').value
         self._straight_trim = p('straight_trim').value
+        self._turn_boost = p('turn_boost').value
         self._publish_tf = p('publish_tf').value
 
         # 카운트 → 미터
@@ -252,8 +259,15 @@ class DiffDriveNode(Node):
         v = msg.linear.x
         w = msg.angular.z
         half_track = self._wheel_separation / 2.0
-        left_speed = v - w * half_track
-        right_speed = v + w * half_track
+        angular_component = w * half_track
+
+        if w != 0.0:
+            # 회전 성분에만 부스트 — 직진(v) 성분은 그대로 둬서 회전+전진이
+            # 섞인 arc 주행에서 직진 속도가 의도치 않게 과속되지 않게 한다.
+            angular_component *= self._turn_boost
+
+        left_speed = v - angular_component
+        right_speed = v + angular_component
 
         if w == 0.0 and self._straight_trim != 0.0:
             left_speed *= (1.0 - self._straight_trim)
