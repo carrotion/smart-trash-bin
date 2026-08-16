@@ -1,7 +1,14 @@
 [Unit]
 Description=Smart Trash Bin - IMU/LiDAR status dashboard (subscribes to imu_publisher_node + lidar node)
 After=network.target smart-trash-imu.service smart-trash-lidar.service
-Wants=smart-trash-imu.service smart-trash-lidar.service
+# ⚠️ smart-trash-lidar는 일부러 Wants에서 뺐다(2026-08-16).
+# 이 대시보드는 토픽을 구독만 하는 뷰어인데, Wants로 걸어두니 대시보드를
+# 재시작할 때마다 라이다 서비스가 되살아났다. 그 서비스는 /scan에 **필터 안 된**
+# 스캔을 직접 발행해서, 매핑 세션의 scan_filter_node와 발행자가 2개가 되고
+# SLAM/코스트맵이 필터된 것과 안 된 것을 섞어 받는다 → 로봇 자기반사 링이
+# 코스트맵에 박혀 경로계획이 통째로 실패했다. /dev/ttyAMA0 포트 경합도 생긴다.
+# 라이다 단독 진단이 필요하면 `sudo systemctl start smart-trash-lidar`로 직접 켤 것.
+Wants=smart-trash-imu.service
 
 [Service]
 Type=simple
