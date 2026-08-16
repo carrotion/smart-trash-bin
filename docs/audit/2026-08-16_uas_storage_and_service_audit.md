@@ -106,7 +106,7 @@ sudo systemctl disable --now smartmontools
 
 ---
 
-## 4. 감사결과에 대한 의견 (Claude Code 검토, 2026-08-16)
+## 4. 감사결과에 대한 의견 (Remi 검토, 2026-08-16)
 
 사용자 지시에 따라 100% 신뢰하지 않고 ① 팩트체크 → ② 우리 상황에 대한 유용성 논의 → ③ 적용 여부 결정 순으로 검토함.
 
@@ -129,4 +129,4 @@ sudo systemctl disable --now smartmontools
 - **Action 2 (ROS2 종료 예외 처리) 적용함**: `imu_publisher_node.py`, `tools/map_autosave.py`에 `ExternalShutdownException` catch 추가(`map_autosave.py`는 `KeyboardInterrupt`/`rclpy.ok()` 가드가 이미 있었고 `ExternalShutdownException`만 누락돼 있어 추가). 재시작 로그에서 트레이스백 사라진 것 확인.
 - **Action 3 (smartmontools 비활성화) 적용함**: `sudo systemctl disable --now smartmontools` 실행, `disabled` 확인.
 
-세 항목 모두 검증됐고, 작고 안전한 변경이라 논의 없이 바로 적용하기로 함(2026-08-16, 사용자 승인).
+세 항목 모두 검증됐고, 작고 안전한 변경이라 논의 없이 바로 적용하기로 함(2026-08-16, Unkle Karrot 승인).
