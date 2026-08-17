@@ -37,8 +37,16 @@ slam_toolbox:
     # -- General --
     use_scan_matching: true
     use_scan_barycenter: true
-    minimum_travel_distance: 0.3
-    minimum_travel_heading: 0.3
+    # ⚠️ 2026-08-17 낮춤 (0.3 -> 0.2). 이 값은 "얼마나 움직여야 새 스캔을 맵에
+    # 추가하는가"인데, 그 사이 구간의 자세는 **순전히 오도메트리로만** 채워진다.
+    # 출발/정지 슬립으로 오도메트리가 틀어지면 그만큼 스캔이 비뚤게 붙어서
+    # 벽이 직각으로 안 나온다(사용자 관측). 값을 낮추면 스캔매칭이 자세를
+    # 교정할 기회가 늘어 누적 회전오차가 줄어든다.
+    # 부수 효과: 짧은 이동도 맵에 반영되므로, 목표가 짧을 때 맵이 안 자라
+    # explore가 멈춰버리던 부트스트랩 교착에도 여유가 생긴다.
+    # 대가는 포즈그래프 노드 증가(CPU) — 현재 CPU 20~30%라 여유 있음.
+    minimum_travel_distance: 0.2
+    minimum_travel_heading: 0.2
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0
     link_match_minimum_response_fine: 0.1
