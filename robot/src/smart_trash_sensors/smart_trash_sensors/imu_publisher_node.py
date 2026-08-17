@@ -1,4 +1,5 @@
 import math
+import time
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -68,6 +69,14 @@ class ImuPublisherNode(Node):
                 '하드아이언 보정값이 0이다 — 방위가 최대 수십 도 틀어질 수 있다. '
                 'tools/mag_calibrate.py로 측정할 것.')
 
+        # 자기센서 멈춤(freeze) 감지용 상태. 상세 이유는 _publish_mag 참고.
+        self.declare_parameter('mag_stale_sec', 2.0)
+        self._mag_stale_sec = self.get_parameter('mag_stale_sec').value
+        self._mag_last_raw = None
+        self._mag_last_change = time.monotonic()
+        self._mag_recover_at = 0.0
+        self._mag_frozen = False
+
         try:
             self._imu.startupMagnetometer()
             self._mag_ok = True
@@ -108,19 +117,60 @@ class ImuPublisherNode(Node):
         self._pub.publish(msg)
 
         if self._mag_ok:
-            mag = MagneticField()
-            mag.header = msg.header
-            # AK09916: 0.15 uT/LSB -> 테슬라 단위(REP-145)로 변환.
-            # 하드아이언 편향은 µT 단위에서 빼고 나서 테슬라로 바꾼다.
-            ox, oy, oz = self._mag_off
-            mag.magnetic_field.x = (
-                self._imu.mxRaw * MAG_SENSITIVITY_UT_PER_LSB - ox) * 1e-6
-            mag.magnetic_field.y = (
-                self._imu.myRaw * MAG_SENSITIVITY_UT_PER_LSB - oy) * 1e-6
-            mag.magnetic_field.z = (
-                self._imu.mzRaw * MAG_SENSITIVITY_UT_PER_LSB - oz) * 1e-6
-            # 소프트아이언(타원 왜곡)은 아직 미보정이라 공분산은 미상(0)으로 둔다.
-            self._mag_pub.publish(mag)
+            self._publish_mag(msg.header)
+
+    def _publish_mag(self, header):
+        """자기센서 값 발행 + **멈춤 감지/자동 복구**.
+
+        왜 필요한가 (2026-08-17 실측):
+        AK09916은 ICM-20948 **내부 I2C 마스터**를 통해 읽힌다. 이 자기센서가 응답을
+        멈추면(qwiic 라이브러리 주석에도 "After a ICM reset the Mag sensor may stop
+        responding over the I2C master"라고 적혀 있다) ICM 쪽 EXT_SLV_SENS_DATA
+        레지스터는 **마지막 값을 그대로 붙들고 있다.** 그러면 노드는 아무 에러 없이
+        죽은 값을 50Hz로 계속 퍼블리시한다 — 토픽 주파수만 보면 완전히 정상으로 보인다.
+        실제로 33초간 1654샘플이 전부 바이트 단위로 동일했다(살아있으면 최소 LSB
+        노이즈라도 흔들린다). 조용히 실패하는 유형이라 반드시 감지해야 한다.
+
+        대응:
+          - 원시값이 `mag_stale_sec` 동안 한 번도 안 바뀌면 멈춤으로 판정
+          - 멈춘 동안에는 **발행을 중단**한다. 죽은 값을 계속 내보내면 하위 소비자가
+            그걸 신선한 값으로 믿는다 — 안 보내면 대시보드가 "응답 없음"으로 뜬다
+          - startupMagnetometer()로 재초기화 시도(내부에서 I2C 마스터를 리셋한다).
+            5초에 한 번으로 제한해서 실패가 반복돼도 루프를 막지 않는다
+        """
+        raw = (self._imu.mxRaw, self._imu.myRaw, self._imu.mzRaw)
+        now = time.monotonic()
+
+        if raw != self._mag_last_raw:
+            self._mag_last_raw = raw
+            self._mag_last_change = now
+            if self._mag_frozen:
+                self._mag_frozen = False
+                self.get_logger().info('자기센서 복구됨 — imu/mag 발행 재개')
+        elif now - self._mag_last_change > self._mag_stale_sec:
+            if not self._mag_frozen:
+                self._mag_frozen = True
+                self.get_logger().warn(
+                    f'자기센서 멈춤 감지: 원시값이 {now - self._mag_last_change:.1f}초간 '
+                    '변화 없음. 발행을 중단하고 재초기화를 시도한다.')
+            if now >= self._mag_recover_at:
+                self._mag_recover_at = now + 5.0
+                try:
+                    self._imu.startupMagnetometer()
+                except Exception as e:
+                    self.get_logger().warn(f'자기센서 재초기화 실패: {e}')
+            return  # 멈춘 값은 내보내지 않는다
+
+        mag = MagneticField()
+        mag.header = header
+        # AK09916: 0.15 uT/LSB -> 테슬라 단위(REP-145)로 변환.
+        # 하드아이언 편향은 µT 단위에서 빼고 나서 테슬라로 바꾼다.
+        ox, oy, oz = self._mag_off
+        mag.magnetic_field.x = (raw[0] * MAG_SENSITIVITY_UT_PER_LSB - ox) * 1e-6
+        mag.magnetic_field.y = (raw[1] * MAG_SENSITIVITY_UT_PER_LSB - oy) * 1e-6
+        mag.magnetic_field.z = (raw[2] * MAG_SENSITIVITY_UT_PER_LSB - oz) * 1e-6
+        # 소프트아이언(타원 왜곡)은 아직 미보정이라 공분산은 미상(0)으로 둔다.
+        self._mag_pub.publish(mag)
 
 
 def main(args=None):
