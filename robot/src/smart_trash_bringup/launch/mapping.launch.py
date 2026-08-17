@@ -20,7 +20,16 @@ odom->base_link는 아직 Week 3 diff-drive 오도메트리 노드가 없으므�
 `publish_placeholder_odom`(기본 true)으로 identity tf를 임시 발행함 —
 실제 휠 오도메트리 노드가 생기면 이 launch 인자를 false로 끌 것.
 
-✅ LD06 상판 거꾸로 마운트 보정 완료 (2026-08-15, 실측 캘리브레이션):
+✅ 2026-08-17 라이다를 **하판에 바로 세워** 재장착 — 아래 상판 시절 보정은 해제됨.
+   `laser_scan_dir`를 True(기본)로 되돌렸고, 실측으로 검증함: 로봇 왼쪽 30cm에
+   평평한 물체를 놓으니 스캔에서 90° 주변(65.8~115.8°)에 잡힘 = ROS 규약
+   (0°=정면, +90°=왼쪽)과 일치. z 높이도 실측 0.085m로 교체(이전 0.18은 placeholder).
+   효과: 총 차폐 85° -> 41°, 정면 ±30° 차폐 7% -> 5%, 막힘 구간 10개 -> 6개.
+   바퀴(지름 0.067m) 윗면 위로 스캔면이 올라가면서 바퀴 차폐가 사라진 것이 주효.
+   남은 차폐 25°는 후방 두 구간(163~174°, 191~203°)에 몰려 있음(케이블 추정).
+
+--- 아래는 상판 거꾸로 마운트 시절의 기록 (참고용, 현재는 해당 없음) ---
+✅ LD06 상판 거꾸로 마운트 보정 (2026-08-15, 실측 캘리브레이션):
 로봇을 방 모서리(전면벽+왼쪽벽)에 놓고 /scan에서 두 벽이 찍히는 각도를 실측함.
 laser_scan_dir=True(반시계, 기본 가정)일 땐 왼쪽 벽이 -90°(270°) 쪽에 나와서
 전면(0°) 대비 반대 방향으로 뒤집혀 있었음 — 상판 거꾸로 마운트로 인한 반전.
@@ -28,7 +37,7 @@ laser_scan_dir=False(시계방향)로 바꾸니 왼쪽 벽이 +90° 쪽으로 �
 265°→90°, 미러 변환 예측치 95°와 거의 일치) — 전면=0°/왼쪽=+90° 정상 규약과 맞음.
 이 보정은 드라이버 레벨(laser_scan_dir)에서 이미 각도 해석을 바로잡아주므로,
 정적 tf에 별도 롤/피치 180도 회전은 필요 없음(아래 tf는 회전 없이 z높이만).
-z높이(0.18m)는 아직 ld06.launch.py 기본값 그대로인 placeholder — 실측 필요.
+(z높이 placeholder 문제는 2026-08-17 실측 0.085m로 해결됨 — 위 참고)
 """
 
 
@@ -74,8 +83,11 @@ def generate_launch_description():
             'port_name': lidar_port,
             'port_baudrate': 230400,
             # 상판 거꾸로 마운트 보정값, 2026-08-15 실측 캘리브레이션으로 확정
-            # (위 모듈 docstring 참고 — laser_scan_dir=True였을 땐 좌/우가 반전됐었음).
-            'laser_scan_dir': False,
+            # ⚠️ 2026-08-17: False -> True 복원. 예전엔 라이다가 **상판에 거꾸로**
+            # 달려 있어 좌우가 반전됐고, 그걸 False로 보정했었다(2026-08-15 실측).
+            # 이제 **하판에 바로 세워** 달았으므로 그 보정을 빼야 한다.
+            # 안 바꾸면 맵이 거울상으로 그려지는데 에러가 안 나서 원인 찾기가 아주 어렵다.
+            'laser_scan_dir': True,
             'enable_angle_crop_func': False,
             'angle_crop_min': 135.0,
             'angle_crop_max': 225.0,
@@ -98,13 +110,16 @@ def generate_launch_description():
     )
 
     # 회전 보정은 laser_scan_dir(위)에서 이미 처리돼서 롤/피치는 0 그대로 둠.
-    # TODO(실측 필요): 높이(z=0.18)는 ld06.launch.py 기본값을 그대로 가져온
-    # placeholder라 실제 마운트 높이로 교체 필요.
+    # z 높이: 2026-08-17 실측 0.085m (하판 이전 후, 사용자 측정).
+    # 그 전까지 쓰던 0.18은 ld06.launch.py 기본값을 그대로 가져온 placeholder였고
+    # 실제와 2배 넘게 차이났다(상판 시절 실제값도 0.095 정도로 추정).
+    # 참고: 바퀴 지름이 0.067m라 윗면이 약 0.067m — 스캔면(0.085m)이 그 위로
+    # 올라가면서 바퀴 차폐가 사라졌다(총 차폐 85° -> 41°).
     base_link_to_laser_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_link_to_base_laser_ld06',
-        arguments=['0', '0', '0.18', '0', '0', '0', 'base_link', 'base_laser']
+        arguments=['0', '0', '0.085', '0', '0', '0', 'base_link', 'base_laser']
     )
 
     # slam_toolbox의 online_async_launch.py는 use_sim_time 기본값이 true라
