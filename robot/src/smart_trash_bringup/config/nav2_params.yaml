@@ -186,8 +186,8 @@ global_costmap:
           # 찍힌다 — 안 걸러내면 코스트맵에 로봇을 감싼 장애물 링이 생겨서
           # 어떤 경로도 못 낸다. 실측상 0.10~0.30m가 빈 구간이라 0.15m로 컷.
           # (SLAM 쪽 min_laser_range와 같은 값으로 맞춰둘 것)
-          obstacle_min_range: 0.15
-          raytrace_min_range: 0.15
+          obstacle_min_range: 0.11
+          raytrace_min_range: 0.11
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -232,8 +232,8 @@ local_costmap:
           # 찍힌다 — 안 걸러내면 코스트맵에 로봇을 감싼 장애물 링이 생겨서
           # 어떤 경로도 못 낸다. 실측상 0.10~0.30m가 빈 구간이라 0.15m로 컷.
           # (SLAM 쪽 min_laser_range와 같은 값으로 맞춰둘 것)
-          obstacle_min_range: 0.15
-          raytrace_min_range: 0.15
+          obstacle_min_range: 0.11
+          raytrace_min_range: 0.11
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
