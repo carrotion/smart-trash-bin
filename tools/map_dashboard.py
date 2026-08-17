@@ -25,6 +25,8 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
+from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
+                       QoSReliabilityPolicy)
 
 state_lock = threading.Lock()
 state = {"connected": False, "last_ts": 0.0}
@@ -106,7 +108,17 @@ def kill_autonomous_processes():
 class MapBridge(Node):
     def __init__(self):
         super().__init__('map_dashboard_bridge')
-        self.create_subscription(OccupancyGrid, 'map', self._on_map, 1)
+        # /map은 **TRANSIENT_LOCAL(래치)** 로 구독해야 한다. 기본 VOLATILE로 두면
+        # 발행자가 이미 낸 마지막 맵을 못 받고, 다음 발행 때까지 "응답 없음"으로 보인다.
+        # SLAM은 주기적으로 재발행해서 가려져 있었지만, map_server는 활성화 때 한 번만
+        # 내므로 저장된 맵을 띄우면 화면이 영영 비어 있었다(2026-08-17 확인).
+        # 대시보드를 재시작해도 즉시 마지막 맵이 뜨는 이점도 있다.
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(OccupancyGrid, 'map', self._on_map, map_qos)
         # 비상정지용 — 자율주행이 계속 새 명령을 낼 수도 있으니 여러 번 강제로 0 발행.
         self._cmd_pub = self.create_publisher(Twist, 'cmd_vel', 1)
 
@@ -151,10 +163,19 @@ class MapBridge(Node):
 
 
 def staleness_watchdog():
+    """맵의 '신선도'를 감시하되 **화면에서 지우지는 않는다.**
+
+    /map은 스트리밍이 아니라 스냅샷이다. SLAM은 주기적으로 재발행하지만
+    map_server(저장된 맵 열람)는 활성화 때 **딱 한 번** 래치로 발행한다. 예전엔
+    STALE_S초 뒤 connected=False로 바꿔서 **맵이 잠깐 떴다가 사라졌다**(2026-08-17).
+
+    맵은 한 번 받으면 계속 유효하다 — 오래됐다는 표시만 하고 그림은 남긴다.
+    (라이다/IMU 같은 실시간 센서와 성격이 다르므로 같은 잣대를 쓰면 안 된다)
+    """
     while True:
         with state_lock:
-            if state["connected"] and time.time() - state["last_ts"] > STALE_S:
-                state["connected"] = False
+            if state.get("last_ts"):
+                state["stale"] = (time.time() - state["last_ts"]) > STALE_S
         time.sleep(1.0)
 
 
@@ -270,7 +291,8 @@ async function tick() {
   document.getElementById('dimText').textContent =
     `${w}×${h} 셀, 해상도 ${d.resolution.toFixed(3)}m/셀 (약 ${(w*d.resolution).toFixed(1)}×${(h*d.resolution).toFixed(1)}m)`;
   document.getElementById('updatedText').textContent =
-    '마지막 갱신: ' + new Date(d.last_ts * 1000).toLocaleTimeString();
+    '마지막 갱신: ' + new Date(d.last_ts * 1000).toLocaleTimeString()
+    + (d.stale ? '  (갱신 멈춤 — 저장된 맵이거나 SLAM 정지)' : '');
 }
 
 tick();
