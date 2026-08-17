@@ -19,12 +19,16 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 **결과**: 110초에 11.57m 주행, 맵 **3.3 → 57.3㎡**(탐색률 27.2%, 16.0×15.4m).
 저장: `~/maps/run10_57m2.*`
 
-### explore_lite 로컬 패치 (upstream 미반영)
-`robot/src/m-explore-ros2`는 우리 fork가 아니므로 **재클론하면 패치가 사라진다.**
-효과가 검증됐으니 `ldlidar_stl_ros2`처럼 fork해서 정식 커밋할 것.
-- `explore/src/explore.cpp`: 목표 지점 선택을 centroid → "덩어리 안에서
-  `min_frontier_distance` 이상 떨어진 가장 가까운 점"으로 변경
-- `min_frontier_distance` 파라미터 신설 (기본 0.6)
+### explore_lite 패치 → `robot/patches/`에 보존됨
+`robot/src/m-explore-ros2`는 우리 fork가 아니라 upstream 서브모듈이라
+**재클론하거나 `git submodule update`하면 패치가 사라진다.** 그래서 패치를
+파일로 저장해뒀다: `robot/patches/m-explore-ros2_frontier_goal_selection.patch`
+- 적용법과 배경은 `robot/patches/README.md` 참고
+- 재클론 후엔 반드시 `git apply` + `colcon build --packages-select explore_lite`
+- 내용: 목표 지점 선택을 centroid → "덩어리 안에서 `min_frontier_distance`
+  이상 떨어진 가장 가까운 점"으로 변경, `min_frontier_distance` 파라미터 신설
+- `gh` CLI/토큰이 없어 fork는 미실시. 나중에 `carrotion/m-explore-ros2`로
+  fork하면 이 패치 파일은 불필요해진다.
 
 ### 코스트맵을 원 근사 → 실제 사각형 외곽선으로
 구석에서 경로계획이 330건 실패했는데 **로봇은 물리적으로 낀 게 아니었다**(사용자 확인).

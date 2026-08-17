@@ -1,0 +1,128 @@
+diff --git a/explore/include/explore/explore.h b/explore/include/explore/explore.h
+index 7741ce0..2b1830b 100644
+--- a/explore/include/explore/explore.h
++++ b/explore/include/explore/explore.h
+@@ -140,6 +140,8 @@ private:
+   double planner_frequency_;
+   double potential_scale_, orientation_scale_, gain_scale_;
+   double progress_timeout_;
++  // 2026-08-17 추가(smart-trash-bin): 이 거리보다 가까운 프론티어는 목표로 삼지 않음.
++  double min_frontier_distance_;
+   bool visualize_;
+   bool return_to_init_;
+   std::string robot_base_frame_;
+diff --git a/explore/src/explore.cpp b/explore/src/explore.cpp
+index 6a1125c..9bacf88 100644
+--- a/explore/src/explore.cpp
++++ b/explore/src/explore.cpp
+@@ -36,6 +36,8 @@
+  *
+  *********************************************************************/
+ 
++#include <cmath>
++#include <limits>
+ #include <explore/explore.h>
+ 
+ #include <thread>
+@@ -70,6 +72,18 @@ Explore::Explore()
+   this->declare_parameter<float>("gain_scale", 1.0);
+   this->declare_parameter<float>("min_frontier_size", 0.5);
+   this->declare_parameter<bool>("return_to_init", false);
++  // ⚠️ 2026-08-17 추가 (smart-trash-bin): 로봇에서 이 거리 미만의 프론티어는 무시.
++  //
++  // 라이다가 로봇 자기 구조물에 가려 85°가 막혀 있어(측정치), 그 방향으로는
++  // **로봇에 딱 붙은 곳부터 미지영역 쐐기**가 생긴다. 그 쐐기의 경계가
++  // 프론티어로 잡히면 목표가 로봇 발밑(0.1m)에 찍히고, 목표 허용오차(0.10m)
++  // 안이라 즉시 "도달" 처리되며 아무 데도 안 간다. 그렇게 프론티어를 소진하면
++  // 맵이 10%도 안 그려졌는데 "All frontiers traversed"로 탐색이 끝나버린다.
++  // (centroid->middle 패치 후에도 목표가 0.12m로 나오는 것을 실측 확인)
++  //
++  // 최소 거리를 걸면 로봇이 실제로 이동하게 되고, **이동하면 사각지대도 같이
++  // 움직여서 이전에 못 보던 곳이 채워진다** — 쐐기는 스스로 메워진다.
++  this->declare_parameter<double>("min_frontier_distance", 0.6);
+ 
+   this->get_parameter("planner_frequency", planner_frequency_);
+   this->get_parameter("progress_timeout", timeout);
+@@ -79,6 +93,7 @@ Explore::Explore()
+   this->get_parameter("gain_scale", gain_scale_);
+   this->get_parameter("min_frontier_size", min_frontier_size);
+   this->get_parameter("return_to_init", return_to_init_);
++  this->get_parameter("min_frontier_distance", min_frontier_distance_);
+   this->get_parameter("robot_base_frame", robot_base_frame_);
+ 
+   progress_timeout_ = timeout;
+@@ -193,7 +208,7 @@ void Explore::visualizeFrontiers(
+     m.scale.y = 0.1;
+     m.scale.z = 0.1;
+     m.points = frontier.points;
+-    if (goalOnBlacklist(frontier.centroid)) {
++    if (goalOnBlacklist(frontier.middle)) {  // 목표와 동일 기준(2026-08-17)
+       m.color = red;
+     } else {
+       m.color = blue;
+@@ -202,7 +217,7 @@ void Explore::visualizeFrontiers(
+     ++id;
+     m.type = visualization_msgs::msg::Marker::SPHERE;
+     m.id = int(id);
+-    m.pose.position = frontier.centroid;
++    m.pose.position = frontier.middle;  // 시각화도 실제 목표와 일치시킴(2026-08-17)
+     // scale frontier according to its cost (costier frontiers will be smaller)
+     double scale = std::min(std::abs(min_cost * 0.4 / frontier.cost), 0.5);
+     m.scale.x = scale;
+@@ -255,7 +270,7 @@ void Explore::makePlan()
+   auto frontier =
+       std::find_if_not(frontiers.begin(), frontiers.end(),
+                        [this](const frontier_exploration::Frontier& f) {
+-                         return goalOnBlacklist(f.centroid);
++                         return goalOnBlacklist(f.middle);
+                        });
+   if (frontier == frontiers.end()) {
+     RCLCPP_WARN(logger_, "All frontiers traversed/tried out, stopping.");
+@@ -265,7 +280,46 @@ void Explore::makePlan()
+     stop(true);
+     return;
+   }
+-  geometry_msgs::msg::Point target_position = frontier->centroid;
++  // ⚠️ 2026-08-17 패치 (smart-trash-bin): 목표 지점 선택 방식 변경
++  //
++  // 원본은 frontier->centroid(점들의 평균)를 목표로 삼는다. 그런데 탐색 초기엔
++  // 프론티어가 로봇을 빙 둘러싼 **고리 모양**이라 그 평균이 고리 한가운데 —
++  // 즉 **로봇이 이미 서 있는 자리**가 된다. 목표가 현재 위치이니 즉시 "도달"로
++  // 처리되고, 프론티어를 그렇게 소진하면 맵이 10%도 안 그려졌는데
++  // "All frontiers traversed"로 탐색이 영구 종료된다(3회 재현).
++  //
++  // frontier->middle(로봇에서 가장 가까운 점)로 바꿔도 해결이 안 됐다. 라이다가
++  // 자기 구조물에 85° 가려 있어서 **그 방향으로는 로봇에 딱 붙은 곳부터
++  // 미지영역 쐐기**가 생기고, 가장 가까운 프론티어 점이 그 쐐기(0.12m)라서다.
++  //
++  // 덩어리를 통째로 거르는 것도 틀렸다 — 큰 덩어리는 로봇 옆 쐐기부터 멀리까지
++  // 하나로 이어져 있어서 최근접 거리가 0.1m이고, 그걸로 거르면 **멀리 뻗은
++  // 유효한 덩어리까지 버려진다**(실측: 목표가 하나도 안 나감).
++  //
++  // 그래서 **덩어리 안에서 min_frontier_distance 이상 떨어진 점 중 가장 가까운
++  // 것**을 고른다. 항상 실제 미지 경계 위에 있고, 반드시 이동을 요구한다.
++  // 이동하면 사각지대도 같이 움직여 쐐기는 스스로 메워진다.
++  geometry_msgs::msg::Point target_position = frontier->middle;
++  {
++    double best = std::numeric_limits<double>::infinity();
++    bool found = false;
++    for (const auto& p : frontier->points) {
++      double d = std::hypot(p.x - pose.position.x, p.y - pose.position.y);
++      if (d >= min_frontier_distance_ && d < best) {
++        best = d;
++        target_position = p;
++        found = true;
++      }
++    }
++    if (!found) {
++      // 전부 가까우면 그중 가장 먼 점이라도 고른다(제자리 목표 방지)
++      double far = -1.0;
++      for (const auto& p : frontier->points) {
++        double d = std::hypot(p.x - pose.position.x, p.y - pose.position.y);
++        if (d > far) { far = d; target_position = p; }
++      }
++    }
++  }
+ 
+   // time out if we are not making any progress
+   bool same_goal = same_point(prev_goal_, target_position);
