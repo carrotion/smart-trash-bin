@@ -83,10 +83,13 @@ def generate_launch_description():
             'port_name': lidar_port,
             'port_baudrate': 230400,
             # 상판 거꾸로 마운트 보정값, 2026-08-15 실측 캘리브레이션으로 확정
-            # ⚠️ 2026-08-17: False -> True 복원. 예전엔 라이다가 **상판에 거꾸로**
-            # 달려 있어 좌우가 반전됐고, 그걸 False로 보정했었다(2026-08-15 실측).
-            # 이제 **하판에 바로 세워** 달았으므로 그 보정을 빼야 한다.
-            # 안 바꾸면 맵이 거울상으로 그려지는데 에러가 안 나서 원인 찾기가 아주 어렵다.
+            # ⚠️ 이 값의 이력 (2026-08-17):
+            #  - 상판 거꾸로 마운트 시절: False (좌우 반전 보정용)
+            #  - 하판 이전 직후: 라이다 삼각형(정면 표시)이 **뒤를 향하게** 오설치돼
+            #    있었고 False까지 남아 있어서, 변환이 θ_스캔 = 180° − θ_실제 가
+            #    됐다(실측). 좌우는 보존되고 앞뒤만 뒤집혀서, "왼쪽에 물체 놓기"
+            #    검증으로는 안 걸러지고 **로봇을 회전시켜야** 드러났다.
+            #  - 현재: 삼각형이 정면을 보도록 물리적으로 바로잡음 -> True(기본값)
             'laser_scan_dir': True,
             'enable_angle_crop_func': False,
             'angle_crop_min': 135.0,
@@ -119,6 +122,8 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_link_to_base_laser_ld06',
+        # 라이다 삼각형(정면 표시)을 로봇 정면에 맞춰 물리적으로 장착했으므로
+        # 회전 보정 불필요 — z 높이만(실측 0.085m). 인자 순서는 x y z yaw pitch roll.
         arguments=['0', '0', '0.085', '0', '0', '0', 'base_link', 'base_laser']
     )
 

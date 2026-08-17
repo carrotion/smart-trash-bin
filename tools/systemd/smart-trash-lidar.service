@@ -6,9 +6,14 @@ After=network.target
 Type=simple
 User=carrotian
 WorkingDirectory=/home/carrotian/catkin_ws
-# 2026-08-15 실측 캘리브레이션값: laser_scan_dir=false (상판 거꾸로 마운트 보정,
+# ⚠️ 라이다 파라미터가 여기와 mapping.launch.py **두 곳**에 따로 있다.
+# 어긋나면 아무도 모른 채 다른 설정으로 돌아간다 — 2026-08-17에 실제로 겪었다
+# (launch만 고치고 서비스는 그대로라, 측정 내내 옛 설정으로 돌고 있었음).
+# **한쪽을 바꾸면 반드시 다른 쪽도 같이 바꿀 것.**
+# 2026-08-17 현재: laser_scan_dir=true (하판에 삼각형 정면으로 물리 장착).
+# (아래는 상판 거꾸로 마운트 시절 기록:
 # CLAUDE.md 참고), port=/dev/ttyAMA0 (GPIO UART, USB 아님)
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run ldlidar_stl_ros2 ldlidar_stl_ros2_node --ros-args -p product_name:=LDLiDAR_LD06 -p topic_name:=scan -p frame_id:=base_laser -p port_name:=/dev/ttyAMA0 -p port_baudrate:=230400 -p laser_scan_dir:=false -p enable_angle_crop_func:=false'
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run ldlidar_stl_ros2 ldlidar_stl_ros2_node --ros-args -p product_name:=LDLiDAR_LD06 -p topic_name:=scan -p frame_id:=base_laser -p port_name:=/dev/ttyAMA0 -p port_baudrate:=230400 -p laser_scan_dir:=true -p enable_angle_crop_func:=false'
 Restart=on-failure
 RestartSec=3
 
