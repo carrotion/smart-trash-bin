@@ -39,3 +39,10 @@
   - 정지 판정(ZUPT) 기반 3D 틸트 보정 지자기 센서 헤딩 리셋 파이프라인
   - IEEE / IJRR / ASCE 관련 권위 학술 논문 8편 분석 및 인용
 
+- **2026-08-17: [기술 평가] 자율탐색·오도메트리·센서 신기술 트렌드 종합 평가 보고서** (`2026-08-17_autonomous_navigation_and_sensor_technology_evaluation_report.md`)
+  - Remi(SW 패키지: `frontier_exploration_ros2`, `rf2o_laser_odometry`, `MPPI`) 및 Davi(HW 센서/기구) 리서치 통합
+  - 무비용·극저연산(0.9ms) 라이다 오도메트리(`rf2o`) + 상단 중앙 IMU 지자기 융합 아키텍처
+  - 2호기 축간거리 축소 및 1~2만원대 고가성비 부품(광학플로우 PMW3901, 멀티존 ToF) 로드맵 수립
+  - 4단계 순차적 검증 및 도입 파이프라인 확정
+
+
