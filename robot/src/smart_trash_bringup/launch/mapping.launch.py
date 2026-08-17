@@ -75,7 +75,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'product_name': 'LDLiDAR_LD06',
-            # 드라이버는 원시 스캔을 scan_raw로 내보내고, scan_filter_node가
+            # 드라이버는 원시 스캔을 scan_raw로 내보내고, scan_self_filter가
             # 로봇 자기 구조물 반사(0.06~0.10m)를 걸러서 scan으로 재발행한다.
             # 이렇게 하면 SLAM/Nav2/대시보드는 전부 기존처럼 scan만 보면 됨.
             'topic_name': 'scan_raw',
@@ -97,26 +97,24 @@ def generate_launch_description():
         }]
     )
 
-    # 로봇 자기 구조물 반사 제거 (scan_raw -> scan). 안 넣으면 로봇 자기 위치가
-    # 맵에 장애물로 박혀서 Nav2가 어떤 경로도 못 낸다 — 상세 근거는
-    # smart_trash_sensors/scan_filter_node.py의 docstring 참고.
-    scan_filter_node = Node(
-        package='smart_trash_sensors',
-        executable='scan_filter_node',
-        name='scan_filter_node',
+    # 로봇 자기 구조물 반사 제거 (scan_raw -> scan).
+    # 안 넣으면 로봇 자기 위치가 맵에 장애물로 박혀서 Nav2가 어떤 경로도 못 낸다.
+    #
+    # 2026-08-17: 직접 만든 scan_filter_node(거리 임계값 방식)를 버리고 표준 패키지
+    # laser_filters의 **StaticLaserScanPolygonFilter**로 교체했다.
+    #  - 임계값 방식은 각도를 무시해서, 0.15m로 자르면 자기 구조물(0.080m)뿐 아니라
+    #    **벽에 닿기 직전 구간(0.105~0.15m)까지 같이 지웠다.** 그래서 벽이 코스트맵에서
+    #    사라지고 로봇이 계속 밀어붙였다(실주행 관측).
+    #  - 다각형 방식은 기하로 갈린다: 차체(22x22cm) 안쪽 반사는 실제 장애물일 수 없다.
+    #  - 실측 검증: 자기 구조물 스캔당 40.5개 -> 0개, 0.105~0.15m 구간은 손실 0.
+    # 설정과 근거는 config/scan_self_filter.yaml 참고.
+    scan_self_filter = Node(
+        package='laser_filters',
+        executable='scan_to_scan_filter_chain',
+        name='scan_self_filter',
         output='screen',
-        parameters=[{
-            'input_topic': 'scan_raw',
-            'output_topic': 'scan',
-            # 0.15 -> 0.11 (2026-08-17 실측 근거).
-            # 로봇 자기 구조물 반사는 **전부 0.10m 아래**에 몰려 있다
-            # (0.06~0.10m 19.53%, 0.10~0.15m 겨우 0.09%). 즉 0.15로 자르면
-            # 아무것도 더 못 걸러내면서 **벽에 닿기 직전 구간만 버린다.**
-            # 로봇 반폭이 0.11m라 벽에 닿으면 라이다에서 0.11m로 잡히는데,
-            # 그게 필터에 걸려 사라지니 코스트맵에서 벽이 지워지고 컨트롤러가
-            # 계속 밀어붙였다(2026-08-17 주행에서 사용자가 "계속 벽을 밀고 있다"고 관측).
-            'range_min': 0.11,
-        }]
+        parameters=[os.path.join(bringup_share, 'config', 'scan_self_filter.yaml')],
+        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
     )
 
     # 회전 보정은 laser_scan_dir(위)에서 이미 처리돼서 롤/피치는 0 그대로 둠.
@@ -158,7 +156,7 @@ def generate_launch_description():
     ld.add_action(declare_placeholder_odom_cmd)
     ld.add_action(declare_lidar_port_cmd)
     ld.add_action(ldlidar_node)
-    ld.add_action(scan_filter_node)
+    ld.add_action(scan_self_filter)
     ld.add_action(base_link_to_laser_tf)
     ld.add_action(placeholder_odom_tf)
     ld.add_action(slam_toolbox_launch)

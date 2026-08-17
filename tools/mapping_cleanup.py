@@ -39,7 +39,9 @@ SESSION_EXECUTABLES = {
     "explore",
     # 센서/SLAM 파이프라인
     "ldlidar_stl_ros2_node", "async_slam_toolbox_node",
-    "scan_filter_node", "static_transform_publisher",
+    "scan_filter_node",  # 구버전(2026-08-17 폐기) — 남아 있을 수 있어 유지
+    "scan_to_scan_filter_chain",  # 현행 자기 구조물 필터(laser_filters)
+    "static_transform_publisher",
 }
 # 런치 프로세스는 argv[0]이 python이라 이름으로 못 잡음 — 인자로 판별.
 SESSION_LAUNCH_FILES = ("autonomous_mapping.launch.py", "mapping.launch.py")
