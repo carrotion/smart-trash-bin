@@ -58,7 +58,7 @@ IDE 원격 서버 하나가 로봇 전체 스택보다 50배 넘게 쓴다.
 | `straight_trim: 0.6` | `diff_drive_node.py` | 모터 개체차·기계 얼라인먼트. 1호기에서 cliff test로 측정한 값 |
 | `turn_boost: 1.4` | `diff_drive_node.py` | 바퀴 마찰·무게중심 |
 | 라이다 차폐 구간(9개) | 배선·구조물 배치 | 조립할 때마다 달라짐 |
-| `range_min: 0.15` | `scan_filter_node` | 위 차폐 반경에서 도출된 값 |
+| `polygon: ±0.105` | `scan_self_filter` (laser_filters) | 차체 반폭 0.11m에서 5mm 안쪽. 기체 크기가 다르면 바뀐다 |
 | 자이로 바이어스 | 시작 시 자동 측정 | 이미 분리돼 있음 ✓ |
 | `robot_radius: 0.15` | `nav2_params.yaml` | 차체 실측 — 같은 설계면 동일 |
 | WiFi 자격증명 | netplan | 설치 장소마다 다름 |

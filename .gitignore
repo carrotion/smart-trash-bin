@@ -16,3 +16,4 @@ test_results/
 .idea/
 .env
 venv/
+bags/

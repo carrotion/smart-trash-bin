@@ -9,6 +9,7 @@
 
   <exec_depend>ldlidar_stl_ros2</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>laser_filters</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>smart_trash_sensors</exec_depend>
