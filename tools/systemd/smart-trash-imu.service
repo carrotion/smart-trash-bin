@@ -6,7 +6,10 @@ After=network.target
 Type=simple
 User=carrotian
 WorkingDirectory=/home/carrotian/catkin_ws
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node'
+# ⚠️ 하드아이언 보정값은 **1호기 전용**이다. 기체마다 철재/배선 배치가 달라서
+#    2호기에 그대로 쓰면 안 된다 — tools/mag_calibrate.py로 기체별 재측정 필요.
+#    (2026-08-17 1호기 실측: 손 회전 2바퀴, 샘플 8135, 커버리지 100%, 잔차 1.87µT)
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node --ros-args -p mag_hard_iron_x:=-0.44 -p mag_hard_iron_y:=14.37'
 Restart=on-failure
 RestartSec=3
 
