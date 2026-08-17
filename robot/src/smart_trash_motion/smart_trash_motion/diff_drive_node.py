@@ -111,6 +111,19 @@ class DiffDriveNode(Node):
         self.declare_parameter('max_turn_pwm', 570)
         self.declare_parameter('max_angular_speed', 1.0)
 
+        # --- 폐루프 회전 제어 (2026-08-17) ---
+        # 개루프는 "PWM 얼마면 몇 rad/s"를 표로 외우는 방식이라 바닥 재질·배터리
+        # 전압·모터 온도가 바뀌면 그대로 틀어진다. 자이로로 실제 각속도를 재서
+        # PWM을 보정하면 그 변화를 알아서 흡수한다. 개루프 캘리브레이션 값은
+        # 피드포워드로 그대로 쓰고(응답 빠름), PI가 잔차만 메운다.
+        self.declare_parameter('turn_closed_loop', True)
+        self.declare_parameter('turn_kp', 250.0)      # PWM per (rad/s) 오차
+        self.declare_parameter('turn_ki', 400.0)      # PWM per (rad/s·s)
+        self.declare_parameter('turn_i_limit', 250.0) # 적분항이 낼 수 있는 최대 PWM
+        # 자이로가 이 시간보다 오래 갱신 안 되면 폐루프를 끄고 피드포워드만 쓴다.
+        self.declare_parameter('gyro_stale_sec', 0.3)
+        self.declare_parameter('control_rate_hz', 50.0)
+
         # (구) turn_boost — 회전 PWM 모델로 대체되어 더 이상 쓰이지 않는다.
         # 파라미터 자체는 호환을 위해 남겨두되 제어에는 반영 안 함.
         self.declare_parameter('turn_boost', 1.4)
@@ -145,6 +158,11 @@ class DiffDriveNode(Node):
         self._min_turn_pwm = p('min_turn_pwm').value
         self._max_turn_pwm = p('max_turn_pwm').value
         self._max_angular_speed = p('max_angular_speed').value
+        self._turn_closed_loop = p('turn_closed_loop').value
+        self._turn_kp = p('turn_kp').value
+        self._turn_ki = p('turn_ki').value
+        self._turn_i_limit = p('turn_i_limit').value
+        self._gyro_stale_sec = p('gyro_stale_sec').value
         self._publish_tf = p('publish_tf').value
 
         # 런타임 파라미터 변경 반영 (2026-08-17 추가).
@@ -186,6 +204,11 @@ class DiffDriveNode(Node):
         self._prev_odom_time = None
 
         self._last_cmd_time = 0.0
+        self._cmd_v = 0.0
+        self._cmd_w = 0.0
+        self._turn_i = 0.0            # 회전 폐루프 적분항
+        self._prev_control_time = None
+        self._gyro_ts = None          # 자이로 최신 수신 시각(신선도 판단용)
         self._target_left_pwm = 0
         self._target_right_pwm = 0
 
@@ -208,11 +231,15 @@ class DiffDriveNode(Node):
         # 버튼을 떼고 0을 보내도 앞의 주행 명령들이 먼저 처리되며 계속 달렸음
         # (사용자가 보고한 "떼도 500ms 더 감"의 정체).
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd_vel, 1)
-        if self._use_imu:
-            self.create_subscription(Imu, 'imu/data', self._on_imu, 20)
+        # ⚠️ 자이로는 **항상** 구독한다. use_imu_for_yaw가 False여도(=odom yaw는
+        # EKF가 담당) 아래 폐루프 회전 제어에 실측 각속도가 필요하기 때문.
+        # 예전엔 이 구독이 use_imu_for_yaw에 묶여 있어서, EKF 도입 후 자이로가
+        # 이 노드에 아예 안 들어오고 있었다.
+        self.create_subscription(Imu, 'imu/data', self._on_imu, 20)
 
         self.create_timer(1.0 / p('odom_rate_hz').value, self._on_odom_timer)
         self.create_timer(0.1, self._on_safety_timer)
+        self.create_timer(1.0 / p('control_rate_hz').value, self._on_control_timer)
 
         yaw_src = 'IMU 자이로' if p('use_imu_for_yaw').value else '휠 엔코더'
         self.get_logger().info(
@@ -300,6 +327,10 @@ class DiffDriveNode(Node):
             'max_wheel_speed': '_max_wheel_speed',
             'min_pwm': '_min_pwm',
             'cmd_vel_timeout': '_cmd_vel_timeout',
+            'turn_closed_loop': '_turn_closed_loop',
+            'turn_kp': '_turn_kp',
+            'turn_ki': '_turn_ki',
+            'turn_i_limit': '_turn_i_limit',
         }
         for prm in params:
             attr = live.get(prm.name)
@@ -336,27 +367,68 @@ class DiffDriveNode(Node):
         return int(math.copysign(pwm, w))
 
     def _on_cmd_vel(self, msg: Twist):
-        v = msg.linear.x
-        w = msg.angular.z
+        """목표만 저장한다. 실제 PWM 계산·적용은 _on_control_timer가 담당.
 
-        # 직진 성분: 기존 선속도 모델 그대로
-        left_speed = v
-        right_speed = v
+        예전엔 여기서 바로 PWM을 적용했는데, 폐루프 회전 제어를 넣으면서
+        고정 주기로 오차를 적분해야 해서 제어 루프로 옮겼다. 지연은
+        control_rate_hz(50Hz=20ms)라 조종 반응성에는 영향 없음
+        (예전에 문제였던 건 363ms 지연이었다).
+        """
+        self._cmd_v = msg.linear.x
+        self._cmd_w = msg.angular.z
+        self._last_cmd_time = time.time()
+
+    def _on_control_timer(self):
+        """50Hz 제어 루프 — 직진은 개루프, 회전은 자이로 피드백 폐루프."""
+        now = time.time()
+
+        # 안전: 명령이 끊기면 즉시 정지하고 적분항도 비운다.
+        if now - self._last_cmd_time > self._cmd_vel_timeout:
+            if self._target_left_pwm or self._target_right_pwm:
+                self._target_left_pwm = 0
+                self._target_right_pwm = 0
+                self._apply_pwm(0, 0)
+            self._turn_i = 0.0
+            self._prev_control_time = now
+            return
+
+        dt = now - self._prev_control_time if self._prev_control_time else 0.02
+        self._prev_control_time = now
+        dt = min(max(dt, 0.001), 0.1)
+
+        v, w = self._cmd_v, self._cmd_w
+
+        # --- 직진 성분 (개루프) ---
+        left_speed = right_speed = v
         if w == 0.0 and self._straight_trim != 0.0:
             left_speed *= (1.0 - self._straight_trim)
             right_speed *= (1.0 + self._straight_trim)
         left_pwm = self._speed_to_pwm(left_speed)
         right_pwm = self._speed_to_pwm(right_speed)
 
-        # 회전 성분: 별도 절대값 모델로 만든 PWM 차이를 더한다.
-        turn = self._turn_pwm(w)
+        # --- 회전 성분 ---
+        turn = float(self._turn_pwm(w))          # 캘리브레이션 기반 피드포워드
+        gyro_fresh = (self._gyro_ts is not None
+                      and now - self._gyro_ts < self._gyro_stale_sec)
+
+        if self._turn_closed_loop and abs(w) > 1e-6 and gyro_fresh:
+            err = w - self._gyro_z
+            self._turn_i += err * dt
+            # 적분 와인드업 방지: 적분항이 낼 수 있는 PWM을 직접 제한
+            if self._turn_ki > 0:
+                lim = self._turn_i_limit / self._turn_ki
+                self._turn_i = max(-lim, min(lim, self._turn_i))
+            turn += self._turn_kp * err + self._turn_ki * self._turn_i
+        else:
+            self._turn_i = 0.0
+
+        turn = max(-self._max_pwm, min(self._max_pwm, turn))
         left_pwm -= turn
         right_pwm += turn
 
         clamp = lambda x: int(max(-self._max_pwm, min(self._max_pwm, x)))
         self._target_left_pwm = clamp(left_pwm)
         self._target_right_pwm = clamp(right_pwm)
-        self._last_cmd_time = time.time()
         self._apply_pwm(self._target_left_pwm, self._target_right_pwm)
 
     def _on_imu(self, msg: Imu):
@@ -376,6 +448,7 @@ class DiffDriveNode(Node):
             return
 
         self._gyro_z = wz - self._gyro_bias
+        self._gyro_ts = time.time()
         self._imu_seen = True
 
     def _on_safety_timer(self):

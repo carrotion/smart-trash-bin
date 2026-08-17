@@ -25,8 +25,17 @@
   - UI 입력부터 모터 시리얼 I/O까지 4대 자원 경합(Serial Lock 80% 독점, 큐 덮어쓰기, 프론트엔드 드랍) 규명
   - 조종 반응성 향상을 위한 즉시 해결책 제시
 
-- [2026-08-17: [사고 조사] 연속 시스템 하드 락업 원인 규명 및 파일시스템 손상 긴급 진단](2026-08-17_system_crash_investigation_report.md)
+- **2026-08-17: [사고 조사] 연속 시스템 하드 락업 원인 규명 및 파일시스템 손상 긴급 진단** (`2026-08-17_system_crash_investigation_report.md`)
   - 01:07 및 01:37 2회 연속 다운 직전 텔레메트리(`power_trace.csv`) 정밀 분석
   - 5V 전압(5.14~5.18V)·온도(52~53°C) 정상 확인 (전원/방전 가설 기각)
   - PL011 UART DMA 서브시스템의 커널 스핀락 데드락 메커니즘 도출
   - 2차 강제 종료로 인한 ext4 파일시스템 손상(`EUCLEAN 117`) 긴급 복구(`fsck`) 및 방지책 권고
+
+- **2026-08-17: [기술 조사] 4WD 스키드-스티어 마찰·슬립 극복 및 정지형 지자기 센서(ZUPT) 융합 보고서** (`2026-08-17_motion_slip_mitigation_and_odometry_optimization_report.md`)
+  - 4WD 스키드-스티어 기구학/ICR 동역학 및 회전 저항($M_{scrub}$) 모델링
+  - 축간거리(Wheelbase, $L$) 축소의 수학적 증명 및 2호기 하드웨어 설계 반영 ($L/W \approx 0.5$)
+  - 실내 마루 보호용 전륜 2개 비대칭 테이핑(Tape Hack) 실증 방안
+  - 가감속 Slew-rate 램프 및 슬립 감지 적응형 EKF 공분산(Adaptive Covariance)
+  - 정지 판정(ZUPT) 기반 3D 틸트 보정 지자기 센서 헤딩 리셋 파이프라인
+  - IEEE / IJRR / ASCE 관련 권위 학술 논문 8편 분석 및 인용
+
