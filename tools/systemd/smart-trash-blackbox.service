@@ -3,10 +3,12 @@
 # 근거: 2026-08-17 01:07 프리즈에서 커널이 에러를 쓰려던 대상이 바로 죽은
 # 디스크였던 탓에 증거가 통째로 사라짐. 상세는 tools/blackbox_recorder.py 참고.
 Description=Smart Trash Bin - blackbox recorder on microSD (survives USB SSD hang)
-# SD가 마운트된 뒤에 시작. 카드가 없으면 조건 불충족으로 조용히 건너뛴다.
-After=var-log-blackbox.mount
-Requires=var-log-blackbox.mount
-ConditionPathIsMountPoint=/var/log/blackbox
+# 2026-08-17 microSD로 OS를 이관한 뒤 수정: 예전엔 SD가 SSD와 독립된 별도
+# 마운트라 ConditionPathIsMountPoint로 확인했지만, 이제 SD가 루트 디스크다.
+# USB SSD를 안 쓰게 되면서 "USB 링크 사망" 고장 모드 자체가 사라졌지만,
+# 하트비트/D상태 추적/커널 로그 기록은 어떤 종류의 멈춤을 진단하든 유용하므로
+# 일반 디렉터리에 계속 기록하도록 남겨둔다.
+After=local-fs.target
 
 [Service]
 Type=simple
