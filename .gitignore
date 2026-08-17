@@ -17,3 +17,10 @@ test_results/
 .env
 venv/
 bags/
+
+# 시뮬레이터 외부 저장소 — 아직 통합 전이라 무시한다.
+# 도입이 확정되면 서브모듈로 등록할 것 (m-explore-ros2와 동일한 방식).
+#   git submodule add https://github.com/tuw-robotics/Stage.git robot/src/Stage
+#   git submodule add -b jazzy https://github.com/tuw-robotics/stage_ros2.git robot/src/stage_ros2
+robot/src/Stage/
+robot/src/stage_ros2/
