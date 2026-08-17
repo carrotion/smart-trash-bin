@@ -55,12 +55,17 @@ class DiffDriveNode(Node):
         # 주범이라 실익이 크다. 라이다는 이미 새 정면을 보도록 장착돼 있어
         # TF는 손댈 게 없다.
         #
+        # 결론(2026-08-17): **채택 안 함(False)**. 라이다를 원래 정면으로 되돌려
+        # 달기로 해서 앞뒤 재정의가 불필요해졌다. 코드는 남겨둔다 — 나중에
+        # 케이블 배치를 이유로 다시 검토할 수 있고, 그때 True로 켜면 된다.
+        # 켤 경우 **straight_trim만 재측정**하면 된다(회전 관련은 전부 유효).
+        #
         # 이 플래그가 True면 **직진 성분만** 부호를 뒤집는다:
         #  - 새 전진(+v)은 옛 후진이므로 PWM 부호를 반대로
         #  - 엔코더도 반대로 세지므로 부호를 같이 뒤집어 odom이 +로 나오게
         # 회전은 뒤집지 않는다 — z축 180° 회전은 CCW를 보존하므로 각속도
         # 명령과 바퀴 배정이 그대로 유효하다(그래서 min/max_turn_pwm 재측정 불필요).
-        self.declare_parameter('invert_drive_direction', True)
+        self.declare_parameter('invert_drive_direction', False)
         self.declare_parameter('max_pwm', 1200)
         # 모터 스펙 상한(무부하 280RPM × 바퀴원주 0.2105m ≈ 0.98m/s) 기준.
         # PWM 343에서 0.436m/s 실측됨 — 개루프라 명령 속도와 실제가 정확히는 안 맞고,
