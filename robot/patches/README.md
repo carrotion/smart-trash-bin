@@ -54,3 +54,36 @@ grep -c min_frontier_distance_ robot/src/m-explore-ros2/explore/src/explore.cpp
 `gh` CLI나 토큰이 없어 지금은 fork를 못 만들었다. 나중에 `ldlidar_stl_ros2`처럼
 `carrotion/m-explore-ros2`로 fork하고 정식 커밋한 뒤, 서브모듈 remote를 그쪽으로
 바꾸면 이 패치 파일은 필요 없어진다.
+
+## 검증
+
+패치가 제대로 적용됐는지 확인:
+
+```bash
+grep -c min_frontier_distance_ explore/src/frontier_search.cpp   # -> 6
+grep -c min_frontier_distance_ explore/include/explore/frontier_search.h  # -> 1
+grep -c min_frontier_distance_ explore/src/explore.cpp           # -> 2
+```
+
+## 이 패치가 고치는 것 (2026-08-17 개정)
+
+핵심은 **"비용 계산과 목표점이 같은 점을 가리킨다"는 불변식**이다.
+
+원본은 프론티어 덩어리에서 로봇에 **가장 가까운 셀**을 목표(`middle`)로 잡고 그
+거리를 비용 입력(`min_distance`)으로 썼다. 우리 환경에서는 그 목표가 0.1m 앞이라
+Nav2가 즉시 "도달"로 처리하고, 로봇은 이동 없이 다음 프론티어로 넘어가며 제자리
+회전만 반복했다(실측: 순수 회전 45~71%).
+
+1차 시도는 `explore.cpp`에서 **목표점만** 따로 골랐다. 그러자 순위는 최근접
+거리로 매기고 목표는 다른 점이 되는 **불일치**가 생겼다 — 로봇 코앞에서 시작하는
+큰 덩어리들은 `min_distance`가 똑같이 0.1m라 순위를 못 가리는데 목표점은 전혀
+다른 방향에 찍혔다. 목표가 계속 튀었다.
+
+2차(현재)는 선정을 `FrontierSearch::buildNewFrontier`로 옮겼다.
+`min_frontier_distance` 이상 떨어진 점 중 가장 가까운 것을 목표로 삼고,
+`min_distance`에도 **그 점까지의 거리**를 넣는다. 구조적으로 불일치가 생길 수 없다.
+
+예외 처리 두 가지:
+- 덩어리 전체가 `min_frontier_distance` 안에 들어오면 가장 먼 점을 쓴다(거리도 그에 맞춤)
+- `points`가 비는 고립 셀이면 `middle`을 `initial`로 둔다. 안 그러면 기본값 (0,0),
+  즉 **맵 원점**이 목표가 된다

@@ -11,8 +11,42 @@ index 7741ce0..2b1830b 100644
    bool visualize_;
    bool return_to_init_;
    std::string robot_base_frame_;
+diff --git a/explore/include/explore/frontier_search.h b/explore/include/explore/frontier_search.h
+index 0f8e610..a9d8a57 100644
+--- a/explore/include/explore/frontier_search.h
++++ b/explore/include/explore/frontier_search.h
+@@ -11,6 +11,9 @@ namespace frontier_exploration
+  */
+ struct Frontier {
+   std::uint32_t size;
++  // ⚠️ 이름과 달리 "로봇에서 가장 가까운 점까지의 거리"가 아니다(원본은 그랬다).
++  // **실제로 목표로 삼을 점(middle)까지의 거리**다. 비용 계산과 목표점이 같은
++  // 점을 가리키도록 맞춰 놓은 것 — 자세한 이유는 buildNewFrontier 주석 참고.
+   double min_distance;
+   double cost;
+   geometry_msgs::msg::Point initial;
+@@ -33,7 +36,8 @@ public:
+    * @param costmap Reference to costmap data to search.
+    */
+   FrontierSearch(nav2_costmap_2d::Costmap2D* costmap, double potential_scale,
+-                 double gain_scale, double min_frontier_size, rclcpp::Logger logger);
++                 double gain_scale, double min_frontier_size,
++                 double min_frontier_distance, rclcpp::Logger logger);
+ 
+   /**
+    * @brief Runs search implementation, outward from the start position
+@@ -81,6 +85,9 @@ private:
+   unsigned int size_x_, size_y_;
+   double potential_scale_, gain_scale_;
+   double min_frontier_size_;
++  // 목표점으로 삼을 수 있는 최소 거리(m). 이보다 가까운 점은 목표가 되지 못한다 —
++  // 목표가 코앞이면 Nav2가 즉시 "도달"로 처리해서 로봇이 제자리 회전만 반복한다.
++  double min_frontier_distance_;
+   rclcpp::Logger logger_;
+ };
+ }  // namespace frontier_exploration
 diff --git a/explore/src/explore.cpp b/explore/src/explore.cpp
-index 6a1125c..9bacf88 100644
+index 6a1125c..d1e04f2 100644
 --- a/explore/src/explore.cpp
 +++ b/explore/src/explore.cpp
 @@ -36,6 +36,8 @@
@@ -51,6 +85,19 @@ index 6a1125c..9bacf88 100644
    this->get_parameter("robot_base_frame", robot_base_frame_);
  
    progress_timeout_ = timeout;
+@@ -86,9 +101,9 @@ Explore::Explore()
+       rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
+           this, ACTION_NAME);
+ 
+-  search_ = frontier_exploration::FrontierSearch(costmap_client_.getCostmap(),
+-                                                 potential_scale_, gain_scale_,
+-                                                 min_frontier_size, logger_);
++  search_ = frontier_exploration::FrontierSearch(
++      costmap_client_.getCostmap(), potential_scale_, gain_scale_,
++      min_frontier_size, min_frontier_distance_, logger_);
+ 
+   if (visualize_) {
+     marker_array_publisher_ =
 @@ -193,7 +208,7 @@ void Explore::visualizeFrontiers(
      m.scale.y = 0.1;
      m.scale.z = 0.1;
@@ -78,7 +125,7 @@ index 6a1125c..9bacf88 100644
                         });
    if (frontier == frontiers.end()) {
      RCLCPP_WARN(logger_, "All frontiers traversed/tried out, stopping.");
-@@ -265,7 +280,46 @@ void Explore::makePlan()
+@@ -265,7 +280,36 @@ void Explore::makePlan()
      stop(true);
      return;
    }
@@ -102,27 +149,128 @@ index 6a1125c..9bacf88 100644
 +  // 그래서 **덩어리 안에서 min_frontier_distance 이상 떨어진 점 중 가장 가까운
 +  // 것**을 고른다. 항상 실제 미지 경계 위에 있고, 반드시 이동을 요구한다.
 +  // 이동하면 사각지대도 같이 움직여 쐐기는 스스로 메워진다.
++  //
++  // ⚠️ 이 선정은 예전에 여기(explore.cpp)에서 했었는데, 그러면 **순위는
++  // frontier->min_distance(최근접 거리)로 매기고 목표는 다른 점**이 되어 불일치가
++  // 생겼다. 로봇 코앞에서 시작하는 큰 덩어리들은 min_distance가 똑같이 0.1m라
++  // 순위를 못 가리는데 목표점은 전혀 다른 방향에 찍혀서, 목표가 계속 튀고
++  // 제자리 회전이 45~71%까지 올라갔다.
++  //
++  // 지금은 선정이 FrontierSearch::buildNewFrontier로 옮겨져서, frontier->middle과
++  // frontier->min_distance가 **구조적으로 같은 점**을 가리킨다. 여기서는 그대로
++  // 쓰기만 하면 된다.
 +  geometry_msgs::msg::Point target_position = frontier->middle;
-+  {
-+    double best = std::numeric_limits<double>::infinity();
-+    bool found = false;
-+    for (const auto& p : frontier->points) {
-+      double d = std::hypot(p.x - pose.position.x, p.y - pose.position.y);
-+      if (d >= min_frontier_distance_ && d < best) {
-+        best = d;
-+        target_position = p;
-+        found = true;
-+      }
-+    }
-+    if (!found) {
-+      // 전부 가까우면 그중 가장 먼 점이라도 고른다(제자리 목표 방지)
-+      double far = -1.0;
-+      for (const auto& p : frontier->points) {
-+        double d = std::hypot(p.x - pose.position.x, p.y - pose.position.y);
-+        if (d > far) { far = d; target_position = p; }
-+      }
-+    }
-+  }
  
    // time out if we are not making any progress
    bool same_goal = same_point(prev_goal_, target_position);
+diff --git a/explore/src/frontier_search.cpp b/explore/src/frontier_search.cpp
+index 6085fd8..03b82e8 100644
+--- a/explore/src/frontier_search.cpp
++++ b/explore/src/frontier_search.cpp
+@@ -1,7 +1,9 @@
+ #include <explore/costmap_tools.h>
+ #include <explore/frontier_search.h>
+ 
++#include <cmath>      // std::isfinite, std::hypot — 전이 include에 의존하지 않는다
+ #include <geometry_msgs/msg/point.hpp>
++#include <limits>
+ #include <mutex>
+ 
+ #include "nav2_costmap_2d/cost_values.hpp"
+@@ -14,11 +16,14 @@ using nav2_costmap_2d::NO_INFORMATION;
+ 
+ FrontierSearch::FrontierSearch(nav2_costmap_2d::Costmap2D* costmap,
+                                double potential_scale, double gain_scale,
+-                               double min_frontier_size, rclcpp::Logger logger)
++                               double min_frontier_size,
++                               double min_frontier_distance,
++                               rclcpp::Logger logger)
+   : costmap_(costmap)
+   , potential_scale_(potential_scale)
+   , gain_scale_(gain_scale)
+   , min_frontier_size_(min_frontier_size)
++  , min_frontier_distance_(min_frontier_distance)
+   , logger_(logger)
+ {
+ }
+@@ -106,11 +111,20 @@ Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
+   output.size = 1;
+   output.min_distance = std::numeric_limits<double>::infinity();
+ 
++  // 덩어리 전체가 min_frontier_distance_ 안에 들어올 때 쓸 예비 목표점.
++  double farthest_distance = -1.0;
++  geometry_msgs::msg::Point farthest_point;
++
+   // record initial contact point for frontier
+   unsigned int ix, iy;
+   costmap_->indexToCells(initial_cell, ix, iy);
+   costmap_->mapToWorld(ix, iy, output.initial.x, output.initial.y);
+ 
++  // middle의 안전한 기본값. points가 비는 경우(이웃이 하나도 프론티어가 아닌
++  // 고립 셀)가 있는데, 그대로 두면 middle이 기본값 (0,0) 즉 **맵 원점**이 되어
++  // 로봇이 엉뚱한 곳으로 간다. 최소한 이 프론티어가 실제로 있는 자리를 가리키게 한다.
++  output.middle = output.initial;
++
+   // push initial gridcell onto queue
+   std::queue<unsigned int> bfs;
+   bfs.push(initial_cell);
+@@ -148,15 +162,35 @@ Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
+         output.centroid.x += wx;
+         output.centroid.y += wy;
+ 
+-        // determine frontier's distance from robot, going by closest gridcell
+-        // to robot
++        // 목표점 선정 — **비용 계산과 반드시 같은 점이어야 한다.**
++        //
++        // 원본은 로봇에서 가장 가까운 셀을 middle(목표)로 잡고 그 거리를
++        // min_distance(비용 입력)로 썼다. 우리 환경에서는 그 목표가 코앞(0.1m)이라
++        // Nav2가 즉시 "도달"로 처리하고, 로봇은 이동 없이 다음 프론티어로 넘어가며
++        // 제자리 회전만 반복했다(실측: 순수 회전 45~71%).
++        //
++        // 이전 시도는 explore.cpp에서 목표점만 따로 골랐는데, 그러면 **순위는
++        // 최근접 거리로 매기고 목표는 다른 점**이 되어 불일치가 생긴다. 로봇 코앞에서
++        // 시작하는 큰 덩어리 둘은 min_distance가 똑같이 0.1m라 순위를 못 가리는데
++        // 실제 목표점은 전혀 다른 방향에 찍혔다 — 목표가 계속 튀는 원인이었다.
++        //
++        // 그래서 선정을 여기로 옮겼다: min_frontier_distance_ 이상 떨어진 점 중
++        // **가장 가까운** 것을 목표로 삼고, min_distance에도 **그 점까지의 거리**를
++        // 넣는다. 구조적으로 불일치가 생길 수 없고, 비용이 실제 이동거리를 반영한다.
+         double distance = sqrt(pow((double(reference_x) - double(wx)), 2.0) +
+                                pow((double(reference_y) - double(wy)), 2.0));
+-        if (distance < output.min_distance) {
++        if (distance >= min_frontier_distance_ && distance < output.min_distance) {
+           output.min_distance = distance;
+           output.middle.x = wx;
+           output.middle.y = wy;
+         }
++        // 덩어리 전체가 min_frontier_distance_ 안에 들어오는 경우를 대비한 예비값.
++        // 그 경우 목표가 될 수 있는 점이 하나도 없으므로 가장 먼 점이라도 쓴다.
++        if (distance > farthest_distance) {
++          farthest_distance = distance;
++          farthest_point.x = wx;
++          farthest_point.y = wy;
++        }
+ 
+         // add to queue for breadth first search
+         bfs.push(nbr);
+@@ -164,6 +198,20 @@ Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
+     }
+   }
+ 
++  // min_frontier_distance_ 이상인 점이 하나도 없었다면 예비 목표점으로 되돌린다.
++  // 이때도 min_distance는 **그 예비 목표점까지의 거리**로 맞춰서, 비용과 목표가
++  // 같은 점을 가리킨다는 불변식을 깨지 않는다.
++  if (!std::isfinite(output.min_distance)) {
++    if (farthest_distance >= 0.0) {
++      output.min_distance = farthest_distance;
++      output.middle = farthest_point;
++    } else {
++      // points가 비었다 — middle은 위에서 initial로 초기화해 뒀으니 거리만 맞춘다.
++      output.min_distance =
++          std::hypot(output.middle.x - reference_x, output.middle.y - reference_y);
++    }
++  }
++
+   // average out frontier centroid
+   output.centroid.x /= output.size;
+   output.centroid.y /= output.size;
