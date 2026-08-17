@@ -89,6 +89,30 @@ class DiffDriveNode(Node):
         # 사용자가 "좌회전이 잘 안 돈다"고 보고(2026-08-16). 회전 성분(각속도로
         # 인한 좌우 속도차)에만 곱해서 부스트하고 직진(v) 성분은 그대로 둔다.
         # 실측 캘리브레이션 전 초기값 — 필요시 straight_trim처럼 실측으로 조정.
+        # --- 회전 전용 PWM 모델 (2026-08-17 신설) ---
+        # 직진용 속도→PWM 환산과 **완전히 분리**한다. 이유는 _turn_pwm() 주석 참고.
+        # 아래 3개는 실측으로 확정할 값 — 우선 보수적 초기값을 둔다.
+        # 실측 캘리브레이션 (2026-08-17, 마루바닥, 자이로 각속도 직접 측정):
+        #   PWM 150 -> 0.038 rad/s      PWM 400 -> 0.530
+        #   PWM 200 -> 0.095            PWM 500 -> 0.773
+        #   PWM 250 -> 0.187            PWM 650 -> 1.294
+        #   PWM 300 -> 0.224            PWM 800 -> 1.826
+        # PWM 300 이상은 선형: 대략 w = 0.0032*PWM - 0.74 (100 PWM당 0.32 rad/s).
+        # 정지마찰 문턱이 PWM 230 부근 — 그 아래로는 명령을 줘도 거의 안 돈다.
+        #
+        # 검증 결과(명령 대비 실제): 0.5 -> 93%, 0.8 -> 102%.
+        # ⚠️ 저속은 구조적으로 넘친다(0.2 -> 175%). 마찰 문턱 때문에 어떤 작은
+        #    명령이든 최소 PWM이 나가야 움직이기 때문. 안 도는 것보다 낫다고 판단.
+        #    근본 해결은 자이로 피드백 기반 폐루프 각속도 제어(미구현).
+        # ⚠️ 이 값들은 **바닥 재질·배터리 전압·모터 온도에 의존**한다. 카펫이나
+        #    배터리가 빠진 상태에서는 재캘리브레이션 필요. 유닛마다도 다르므로
+        #    2호기부터는 unit calibration 파일로 분리할 것(docs/fleet_and_lifecycle.md).
+        self.declare_parameter('min_turn_pwm', 260)
+        self.declare_parameter('max_turn_pwm', 570)
+        self.declare_parameter('max_angular_speed', 1.0)
+
+        # (구) turn_boost — 회전 PWM 모델로 대체되어 더 이상 쓰이지 않는다.
+        # 파라미터 자체는 호환을 위해 남겨두되 제어에는 반영 안 함.
         self.declare_parameter('turn_boost', 1.4)
         self.declare_parameter('cmd_vel_timeout', 0.5)       # 이 시간 명령 없으면 정지
         self.declare_parameter('odom_rate_hz', 20.0)
@@ -117,8 +141,18 @@ class DiffDriveNode(Node):
         self._min_pwm = p('min_pwm').value
         self._cmd_vel_timeout = p('cmd_vel_timeout').value
         self._straight_trim = p('straight_trim').value
-        self._turn_boost = p('turn_boost').value
+        self._turn_boost = p('turn_boost').value   # 미사용(회전 PWM 모델로 대체)
+        self._min_turn_pwm = p('min_turn_pwm').value
+        self._max_turn_pwm = p('max_turn_pwm').value
+        self._max_angular_speed = p('max_angular_speed').value
         self._publish_tf = p('publish_tf').value
+
+        # 런타임 파라미터 변경 반영 (2026-08-17 추가).
+        # 이게 없으면 `ros2 param set`이 파라미터 서버 값만 바꾸고 노드 내부
+        # 변수는 그대로라, 실측 캘리브레이션을 하면서 값을 바꿔도 **아무 효과가
+        # 없는데 성공했다고 착각**하게 된다(실제로 회전 PWM 스윕 전체를 헛돌렸음).
+        self.add_on_set_parameters_callback(self._on_params)
+
 
         # 카운트 → 미터
         self._meters_per_count = (2.0 * math.pi * self._wheel_radius) / self._counts_per_rev
@@ -255,26 +289,73 @@ class DiffDriveNode(Node):
             pwm = math.copysign(self._min_pwm, pwm)
         return int(max(-self._max_pwm, min(self._max_pwm, pwm)))
 
+    def _on_params(self, params):
+        """캘리브레이션 중 바꿀 값들만 런타임 반영. 시리얼/포트 관련은 제외."""
+        from rcl_interfaces.msg import SetParametersResult
+        live = {
+            'straight_trim': '_straight_trim',
+            'min_turn_pwm': '_min_turn_pwm',
+            'max_turn_pwm': '_max_turn_pwm',
+            'max_angular_speed': '_max_angular_speed',
+            'max_wheel_speed': '_max_wheel_speed',
+            'min_pwm': '_min_pwm',
+            'cmd_vel_timeout': '_cmd_vel_timeout',
+        }
+        for prm in params:
+            attr = live.get(prm.name)
+            if attr:
+                setattr(self, attr, prm.value)
+        return SetParametersResult(successful=True)
+
+    def _turn_pwm(self, w):
+        """회전 명령(rad/s) → 좌우 PWM 차이. **직진 모델과 완전히 분리한다.**
+
+        왜 분리하나 (2026-08-17 실측):
+        예전엔 회전도 `w * half_track * turn_boost`로 선속도를 만든 뒤 직진용
+        `_speed_to_pwm()`에 통과시켰다. 그런데 스키드-스티어는 제자리 회전 시
+        바퀴 4개가 옆으로 긁혀야 해서 저항이 직진과 근본적으로 다르다. 그 결과
+        **0.3~1.0 rad/s 어느 값을 줘도 실제로는 명령의 2~9%밖에 안 돌았다**
+        (자이로·휠엔코더 양쪽으로 확인, 로봇이 자유로운 상태에서 측정).
+        w=0.8일 때 PWM이 겨우 147이었는데, 실측 기록상 의미 있는 회전에는
+        500 정도가 필요하다.
+
+        비례식으로는 못 고친다 — 정지마찰을 못 이기는 구간에서는 PWM을 조금
+        올려도 회전이 0 그대로다. 그래서 **최소 구동 PWM을 절대값으로 보장**하고,
+        거기서부터 최대까지 선형 보간한다. 어떤 0이 아닌 회전 명령이든 적어도
+        `min_turn_pwm`은 나가므로 "명령했는데 꿈쩍도 안 하는" 상황이 사라진다.
+
+        회전이 안 되면 경로를 못 따라가고, 방향을 못 바꿔 장애물에 그대로
+        박는다 — 실제로 의자 다리에 충돌했다. 그래서 이건 주행 품질이 아니라
+        안전 문제에 가깝다.
+        """
+        if abs(w) < 1e-6:
+            return 0
+        ratio = min(1.0, abs(w) / self._max_angular_speed)
+        pwm = self._min_turn_pwm + ratio * (self._max_turn_pwm - self._min_turn_pwm)
+        pwm = min(pwm, self._max_pwm)
+        return int(math.copysign(pwm, w))
+
     def _on_cmd_vel(self, msg: Twist):
         v = msg.linear.x
         w = msg.angular.z
-        half_track = self._wheel_separation / 2.0
-        angular_component = w * half_track
 
-        if w != 0.0:
-            # 회전 성분에만 부스트 — 직진(v) 성분은 그대로 둬서 회전+전진이
-            # 섞인 arc 주행에서 직진 속도가 의도치 않게 과속되지 않게 한다.
-            angular_component *= self._turn_boost
-
-        left_speed = v - angular_component
-        right_speed = v + angular_component
-
+        # 직진 성분: 기존 선속도 모델 그대로
+        left_speed = v
+        right_speed = v
         if w == 0.0 and self._straight_trim != 0.0:
             left_speed *= (1.0 - self._straight_trim)
             right_speed *= (1.0 + self._straight_trim)
+        left_pwm = self._speed_to_pwm(left_speed)
+        right_pwm = self._speed_to_pwm(right_speed)
 
-        self._target_left_pwm = self._speed_to_pwm(left_speed)
-        self._target_right_pwm = self._speed_to_pwm(right_speed)
+        # 회전 성분: 별도 절대값 모델로 만든 PWM 차이를 더한다.
+        turn = self._turn_pwm(w)
+        left_pwm -= turn
+        right_pwm += turn
+
+        clamp = lambda x: int(max(-self._max_pwm, min(self._max_pwm, x)))
+        self._target_left_pwm = clamp(left_pwm)
+        self._target_right_pwm = clamp(right_pwm)
         self._last_cmd_time = time.time()
         self._apply_pwm(self._target_left_pwm, self._target_right_pwm)
 

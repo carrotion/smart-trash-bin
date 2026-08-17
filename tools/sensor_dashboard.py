@@ -19,11 +19,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, LaserScan
+from sensor_msgs.msg import Imu, LaserScan, MagneticField
+import math
 
 state_lock = threading.Lock()
 state = {
     "imu": {"connected": False, "last_ts": 0.0},
+    "mag": {"connected": False, "last_ts": 0.0},
     "lidar": {"connected": False, "last_ts": 0.0},
 }
 STALE_S = 2.0
@@ -33,7 +35,30 @@ class SensorBridge(Node):
     def __init__(self):
         super().__init__('sensor_dashboard_bridge')
         self.create_subscription(Imu, 'imu/data', self._on_imu, 10)
+        self.create_subscription(MagneticField, 'imu/mag', self._on_mag, 10)
         self.create_subscription(LaserScan, 'scan', self._on_scan, 10)
+
+    def _on_mag(self, msg: MagneticField):
+        """지자기(AK09916). 아직 어떤 추정에도 안 쓰고 **표시만** 한다.
+
+        2026-08-17 실측: 정지 시 총 세기 123µT(지구 자기장 25~65µT의 2~5배)로,
+        로봇 자신의 모터 자석이 만드는 하드아이언 편향이 크다. 게다가 **모터가
+        도는 동안 52~69µT나 요동친다** — 지구 자기장 크기와 맞먹어 주행 중에는
+        방위 판단에 못 쓴다.
+        결론(사용자와 합의): **정지 상태에서만** 방위 기준으로 쓸 여지가 있다.
+        여기 표시하는 건 그 판단을 사용자가 언제든 눈으로 확인하기 위함.
+        """
+        x = msg.magnetic_field.x * 1e6      # 테슬라 -> µT
+        y = msg.magnetic_field.y * 1e6
+        z = msg.magnetic_field.z * 1e6
+        with state_lock:
+            state["mag"] = {
+                "connected": True,
+                "last_ts": time.time(),
+                "x": x, "y": y, "z": z,
+                "norm": math.sqrt(x * x + y * y + z * z),
+                "heading_deg": math.degrees(math.atan2(y, x)),
+            }
 
     def _on_imu(self, msg: Imu):
         with state_lock:
@@ -70,7 +95,7 @@ def staleness_watchdog():
     while True:
         now = time.time()
         with state_lock:
-            for key in ("imu", "lidar"):
+            for key in ("imu", "mag", "lidar"):
                 if state[key]["connected"] and now - state[key]["last_ts"] > STALE_S:
                     state[key]["connected"] = False
         time.sleep(0.5)
@@ -128,6 +153,11 @@ PAGE = """<!doctype html>
 </div>
 
 <div class="card">
+  <div class="card-head"><span class="dot" id="magDot"></span> 지자기 (AK09916)</div>
+  <table id="magTable"></table>
+</div>
+
+<div class="card">
   <div class="card-head"><span class="dot" id="lidarDot"></span> LiDAR (LD06)</div>
   <table id="lidarTable"></table>
 </div>
@@ -149,6 +179,24 @@ async function tick() {
   }
   document.getElementById('imuTable').innerHTML =
     imuRows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+
+  const magDot = document.getElementById('magDot');
+  magDot.style.background = d.mag && d.mag.connected ? 'var(--good)' : 'var(--critical)';
+  const magRows = [];
+  if (d.mag && d.mag.connected) {
+    magRows.push(['성분 X/Y/Z (µT)',
+      `${d.mag.x.toFixed(1)} / ${d.mag.y.toFixed(1)} / ${d.mag.z.toFixed(1)}`]);
+    // 지구 자기장은 25~65µT. 크게 벗어나면 로봇 자신의 자석/주변 철재 영향.
+    const n = d.mag.norm;
+    const warn = (n < 25 || n > 70) ? ' ⚠ 지구자기장(25~65) 벗어남' : '';
+    magRows.push(['총 세기 (µT)', `${n.toFixed(1)}${warn}`]);
+    magRows.push(['수평 방위각 (도)', `${d.mag.heading_deg.toFixed(1)}`]);
+    magRows.push(['용도', '정지 시 방위 참고용 — 주행 중에는 모터 간섭으로 부정확']);
+  } else {
+    magRows.push(['상태', '토픽 응답 없음']);
+  }
+  document.getElementById('magTable').innerHTML =
+    magRows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
 
   const lidarDot = document.getElementById('lidarDot');
   lidarDot.style.background = d.lidar.connected ? 'var(--good)' : 'var(--critical)';
