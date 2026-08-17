@@ -30,6 +30,12 @@ state = {
 }
 STALE_S = 2.0
 
+# 자기 편각(자북 -> 진북, 동쪽 양수, 단위 도). --declination 으로 덮어쓴다.
+# 0이면 자북 기준. 폰 나침반(진북 표시)과 맞추려면 실측해서 채울 것 —
+# 서로 다른 방위 3곳 이상에서 폰과 비교한 차이의 평균이다(한 번만 재면 소프트아이언
+# 변동분과 구분이 안 된다). 참고: 한국은 대략 8° 서편(음수) 정도.
+DECLINATION_DEG = 0.0
+
 
 class SensorBridge(Node):
     def __init__(self):
@@ -62,8 +68,7 @@ class SensorBridge(Node):
                 "x": x, "y": y, "z": z,
                 "norm": math.sqrt(x * x + y * y + z * z),
                 "horiz": horiz,
-                # 하드아이언 보정 전이라 절대 방위는 못 믿는다. 다만 수평 세기가
-                # 지구 자기장 수준이면 "회전에 따라 방향이 바뀌는 것"은 볼 수 있다.
+                # 수평 세기가 지구 자기장 수준을 벗어나면 주변 철재/모터 간섭이다.
                 "usable": 15.0 <= horiz <= 60.0,
                 # 나침반 방위 = -atan2(By, Bx)  ← 부호에 주의.
                 # 로봇 좌표계는 x=전방, y=좌측(REP-103). atan2(By,Bx)는 "로봇에서 봐서
@@ -71,7 +76,15 @@ class SensorBridge(Node):
                 # "북쪽에서 봐서 로봇이 어디를 보는가"를 시계 양수로 재므로 정확히 반대다.
                 # 2026-08-17 실측 검증: 부호 없이 109°가 나왔을 때 폰 나침반은 259°,
                 # -109 mod 360 = 251°로 8° 이내 일치(잔차는 편각+미보정 하드아이언).
-                "heading_deg": (-math.degrees(math.atan2(y, x))) % 360.0,
+                #
+                # DECLINATION_DEG: 자북 -> 진북 보정(동쪽이 양수). 폰 나침반은 보통
+                # **진북**을 표시하므로 이걸 넣어야 폰과 맞는다. 로봇 항법만 생각하면
+                # 자북도 고정 기준이라 상관없지만, 사람이 폰과 비교해 읽으려면 필요하다.
+                # ⚠️ 이건 **설치 지역** 값이지 기체 값이 아니다 — 나중에 site.yaml로
+                #    분리할 것(fleet 문서 참고). 0이면 자북 기준 그대로.
+                "heading_deg": (
+                    -math.degrees(math.atan2(y, x)) + DECLINATION_DEG) % 360.0,
+                "declination_deg": DECLINATION_DEG,
             }
 
     def _on_imu(self, msg: Imu):
@@ -369,9 +382,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    # global 선언은 이름을 쓰기 **전에** 와야 한다 (아래 add_argument의 default에서
+    # 이미 읽으므로, 뒤에 두면 SyntaxError).
+    global DECLINATION_DEG
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8767)
+    ap.add_argument("--declination", type=float, default=DECLINATION_DEG,
+                    help="자기 편각(도, 동쪽 양수). 폰 나침반(진북)과 맞출 때 쓴다. "
+                         "설치 지역 값이며 기체 값이 아님.")
     args = ap.parse_args()
+    DECLINATION_DEG = args.declination
 
     rclpy.init()
     node = SensorBridge()
