@@ -72,6 +72,13 @@ def process_name(args):
     return base
 
 
+# 이 이름들은 **거의 모든 ROS 프로세스에 매칭된다.** systemd 서비스는 전부
+# `ros2 run ...`으로 뜨는데 `ros2` 자체가 파이썬 스크립트라 실질 이름이 `ros2`가 된다.
+# 2026-08-17에 `killproc.py ros2 ...`를 실행했다가 구동/EKF 서비스가 통째로 죽었고,
+# 그걸 모른 채 데이터 녹화를 시작해서 조종해도 로봇이 안 움직였다.
+DANGEROUS_NAMES = {'ros2', 'python', 'python3', 'bash', 'sh', 'systemd', 'launch'}
+
+
 def find(names):
     protect = _ancestors(os.getpid())
     hits = []
@@ -99,7 +106,18 @@ def main():
     ap.add_argument('--dry-run', action='store_true', help='죽이지 않고 목록만 출력')
     ap.add_argument('--kill9', action='store_true', help='TERM 후 남으면 KILL까지')
     ap.add_argument('--timeout', type=float, default=5.0, help='종료 대기 초')
+    ap.add_argument('--allow-dangerous', action='store_true',
+                    help='ros2/python3 같은 포괄적 이름도 허용 (거의 항상 실수다)')
     args = ap.parse_args()
+
+    bad = [n for n in args.names if n in DANGEROUS_NAMES]
+    if bad and not args.allow_dangerous:
+        print(f'❌ 너무 포괄적인 이름이다: {", ".join(bad)}')
+        print('   ROS 노드는 전부 `ros2 run ...`으로 뜨므로 이 이름은 구동/EKF/센서')
+        print('   서비스까지 싹 죽인다. 실제 노드 이름을 지정할 것.')
+        print('   예: killproc.py diff_drive_node   (X: killproc.py ros2)')
+        print('   정말 의도한 것이면 --allow-dangerous')
+        return 2
 
     hits = find(args.names)
     if not hits:

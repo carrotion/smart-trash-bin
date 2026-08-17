@@ -48,6 +48,25 @@ TOPICS=(
   /cmd_vel
 )
 
+# ⚠️ 구동 계통 선행 확인. 2026-08-17에 정리 스크립트가 diff_drive_node를 죽이면서
+# systemd 서비스까지 내려갔는데 모르고 녹화를 시작했다 — 사용자가 조종해도 로봇이
+# 안 움직였고 /odom도 가방에서 빠졌다. 녹화 전에 반드시 확인한다.
+echo "구동 계통 확인:"
+DEAD=""
+for svc in smart-trash-diff-drive smart-trash-ekf smart-trash-imu; do
+  st=$(systemctl is-active "$svc" 2>/dev/null)
+  printf "  %-26s %s\n" "$svc" "$st"
+  [ "$st" != "active" ] && DEAD="$DEAD $svc"
+done
+if [ -n "$DEAD" ]; then
+  echo
+  echo "❌ 꺼진 서비스가 있다:$DEAD"
+  echo "   이대로 녹화하면 조종해도 로봇이 안 움직이고 오도메트리도 안 남는다."
+  echo "   먼저 실행할 것:  sudo systemctl start$DEAD"
+  exit 1
+fi
+echo
+
 echo "녹화 대상:"
 MISSING=0
 for t in "${TOPICS[@]}"; do
