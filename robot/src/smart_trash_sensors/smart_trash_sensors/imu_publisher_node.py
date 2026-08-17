@@ -45,6 +45,29 @@ class ImuPublisherNode(Node):
         # 회전 중 자이로와 나란히 비교해서 판단할 것. 쓸 만하면 센서를 모터에서
         # 더 멀리/높이 옮기는 것도 선택지(사용자 확인).
         self._mag_pub = self.create_publisher(MagneticField, 'imu/mag', 10)
+
+        # 하드아이언 보정값 (µT). 로봇 자신의 철재/자석이 만드는 **상수 벡터**라서
+        # 그냥 빼주면 된다. 기체마다 배선/부품 배치가 달라 값이 다르므로 파라미터로 둔다
+        # — 2호기부터는 /etc/smart-trash/calibration.yaml로 분리할 것(fleet 문서 참고).
+        # 측정: tools/mag_calibrate.py로 손 회전 2바퀴 -> 원 적합의 중심.
+        # 1호기 2026-08-17 실측: x=-0.44, y=+14.37 (샘플 8135, 커버리지 100%, 잔차 1.87µT)
+        self.declare_parameter('mag_hard_iron_x', 0.0)
+        self.declare_parameter('mag_hard_iron_y', 0.0)
+        self.declare_parameter('mag_hard_iron_z', 0.0)
+        self._mag_off = (
+            self.get_parameter('mag_hard_iron_x').value,
+            self.get_parameter('mag_hard_iron_y').value,
+            self.get_parameter('mag_hard_iron_z').value,
+        )
+        if any(self._mag_off):
+            self.get_logger().info(
+                f'하드아이언 보정 적용: {self._mag_off[0]:+.2f} / '
+                f'{self._mag_off[1]:+.2f} / {self._mag_off[2]:+.2f} µT')
+        else:
+            self.get_logger().warn(
+                '하드아이언 보정값이 0이다 — 방위가 최대 수십 도 틀어질 수 있다. '
+                'tools/mag_calibrate.py로 측정할 것.')
+
         try:
             self._imu.startupMagnetometer()
             self._mag_ok = True
@@ -87,11 +110,16 @@ class ImuPublisherNode(Node):
         if self._mag_ok:
             mag = MagneticField()
             mag.header = msg.header
-            # AK09916: 0.15 uT/LSB -> 테슬라 단위(REP-145)로 변환
-            mag.magnetic_field.x = self._imu.mxRaw * MAG_SENSITIVITY_UT_PER_LSB * 1e-6
-            mag.magnetic_field.y = self._imu.myRaw * MAG_SENSITIVITY_UT_PER_LSB * 1e-6
-            mag.magnetic_field.z = self._imu.mzRaw * MAG_SENSITIVITY_UT_PER_LSB * 1e-6
-            # 아직 하드/소프트 아이언 보정을 안 했으므로 공분산은 미상(0)으로 둔다.
+            # AK09916: 0.15 uT/LSB -> 테슬라 단위(REP-145)로 변환.
+            # 하드아이언 편향은 µT 단위에서 빼고 나서 테슬라로 바꾼다.
+            ox, oy, oz = self._mag_off
+            mag.magnetic_field.x = (
+                self._imu.mxRaw * MAG_SENSITIVITY_UT_PER_LSB - ox) * 1e-6
+            mag.magnetic_field.y = (
+                self._imu.myRaw * MAG_SENSITIVITY_UT_PER_LSB - oy) * 1e-6
+            mag.magnetic_field.z = (
+                self._imu.mzRaw * MAG_SENSITIVITY_UT_PER_LSB - oz) * 1e-6
+            # 소프트아이언(타원 왜곡)은 아직 미보정이라 공분산은 미상(0)으로 둔다.
             self._mag_pub.publish(mag)
 
 
