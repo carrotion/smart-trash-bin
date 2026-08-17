@@ -49,6 +49,18 @@ class DiffDriveNode(Node):
         # 나온 비율(0.953)로 보정한 값 — 주행 실측이 더 신뢰도 높음 (2026-08-15)
         self.declare_parameter('counts_per_rev', 857.2)
         self.declare_parameter('encoder_sign', -1)           # PWM+ 전진 시 카운트 감소
+        # ⚠️ 2026-08-17: 로봇의 "앞"을 반대쪽으로 재정의함.
+        # 이유: 하판→상판으로 넘어가는 케이블 뭉치가 2개였는데, 앞뒤를 바꾸면
+        # 1개로 줄일 수 있다(사용자). 상하판을 넘는 케이블은 라이다 차폐의
+        # 주범이라 실익이 크다. 라이다는 이미 새 정면을 보도록 장착돼 있어
+        # TF는 손댈 게 없다.
+        #
+        # 이 플래그가 True면 **직진 성분만** 부호를 뒤집는다:
+        #  - 새 전진(+v)은 옛 후진이므로 PWM 부호를 반대로
+        #  - 엔코더도 반대로 세지므로 부호를 같이 뒤집어 odom이 +로 나오게
+        # 회전은 뒤집지 않는다 — z축 180° 회전은 CCW를 보존하므로 각속도
+        # 명령과 바퀴 배정이 그대로 유효하다(그래서 min/max_turn_pwm 재측정 불필요).
+        self.declare_parameter('invert_drive_direction', True)
         self.declare_parameter('max_pwm', 1200)
         # 모터 스펙 상한(무부하 280RPM × 바퀴원주 0.2105m ≈ 0.98m/s) 기준.
         # PWM 343에서 0.436m/s 실측됨 — 개루프라 명령 속도와 실제가 정확히는 안 맞고,
@@ -156,6 +168,9 @@ class DiffDriveNode(Node):
         self._wheel_separation = p('wheel_separation').value
         self._counts_per_rev = p('counts_per_rev').value
         self._encoder_sign = p('encoder_sign').value
+        self._invert_drive = p('invert_drive_direction').value
+        if self._invert_drive:
+            self._encoder_sign = -self._encoder_sign
         self._max_pwm = p('max_pwm').value
         self._max_wheel_speed = p('max_wheel_speed').value
         self._min_pwm = p('min_pwm').value
@@ -406,6 +421,8 @@ class DiffDriveNode(Node):
         v, w = self._cmd_v, self._cmd_w
 
         # --- 직진 성분 (개루프) ---
+        if self._invert_drive:
+            v = -v          # 새 전진 = 옛 후진 (위 invert_drive_direction 주석 참고)
         left_speed = right_speed = v
         if w == 0.0 and self._straight_trim != 0.0:
             left_speed *= (1.0 - self._straight_trim)
