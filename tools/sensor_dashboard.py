@@ -151,7 +151,7 @@ PAGE = """<!doctype html>
   /* transform-origin을 쓰면 안 된다: 아래 JS가 거는 SVG rotate(각도 100 100)는
      회전 중심을 인자로 이미 갖고 있어서, CSS transform-origin이 겹치면 중심이
      (200,200)으로 밀려 화살표가 뷰박스 밖으로 날아간다(방위 0°일 때만 보임). */
-  #robot { transition: transform 0.25s ease-out; }
+  #rose { transition: transform 0.25s ease-out; }
   body { background: var(--page); color: var(--text-primary);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     max-width: 640px; margin: 24px auto; padding: 0 16px; }
@@ -177,26 +177,48 @@ PAGE = """<!doctype html>
   <div class="card-head"><span class="dot" id="magDot"></span> 지자기 나침반 (AK09916)</div>
   <div class="compass-wrap">
     <svg id="compass" viewBox="0 0 200 200" role="img" aria-label="로봇 방위 나침반">
-      <!-- 북쪽이 항상 위. 로봇 아이콘이 실제 바라보는 방위로 돌아간다. -->
+      <!-- 실제 나침반과 같은 방식: **바늘(로봇)은 12시에 고정**하고 방위판(NSEW)이 돈다.
+           로봇 실물을 앞에 두고 화면과 나란히 보면, 화면 위쪽이 곧 로봇의 정면이라
+           "지금 어느 쪽을 보고 있나"가 바로 읽힌다. -->
       <circle cx="100" cy="100" r="86" fill="var(--surface-2, rgba(127,127,127,0.06))"
               stroke="var(--border)" stroke-width="1"/>
-      <circle cx="100" cy="100" r="70" fill="none"
+      <circle cx="100" cy="100" r="68" fill="none"
               stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>
-      <g id="ticks"></g>
-      <!-- 북쪽 표식: 고정 -->
-      <polygon points="100,16 94,30 106,30" fill="var(--critical)"/>
-      <text x="100" y="44" text-anchor="middle" font-size="15" font-weight="700"
-            fill="var(--critical)">N</text>
-      <text x="172" y="106" text-anchor="middle" font-size="13" fill="var(--text-secondary)">E</text>
-      <text x="100" y="192" text-anchor="middle" font-size="13" fill="var(--text-secondary)">S</text>
-      <text x="28"  y="106" text-anchor="middle" font-size="13" fill="var(--text-secondary)">W</text>
-      <!-- 로봇: bearing 만큼 시계방향 회전.
-           도형은 회전 중심(100,100)을 기준으로 위아래 균형이 맞아야 한다 —
-           전에는 꼭짓점 y=42 / 꼬리 y=116이라 축이 꼬리 쪽에 치우쳐서, 돌 때
-           바늘이 한쪽으로 쏠려 도는 것처럼 보였다. -->
+
+      <!-- 돌아가는 방위판. JS가 -방위만큼 돌린다(로봇이 오른쪽으로 돌면 판은 왼쪽으로). -->
+      <g id="rose">
+        <g id="ticks"></g>
+        <!-- 각 글자를 자기 방위각만큼 미리 돌려둔다. 그러면 판이 -방위로 돌 때
+             맨 위에 오는 글자의 최종 회전이 0이 되어 **항상 똑바로 선다**.
+             (그냥 붙이면 남쪽을 볼 때 S가 거꾸로 뒤집힌다) -->
+        <!-- 반지름 배치: 눈금 76~86, 점선 68, 글자 중심 약 59, 바늘 끝 48.
+             겹치지 않게 안쪽부터 바늘 > 글자 > 눈금 순으로 벌려 뒀다. -->
+        <g transform="rotate(0 100 100)">
+          <polygon points="100,26 95.5,35 104.5,35" fill="var(--critical)"/>
+          <text x="100" y="52" text-anchor="middle" font-size="17" font-weight="700"
+                fill="var(--critical)">N</text>
+        </g>
+        <g transform="rotate(90 100 100)">
+          <text x="100" y="50" text-anchor="middle" font-size="14" font-weight="600"
+                fill="var(--text-secondary)">E</text>
+        </g>
+        <g transform="rotate(180 100 100)">
+          <text x="100" y="50" text-anchor="middle" font-size="14" font-weight="600"
+                fill="var(--text-secondary)">S</text>
+        </g>
+        <g transform="rotate(270 100 100)">
+          <text x="100" y="50" text-anchor="middle" font-size="14" font-weight="600"
+                fill="var(--text-secondary)">W</text>
+        </g>
+      </g>
+
+      <!-- 읽는 기준선(lubber line). 고정. 이 눈금이 가리키는 방위판 글자가 현재 방위다. -->
+      <polygon points="100,6 96,15 104,15" fill="var(--text-primary)"/>
+
+      <!-- 로봇(바늘): 12시 고정. 화면 위 = 로봇 정면. -->
       <g id="robot">
-        <polygon points="100,38 84,132 100,114 116,132" fill="var(--good)"/>
-        <circle cx="100" cy="100" r="5.5" fill="var(--good)"/>
+        <polygon points="100,52 87,128 100,112 113,128" fill="var(--good)"/>
+        <circle cx="100" cy="100" r="5" fill="var(--good)"/>
       </g>
     </svg>
     <!-- 방위 텍스트는 SVG 밖에 둔다. 안에 두면 바늘이 원 전체를 쓸고 지나가면서
@@ -276,6 +298,7 @@ async function tick() {
     }
     ticks.innerHTML = html;
   }
+  const roseG = document.getElementById('rose');
   const robotG = document.getElementById('robot');
   const bearingText = document.getElementById('bearingText');
   if (d.mag && d.mag.connected) {
@@ -283,19 +306,23 @@ async function tick() {
 
     // 각도 언랩. 0~360으로 자른 값을 그대로 넘기면 359°->2° 같은 경계에서 차이가
     // 357°가 되고, CSS transition이 이걸 회전으로 보간하지 못해 **행렬로 분해**한다.
-    // 그러면 평행이동 성분이 섞여서 바늘이 회전 중심을 벗어나 크게 휘돈다(실사용에서
+    // 그러면 평행이동 성분이 섞여서 방위판이 회전 중심을 벗어나 크게 휘돈다(실사용에서
     // 관측). 누적각에 -180~180 최단 변화량만 더해 항상 연속으로 만들어 준다.
     let delta = ((bearing - (displayAngle % 360)) % 360 + 540) % 360 - 180;
     displayAngle += delta;
-    robotG.setAttribute('transform', `rotate(${displayAngle.toFixed(1)} 100 100)`);
+    // 방위판은 로봇과 **반대로** 돈다: 로봇이 오른쪽(시계)으로 돌면 북쪽은 화면에서
+    // 왼쪽(반시계)으로 흘러가야 한다. 그래야 12시 고정 바늘이 실제 정면과 맞는다.
+    roseG.setAttribute('transform', `rotate(${(-displayAngle).toFixed(1)} 100 100)`);
 
     const dirs = ['북','북동','동','남동','남','남서','서','북서'];
     const name = dirs[Math.round(bearing / 45) % 8];
     bearingText.textContent = `${name} ${bearing.toFixed(0)}°`;
     bearingText.style.opacity = d.mag.usable ? '1' : '0.5';
-    robotG.style.opacity = d.mag.usable ? '1' : '0.35';
+    roseG.style.opacity = d.mag.usable ? '1' : '0.35';
+    robotG.style.opacity = '1';
   } else {
-    robotG.style.opacity = '0.2';
+    roseG.style.opacity = '0.2';
+    robotG.style.opacity = '0.4';
     bearingText.textContent = '—';
   }
 
