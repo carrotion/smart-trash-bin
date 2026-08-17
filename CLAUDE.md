@@ -46,6 +46,46 @@ LD06이 로봇 자신의 데크 구조물(배선·기둥)을 보고 있었음. �
 **증상 감별법**: 필터 노드는 "N% 걸러냄"이라고 정상 로그를 찍는데 `/scan`엔 여전히
 0.08m 반사가 보이면 이 상황이다. `ros2 topic info /scan --verbose`로 발행자 수를 볼 것.
 
+## 💽 부팅 디스크를 microSD로 이관 (2026-08-17) — USB SSD 제거
+
+**측정으로 전제가 뒤집혔다.** 개발용으로 SSD를 고른 이유가 "컴파일·맵작성에 빠르니까"였는데,
+실측하니 정반대였다. USB SSD는 **명령 한 건당 9.5ms 고정 오버헤드**(블록 크기와 무관 —
+4K도 256K도 동일)가 있어 랜덤 I/O가 기계식 하드디스크보다 느렸다.
+
+| | SSD(USB/BOT) | microSD | 개선 |
+|---|---|---|---|
+| 랜덤 4K 읽기 | 105 IOPS | **8,272 IOPS** | **79배** |
+| 작은 파일 대량 탐색(캐시 비움) | 1.31초 | **0.14초** | 9.4배 |
+| 부팅 | 43초 | **15.5초** | 2.8배 |
+| 순차 읽기 | 80.4 MB/s | 93.8 MB/s | — |
+
+**왜 SSD가 그렇게 느렸나**: 아침에 UAS 버그(I/O 에러 → 저널 abort → read-only)를 막으려고
+`usb-storage.quirks=174c:55aa:u`로 UAS를 끄고 구식 BOT 전송으로 강제했는데, BOT은
+명령 큐잉이 없어 `queue_depth=1`, `nr_requests=2`로 완전 직렬화된다. 커널 튜닝
+(`rotational=0`, `scheduler=none`)으로는 전혀 개선 안 됨 — 9.5ms는 블록 계층 아래
+USB 전송 경로에 있다. 자율주행 중 SLAM이 계속 쓰면 큐가 영영 안 빠져 프리즈로 이어졌다.
+
+**다른 브릿지(naVee Link NV9-SLINK)는 답이 아니었다**: ASMedia AS2115(174c:1153),
+`bInterfaceProtocol 80`뿐이라 **UAS 인터페이스가 아예 없는 BOT 전용** 하드웨어에
+SATA 3Gb/s 구형 칩. 빈 인클로저만 꽂아 `lsusb -v`로 위험 없이 확인함.
+참고로 현재 SSD 인클로저(174c:55aa)는 `bAlternateSetting 1 → 프로토콜 98(0x62)`로
+UAS 지원 자체는 있다 — 우리가 끈 것.
+
+**이관 방법 (전체 재설치 불필요)**: 실사용 14GB뿐이라 `rsync`로 파일만 옮김.
+- SD를 MBR로 재분할: p1 512MB FAT32(`SDBOOT`), p2 나머지 ext4(`sdroot`)
+- ⚠️ **레이블을 SSD와 다르게 잡을 것.** 같은 이름(`system-boot`/`writable`)이면
+  두 디스크 공존 시 어느 쪽을 잡을지 불확실해진다. cmdline/fstab은 **UUID**로 지정.
+- 스왑파일은 제외하고 재생성. `/proc`,`/sys`,`/dev`,`/run`,`/tmp`도 제외.
+- `BOOT_ORDER`는 이미 `0xf14`(USB→SD)라 SSD를 빼면 자동으로 SD로 부팅됨.
+
+**잃은 것: SMART 감시.** SD카드는 `life_time`/`pre_eol_info`를 노출하지 않는다
+(이 카드 Samsung `4D1Y8` 확인). `smartd` 비활성화함(되살리는 법은 `/etc/smartd.conf`
+맨 위 주석). 대체재로 블랙박스가 `written_mb`(누적 기록량)를 기록한다 — 하루 몇 GB를
+쓰는지로 카드 수명을 가늠하는 게 유일한 실용 지표다.
+
+**SSD는 분리함.** 나중에 대용량 보관용으로 다시 붙이면 UAS를 켜서(쿼크 제거) 시험해볼
+수 있다 — 그땐 루트가 아니라 보조 장치라 실패해도 잃을 게 없다.
+
 ## 📼 블랙박스 — microSD에 사고 순간을 남긴다 (2026-08-17)
 
 `tools/blackbox_recorder.py` + `smart-trash-blackbox.service` (상시).

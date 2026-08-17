@@ -97,12 +97,23 @@ def blocked_tasks():
     return out
 
 
+# 루트 디스크. 2026-08-17 microSD로 이관하면서 sda -> mmcblk0.
+ROOT_DISK = "mmcblk0"
+
+
 def disk_stats():
-    """sda의 진행 중인 I/O 개수. 늘어난 채 안 줄면 장치가 안 받아주는 것."""
-    line = read_text("/sys/block/sda/stat").split()
+    """루트 디스크의 진행 중 I/O와 누적 쓰기량.
+
+    `written_mb`가 중요한 이유: microSD는 SMART가 없어서(life_time/pre_eol_info
+    미노출) 수명을 직접 못 읽는다. 대신 **하루에 몇 GB를 쓰는지**를 추적하면
+    카드가 얼마나 빨리 닳는지 가늠할 수 있다 — SSD를 뗀 뒤 잃은 SMART 감시를
+    대신하는 유일한 실용적 지표다.
+    """
+    line = read_text(f"/sys/block/{ROOT_DISK}/stat").split()
     if len(line) >= 11:
-        # 필드 9 = 진행 중 I/O, 필드 10 = I/O에 쓴 시간(ms)
-        return f"inflight={line[8]} io_ms={line[9]}"
+        # 필드 7 = 누적 기록 섹터(512B), 9 = 진행 중 I/O, 10 = I/O에 쓴 시간(ms)
+        written_mb = int(line[6]) * 512 // (1024 * 1024)
+        return f"inflight={line[8]} io_ms={line[9]} written_mb={written_mb}"
     return "n/a"
 
 
