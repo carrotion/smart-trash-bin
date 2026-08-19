@@ -11,7 +11,7 @@ Yahboom 4채널 드라이버와 시리얼로 통신한다. 프로토콜/안전 �
 물리 파라미터는 2026-08-15 실측값이 기본값 (바퀴 지름 67mm, 좌우 간격 170mm,
 1회전당 899.1카운트). 엔코더는 PWM 양수(전진)일 때 카운트가 감소해서 부호 반전 필요.
 
-⚠️ 이 노드는 /dev/ttyUSB0를 독점하므로 motor_dashboard 서비스와 동시 실행 불가.
+⚠️ 이 노드는 모터 시리얼 포트(/dev/motor)를 독점하므로 motor_dashboard 서비스와 동시 실행 불가.
    `sudo systemctl stop smart-trash-motor-dashboard` 후 실행할 것.
 """
 import math
@@ -36,7 +36,11 @@ class DiffDriveNode(Node):
     def __init__(self):
         super().__init__('diff_drive_node')
 
-        self.declare_parameter('port', '/dev/ttyUSB0')
+        # ⚠️ /dev/ttyUSB0 대신 **udev 고정 이름**을 쓴다(tools/udev/99-smart-trash.rules).
+        # 2026-08-19 라이다가 USB로 옮겨오면서 USB 직렬 장치가 2개가 됐다.
+        # ttyUSB 번호는 부팅 시 인식 순서로 정해지므로, 뒤바뀌면 이 노드가
+        # **라이다 포트를 열고 모터 명령을 라이다로 쏜다.**
+        self.declare_parameter('port', '/dev/motor')
         self.declare_parameter('baudrate', 115200)
         self.declare_parameter('wheel_radius', 0.0335)       # 지름 67mm 실측
         # ⚠️ 물리 트레드는 0.17m지만 여기 쓰는 건 "실효" 트레드(1.94배).
