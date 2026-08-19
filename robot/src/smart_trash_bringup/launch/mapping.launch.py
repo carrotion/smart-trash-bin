@@ -11,10 +11,15 @@ from launch_ros.actions import Node
 """
 LD06 LiDAR + SLAM Toolbox(online async)로 2D 맵을 만드는 bringup launch.
 
-LD06은 USB 어댑터가 아니라 Pi5 GPIO UART(/dev/ttyAMA0, 230400bps)로 직결돼있음
-(2026-08-15 실측 확인 — CLAUDE.md 참고). 서브모듈 ldlidar_stl_ros2가 제공하는
-launch/ld06.launch.py는 port_name이 /dev/ttyUSB0로 하드코딩돼 있어서 우리 배선과
-안 맞아, 여기서 ldlidar_stl_ros2_node를 직접 구성함(그 launch 파일을 include하지 않음).
+⚠️ 2026-08-19 LD06을 **GPIO UART -> USB 어댑터로 이전**했다.
+(그전까지는 /dev/ttyAMA0 직결. ttyAMA0의 PL011 DMA 버그로 input overrun이 반복돼
+ 감사 보고서가 USB 이전을 권고했고, 그걸 반영한 것 — docs/audit/2026-08-17 참고)
+
+포트는 **udev 고정 이름 `/dev/lidar`** 를 쓴다(tools/udev/99-smart-trash.rules).
+ttyUSB 번호는 부팅 시 인식 순서로 정해져서 모터 드라이버와 뒤바뀔 수 있기 때문이다.
+
+서브모듈 ldlidar_stl_ros2의 launch/ld06.launch.py는 port_name이 하드코딩돼 있어
+여기서 ldlidar_stl_ros2_node를 직접 구성한다(그 launch 파일을 include하지 않음).
 
 odom->base_link는 아직 Week 3 diff-drive 오도메트리 노드가 없으므로
 `publish_placeholder_odom`(기본 true)으로 identity tf를 임시 발행함 —
@@ -65,8 +70,9 @@ def generate_launch_description():
 
     declare_lidar_port_cmd = DeclareLaunchArgument(
         'lidar_port',
-        default_value='/dev/ttyAMA0',
-        description='LD06 시리얼 포트 (GPIO UART, 2026-08-15 실측 확인)')
+        default_value='/dev/lidar',
+        description=('LD06 시리얼 포트. udev 고정 이름(tools/udev/99-smart-trash.rules). '
+                     '2026-08-19 GPIO UART -> USB 어댑터로 이전'))
 
     ldlidar_node = Node(
         package='ldlidar_stl_ros2',

@@ -1,0 +1,24 @@
+# 스마트 쓰레기통 — USB 직렬 장치 이름 고정
+#
+# 왜 필요한가 (2026-08-19)
+# -----------------------
+# /dev/ttyUSB* 번호는 **부팅 시 인식 순서**로 정해진다. 라이다를 USB로 옮기면서
+# 모터 드라이버와 함께 USB 직렬 장치가 2개가 됐고, 어느 쪽이 0번을 잡을지 보장이
+# 없다. 뒤바뀌면 diff_drive_node가 라이다 포트를 열어 **모터 명령을 라이다로 쏘고**,
+# 라이다 드라이버는 모터 컨트롤러에 붙는다. 조용히 실패하는 데다 위험하다.
+#
+# VID:PID로 고정 심볼릭 링크를 만든다. 코드/런치는 이 이름만 쓴다.
+#
+# ⚠️ 같은 칩을 쓰는 장치를 추가로 붙이면 규칙이 모호해진다.
+#    (CH340=1a86:7522, CP2102=10c4:ea60) 그때는 ATTRS{serial}까지 넣어 구분할 것.
+#    현재 CP2102의 serial은 "0001"이고 CH340은 시리얼이 없다.
+#
+# 설치:
+#   sudo cp tools/udev/99-smart-trash.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# LD06 LiDAR (CP2102 USB-UART 브리지)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="lidar", MODE="0660", GROUP="dialout"
+
+# Yahboom 4채널 모터 드라이버 (CH340)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7522", SYMLINK+="motor", MODE="0660", GROUP="dialout"
