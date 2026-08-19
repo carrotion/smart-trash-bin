@@ -1,0 +1,155 @@
+{
+ "measurement": "rotation_pwm_to_angular_velocity",
+ "note": "회전 PWM -> 실제 각속도. 폐루프(turn_kp/ki)를 끄고 개루프 특성만 측정.",
+ "runs": [
+  {
+   "date": "2026-08-17",
+   "wheelbase_mm": 125,
+   "battery_v": null,
+   "note": "축간거리 단축 이전. 배터리 전압 미기록 — 이후 비교의 제약이 됐다.",
+   "points": [
+    {
+     "pwm": 150,
+     "rad_s": 0.038
+    },
+    {
+     "pwm": 250,
+     "rad_s": 0.187
+    },
+    {
+     "pwm": 400,
+     "rad_s": 0.53
+    },
+    {
+     "pwm": 500,
+     "rad_s": 0.773
+    },
+    {
+     "pwm": 650,
+     "rad_s": 1.294
+    },
+    {
+     "pwm": 800,
+     "rad_s": 1.826
+    }
+   ],
+   "deadzone_pwm": 230
+  },
+  {
+   "date": "2026-08-19",
+   "wheelbase_mm": 108,
+   "battery_v": 11.78,
+   "note": "재배선/재배치 후. 고속 스윕.",
+   "points": [
+    {
+     "pwm": 300,
+     "rad_s": 1.087
+    },
+    {
+     "pwm": 350,
+     "rad_s": 1.236
+    },
+    {
+     "pwm": 400,
+     "rad_s": 1.5
+    },
+    {
+     "pwm": 450,
+     "rad_s": 1.648
+    },
+    {
+     "pwm": 500,
+     "rad_s": 1.879
+    },
+    {
+     "pwm": 550,
+     "rad_s": 2.063
+    }
+   ]
+  },
+  {
+   "date": "2026-08-19",
+   "wheelbase_mm": 108,
+   "battery_v": 11.78,
+   "note": "저속 스윕. min_turn_pwm을 0으로 풀어 260 미만도 명령. PWM 300이 앞 스윕의 1.087 대비 0.969로 11% 낮게 나왔다 — 측정 사이 배터리 전압 하강으로 추정, 정밀도의 한계를 보여준다.",
+   "points": [
+    {
+     "pwm": 170,
+     "rad_s": 0.524
+    },
+    {
+     "pwm": 190,
+     "rad_s": 0.546
+    },
+    {
+     "pwm": 210,
+     "rad_s": 0.644
+    },
+    {
+     "pwm": 230,
+     "rad_s": 0.7
+    },
+    {
+     "pwm": 250,
+     "rad_s": 0.766
+    },
+    {
+     "pwm": 270,
+     "rad_s": 0.864
+    },
+    {
+     "pwm": 300,
+     "rad_s": 0.969
+    }
+   ]
+  },
+  {
+   "date": "2026-08-19",
+   "wheelbase_mm": 108,
+   "battery_v": 11.78,
+   "note": "cliff test — 안 돌 때까지 내려감. PWM 40/60은 자이로 잡음 바닥(약 0.03) 근처라 실제 회전으로 보기 어렵다. 실질 데드존은 60~80.",
+   "points": [
+    {
+     "pwm": 160,
+     "rad_s": 0.465
+    },
+    {
+     "pwm": 140,
+     "rad_s": 0.38
+    },
+    {
+     "pwm": 120,
+     "rad_s": 0.356
+    },
+    {
+     "pwm": 100,
+     "rad_s": 0.21
+    },
+    {
+     "pwm": 80,
+     "rad_s": 0.148
+    },
+    {
+     "pwm": 60,
+     "rad_s": 0.079
+    },
+    {
+     "pwm": 40,
+     "rad_s": 0.069
+    }
+   ]
+  }
+ ],
+ "fit_20260819": {
+  "model": "w = 0.00412 * pwm - 0.2032",
+  "residual_mean_rad_s": 0.025,
+  "residual_max_rad_s": 0.065,
+  "deadzone_pwm": 49,
+  "max_angular_speed": 2.15,
+  "applied_params": {
+   "min_turn_pwm": 49,
+   "max_turn_pwm": 570,
+   "max_angular_speed": 2.15
+  }
+ }
+}
