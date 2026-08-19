@@ -8,8 +8,13 @@ User=carrotian
 WorkingDirectory=/home/carrotian/catkin_ws
 # ⚠️ 하드아이언 보정값은 **1호기 전용**이다. 기체마다 철재/배선 배치가 달라서
 #    2호기에 그대로 쓰면 안 된다 — tools/mag_calibrate.py로 기체별 재측정 필요.
-#    (2026-08-17 1호기 실측: 손 회전 2바퀴, 샘플 8135, 커버리지 100%, 잔차 1.87µT)
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node --ros-args -p mag_hard_iron_x:=-0.44 -p mag_hard_iron_y:=14.37'
+#    2026-08-19 재측정(재배선/재배치 후): ox=-88.68 oy=+12.81
+#      샘플 2880, 커버리지 100%, 지구자기장 반지름 27.84µT(한국 약 30), 잔차 2.06µT(7.4%)
+#    ⚠️ 편향이 08-17(-0.44/+14.37)에서 크게 바뀌었다 — 재배치로 강한 자기원이 생겼다.
+#       거의 전부 -X(전후 축) 성분이다. 다만 **일정하므로 보정으로 완전히 제거된다**
+#       (원 반지름이 지구 자기장과 일치하는 것이 그 증거).
+#    ⚠️ 레이아웃을 바꾸면 반드시 재측정할 것: tools/hand_rotation_check.py
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node --ros-args -p mag_hard_iron_x:=-88.68 -p mag_hard_iron_y:=12.81'
 Restart=on-failure
 RestartSec=3
 
