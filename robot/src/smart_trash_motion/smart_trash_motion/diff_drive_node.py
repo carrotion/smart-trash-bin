@@ -128,9 +128,29 @@ class DiffDriveNode(Node):
         # ⚠️ 이 값들은 **바닥 재질·배터리 전압·모터 온도에 의존**한다. 카펫이나
         #    배터리가 빠진 상태에서는 재캘리브레이션 필요. 유닛마다도 다르므로
         #    2호기부터는 unit calibration 파일로 분리할 것(docs/fleet_and_lifecycle.md).
-        self.declare_parameter('min_turn_pwm', 260)
+        # 🔄 2026-08-19 전면 재캘리브레이션 (축간거리 125->108mm, 재배선 후)
+        #    바닥 실측, 배터리 11.78V, 폐루프 OFF, PWM 40~550 전 구간 스윕
+        #    (`tools/rotation_calibrate.py`, 데이터 `docs/calibration/rotation_pwm.json`).
+        #
+        #    선형 적합:  w = 0.00412 * pwm - 0.2032   (잔차 평균 0.025 rad/s)
+        #    -> 데드존 PWM **49** (이전 230), 최대 각속도 **2.15 rad/s** (이전 1.0)
+        #
+        #    ⚠️ 왜 이렇게 크게 바뀌었나: 축간거리 단축으로 스크럽 마찰(M∝L)이 13.6%
+        #       줄었는데, 모터가 **토크-속도 곡선의 스톨 근처**에서 돌고 있어서
+        #       부하가 조금만 줄어도 동작점이 크게 올라갔다. 같은 PWM 250에서
+        #       0.187 -> 0.766 rad/s (+309%).
+        #
+        #    ⚠️ 고치기 전 모델은 명령 대비 **저속에서 4.2배** 과속했다
+        #       (명령 0.3 -> 실제 1.25). 폐루프가 그걸 되돌리느라 계속 싸웠다.
+        #
+        #    ⚠️ 이 값들은 **바닥 재질·배터리 전압·모터 온도에 의존**한다. 카펫에서는
+        #       다시 재야 한다. 유닛마다도 다르므로 2호기부터는 unit calibration
+        #       파일로 분리할 것(docs/fleet_and_lifecycle.md).
+        #    ⚠️ 데드존을 실제보다 **낮게** 잡는 쪽이 안전하다 — 안 움직이면 폐루프
+        #       적분항이 알아서 PWM을 올리지만, 높게 잡으면 오버슛이 난다.
+        self.declare_parameter('min_turn_pwm', 49)
         self.declare_parameter('max_turn_pwm', 570)
-        self.declare_parameter('max_angular_speed', 1.0)
+        self.declare_parameter('max_angular_speed', 2.15)
 
         # --- 폐루프 회전 제어 (2026-08-17) ---
         # 개루프는 "PWM 얼마면 몇 rad/s"를 표로 외우는 방식이라 바닥 재질·배터리
@@ -145,8 +165,21 @@ class DiffDriveNode(Node):
         # 배터리가 빠지거나 바닥이 바뀌어도 자이로가 실측하므로 알아서 맞춘다.
         # 개루프는 그때마다 min/max_turn_pwm을 다시 재야 한다.
         self.declare_parameter('turn_closed_loop', True)
-        self.declare_parameter('turn_kp', 250.0)      # PWM per (rad/s) 오차
-        self.declare_parameter('turn_ki', 400.0)      # PWM per (rad/s·s)
+        # 🔄 2026-08-19 재튜닝: 250/400 -> 140/220
+        #    재배치로 플랜트가 **1.76배 민감**해졌다(PWM->rad/s 기울기 0.00234 ->
+        #    0.00412). 같은 게인이면 루프 이득이 그만큼 커져서 **진동**한다.
+        #    실제로 250/400에서 추종 오차 44%, 흔들림(각속도 표준편차) 0.391이었다.
+        #    1.76로 나눈 값(142)이 실측 최적점(140)과 거의 일치했다.
+        #
+        #    실측 비교 (명령 0.3/0.6 rad/s, 바닥, 배터리 11.78V):
+        #      kp=250 ki=400 -> 오차 44%, 흔들림 0.391
+        #      kp=140 ki=220 -> 오차  2%, 흔들림 0.074   <- 채택
+        #      kp= 90 ki=140 -> 오차  4%, 흔들림 0.059
+        #
+        #    ⚠️ 피드포워드(min_turn_pwm/max_angular_speed)를 바꾸면 **게인도 같이
+        #       재튜닝해야 한다.** 플랜트 이득이 변하면 루프 이득이 따라 변한다.
+        self.declare_parameter('turn_kp', 140.0)      # PWM per (rad/s) 오차
+        self.declare_parameter('turn_ki', 220.0)      # PWM per (rad/s·s)
         self.declare_parameter('turn_i_limit', 250.0) # 적분항이 낼 수 있는 최대 PWM
         # 자이로가 이 시간보다 오래 갱신 안 되면 폐루프를 끄고 피드포워드만 쓴다.
         self.declare_parameter('gyro_stale_sec', 0.3)
