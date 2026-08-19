@@ -135,7 +135,12 @@ def generate_launch_description():
         name='base_link_to_base_laser_ld06',
         # 라이다 삼각형(정면 표시)을 로봇 정면에 맞춰 물리적으로 장착했으므로
         # 회전 보정 불필요 — z 높이만(실측 0.085m). 인자 순서는 x y z yaw pitch roll.
-        arguments=['0', '0', '0.085', '0', '0', '0', 'base_link', 'base_laser']
+        # 2026-08-19 재배치: 라이다를 **앞바퀴 축 선상**으로 전방 이동(정면 시야 확보).
+        # base_link는 차동구동의 회전 중심 = 축간 중앙이고 축간거리가 108mm이므로
+        # 라이다는 그 절반인 **+54mm 전방**이다. 높이는 변화 없음(실측 0.085m).
+        # ⚠️ 이 x 오프셋이 틀리면 폴리곤 자기필터가 엉뚱한 영역을 지운다
+        #    (필터는 base_link 기준으로 동작한다 — config/scan_self_filter.yaml 참고).
+        arguments=['0.054', '0', '0.085', '0', '0', '0', 'base_link', 'base_laser']
     )
 
     # slam_toolbox의 online_async_launch.py는 use_sim_time 기본값이 true라
