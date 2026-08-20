@@ -396,6 +396,16 @@ __FAVICON__
   </div>
 </div>
 
+<div class="card">
+  <div class="card-head">저장된 맵</div>
+  <div class="saverow">
+    <input id="saveName" placeholder="이름 (영문/숫자/_/-)" maxlength="64">
+    <button id="saveBtn" class="mini">현재 맵 저장</button>
+    <span id="saveMsg" class="msg"></span>
+  </div>
+  <table id="mapTable"></table>
+</div>
+
 <script>
 const canvas = document.getElementById('mapCanvas');
 const ctx = canvas.getContext('2d');
@@ -569,15 +579,6 @@ document.getElementById('estopBtn').addEventListener('click', async () => {
   }
 });
 </script>
-<div class="card">
-  <div class="card-head">저장된 맵</div>
-  <div class="saverow">
-    <input id="saveName" placeholder="이름 (영문/숫자/_/-)" maxlength="64">
-    <button id="saveBtn" class="mini">현재 맵 저장</button>
-    <span id="saveMsg" class="msg"></span>
-  </div>
-  <table id="mapTable"></table>
-</div>
 </body>
 </html>
 """
