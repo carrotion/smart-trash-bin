@@ -87,15 +87,41 @@ def main():
                          'enc': de, 'samples': cnt})
             es = ('  엔코더 ' + ' '.join(f'{x:>5d}' for x in de)) if de else ''
             print(f'  {k+1}회차  주행중 {a_dur:+6.1f}°  정지후 총 {a_tot:+6.1f}°{es}')
-            # 복귀
-            spin(args.sec, -args.speed, flag); stop(); spin(1.0, None, flag)
+            # 복귀 — ⚠️ 이것도 **측정한다.**
+            # 좌우 편향(추력/정렬)은 전진과 후진에서 **방향이 뒤집혀** 나타난다:
+            #   ω = (v_오른쪽 - v_왼쪽)/W 이므로 왼쪽이 강하면 전진 ω<0, 후진 ω>0.
+            # 따라서 두 방향의 **크기가 같으면 단순 편향**이고, 다르면 다른 원인이
+            # 섞여 있다는 뜻이다. 후진을 안 재면 그 구분을 못 한다(2026-08-20 보완).
+            b0 = time.time()
+            spin(args.sec, -args.speed, flag)
+            bd = time.time(); stop(); spin(1.0, None, flag)
+            b_dur, _ = yaw(b0, bd)
+            b_tot, _ = yaw(b0, time.time())
+            rows[-1]['back_during'] = b_dur
+            rows[-1]['back_total'] = b_tot
+            print(f'         후진   주행중 {b_dur:+6.1f}°  정지후 총 {b_tot:+6.1f}°')
     finally:
         stop()
 
     if rows:
         tot = [r['total'] for r in rows]
-        print(f'\n  {len(tot)}회 평균 {statistics.fmean(tot):+.1f}°  '
+        print(f'\n  전진 {len(tot)}회 평균 {statistics.fmean(tot):+.1f}°  '
               f'표준편차 {statistics.pstdev(tot):.1f}°')
+        bt = [r['back_total'] for r in rows if 'back_total' in r]
+        if bt:
+            fm, bm = statistics.fmean(tot), statistics.fmean(bt)
+            print(f'  후진 {len(bt)}회 평균 {bm:+.1f}°  '
+                  f'표준편차 {statistics.pstdev(bt):.1f}°')
+            print()
+            if fm * bm < 0:
+                sym = 100 * abs(abs(fm) - abs(bm)) / max(abs(fm), abs(bm), 1e-9)
+                print(f'  부호가 반대 -> 좌우 편향의 전형적 신호')
+                print(f'  크기 차이 {sym:.0f}%  '
+                      + ('(대칭 — 단순 편향)' if sym < 30
+                         else '(비대칭 — 다른 원인이 섞여 있다)'))
+            else:
+                print(f'  ⚠️ 전진·후진이 같은 부호다. 좌우 편향만으로는 설명 안 된다 —')
+                print(f'     자이로 바이어스나 바닥 기울기 같은 방향 무관 요인 의심.')
         encs = [r['enc'] for r in rows if r['enc']]
         if encs:
             avg = [statistics.fmean([e[i] for e in encs]) for i in range(4)]
