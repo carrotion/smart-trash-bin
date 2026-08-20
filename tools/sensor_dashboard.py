@@ -10,11 +10,13 @@ imu_publisher_node와 ldlidar_stl_ros2_node가 퍼블리시하는 토픽을 구�
     브라우저에서 http://<Pi IP>:8767 접속
 """
 import argparse
+import gzip
 import json
 import math
 import signal
 import threading
 import time
+from dashboard_icon import FAVICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
@@ -138,6 +140,7 @@ PAGE = """<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+__FAVICON__
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>센서 대시보드</title>
 <style>
@@ -258,6 +261,10 @@ PAGE = """<!doctype html>
 let displayAngle = 0;
 
 async function tick() {
+  // 화면이 안 보이면 폴링하지 않는다. 폰 화면을 끄거나 다른 앱으로 전환해도
+  // 계속 돌면 CPU와 배터리를 낭비한다. 이 프로젝트에서 프리즈의 유력한
+  // 방아쇠가 CPU 부하였다.
+  if (document.hidden) return;
   let d;
   try { d = await (await fetch('/api/status')).json(); } catch (e) { return; }
 
@@ -361,10 +368,17 @@ async function tick() {
 }
 tick();
 setInterval(tick, 500);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) tick();
+});
 </script>
 </body>
 </html>
 """
+
+# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -372,8 +386,17 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype):
+        # 클라이언트가 받아준다면 압축해서 보낸다. 맵 그리드나 JSON 반복 필드는
+        # 10배 가까이 줄어든다. WiFi가 약한 구간에서 이게 응답성을 좌우한다.
+        enc = None
+        if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            packed = gzip.compress(body, 6)
+            if len(packed) < len(body):
+                body, enc = packed, "gzip"
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if enc:
+            self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

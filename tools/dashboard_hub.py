@@ -13,8 +13,12 @@
     (power_monitor.py, motor_dashboard.py, sensor_dashboard.py가 먼저 떠 있어야 요약이 채워짐)
 """
 import argparse
+import gzip
 import json
+import threading
 import urllib.request
+from collections import deque
+from dashboard_icon import FAVICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODULES = {
@@ -33,10 +37,32 @@ def fetch_json(url, timeout=1.0):
         return None
 
 
+# Pi CPU/메모리 스파크라인용 이력. power_monitor.py의 /api/status는 더 이상
+# history를 통째로 안 준다(예전엔 그것 때문에 매초 최대 590KB가 나갔다).
+# 대신 여기서 /api/history?since=로 증분만 받아 누적한다 — 허브가 클라이언트
+# 대신 유지하는 5분치 롤링 버퍼.
+PI_HISTORY_LEN = 300
+pi_history = deque(maxlen=PI_HISTORY_LEN)
+pi_history_lock = threading.Lock()
+pi_history_last_ts = 0.0
+
+
+def poll_pi_history():
+    global pi_history_last_ts
+    d = fetch_json(f'http://localhost:8765/api/history?since={pi_history_last_ts}', timeout=2.0)
+    if not d or not d.get("rows"):
+        return
+    with pi_history_lock:
+        for row in d["rows"]:
+            pi_history.append(row)
+        pi_history_last_ts = d.get("last_ts", pi_history_last_ts)
+
+
 PAGE = """<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+__FAVICON__
 <title>시스템 대시보드</title>
 <style>
   :root {
@@ -225,6 +251,10 @@ function wifiColor(dbm) {
 }
 
 async function tick() {
+  // 화면이 안 보이면 폴링하지 않는다. 폰 화면을 끄거나 다른 앱으로 전환해도
+  // 계속 돌면 CPU와 배터리를 낭비한다. 이 프로젝트에서 프리즈의 유력한
+  // 방아쇠가 CPU 부하였다.
+  if (document.hidden) return;
   let summary;
   try { summary = await (await fetch('/api/summary')).json(); }
   catch (e) { return; }
@@ -331,11 +361,21 @@ async function tick() {
 }
 
 tick();
-setInterval(tick, 1500);
+// 허브는 요약 화면이라 빠를 필요가 없다. 게다가 이 서버는 매 폴링마다
+// 하위 3개 서비스의 /api/status를 **대신 조회**하므로, 1회 폴링이 내부 HTTP
+// 요청 3건을 만든다. 1.5초로 두면 초당 6건이었다.
+setInterval(tick, 4000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) tick();
+});
 </script>
 </body>
 </html>
 """
+
+# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -343,8 +383,17 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype):
+        # 클라이언트가 받아준다면 압축해서 보낸다. 맵 그리드나 JSON 반복 필드는
+        # 10배 가까이 줄어든다. WiFi가 약한 구간에서 이게 응답성을 좌우한다.
+        enc = None
+        if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            packed = gzip.compress(body, 6)
+            if len(packed) < len(body):
+                body, enc = packed, "gzip"
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if enc:
+            self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -353,10 +402,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
         elif self.path == "/api/summary":
+            poll_pi_history()
             out = {}
             for key, cfg in MODULES.items():
                 data = fetch_json(cfg["url"])
                 out[key] = {"available": data is not None, **(data or {})}
+            with pi_history_lock:
+                out["power"]["history"] = list(pi_history)
             self._send(200, json.dumps(out).encode("utf-8"), "application/json")
         else:
             self._send(404, b"not found", "text/plain")

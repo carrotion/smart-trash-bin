@@ -13,14 +13,17 @@ vcgencmd를 sudo 없이 쓰려면 carrotian이 video 그룹에 있어야 함
 (CLAUDE.md 참고, 2026-08-13 usermod -aG video로 추가함).
 """
 import argparse
+import gzip
 import json
 import os
 import re
 import subprocess
 import threading
+import urllib.parse
 import time
 from collections import deque
 from datetime import datetime
+from dashboard_icon import FAVICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 THROTTLED_BITS = {
@@ -272,6 +275,7 @@ PAGE = """<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+__FAVICON__
 <title>Pi5 상태 모니터</title>
 <style>
   :root { color-scheme: light dark; }
@@ -318,6 +322,10 @@ function wifiColor(dbm) {
 }
 
 async function tick() {
+  // 화면이 안 보이면 폴링하지 않는다. 폰 화면을 끄거나 다른 앱으로 전환해도
+  // 계속 돌면 CPU와 배터리를 낭비한다. 이 프로젝트에서 프리즈의 유력한
+  // 방아쇠가 CPU 부하였다.
+  if (document.hidden) return;
   let res;
   try { res = await (await fetch("/api/status")).json(); }
   catch (e) { document.getElementById("updated").textContent = "(연결 끊김)"; return; }
@@ -375,10 +383,17 @@ async function tickLog() {
 tick(); tickLog();
 setInterval(tick, 1000);
 setInterval(tickLog, 3000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) tick();
+});
 </script>
 </body>
 </html>
 """
+
+# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -389,11 +404,29 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
         elif self.path == "/api/status":
+            # ⚠️ 여기에 history를 넣지 말 것.
+            # 예전에는 매 응답마다 history 300개를 통째로 실어 보냈다. 브라우저는
+            # 그걸 한 번도 쓰지 않고 버렸는데도 1초마다 최대 590 KB(≈4.7 Mbps)가
+            # WiFi로 나갔다. 파이의 WiFi는 음영지역에서 이미 아슬아슬하다 —
+            # 쓰지도 않는 데이터로 링크를 채우면 정작 제어 명령이 밀린다.
+            # 추이 그래프가 필요하면 아래 /api/history를 증분으로 받아 쓸 것.
             with state_lock:
-                body = json.dumps({
-                    "latest": latest,
-                    "history": list(history)[-300:],
-                }).encode("utf-8")
+                body = json.dumps({"latest": latest}).encode("utf-8")
+            self._send(200, body, "application/json")
+        elif self.path.startswith("/api/history"):
+            # ?since=<unix ts> 이후 샘플만 보낸다. 첫 호출(since 없음)만 전체.
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                since = float(q.get("since", ["0"])[0])
+            except ValueError:
+                since = 0.0
+            with state_lock:
+                rows = [h for h in history if h.get("ts", 0) > since]
+                if not since:
+                    rows = rows[-300:]
+            body = json.dumps({"rows": rows,
+                               "last_ts": rows[-1]["ts"] if rows else since,
+                               }).encode("utf-8")
             self._send(200, body, "application/json")
         elif self.path == "/api/log":
             try:
@@ -407,8 +440,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def _send(self, code, body, ctype):
+        # 클라이언트가 받아준다면 압축해서 보낸다. 맵 그리드나 JSON 반복 필드는
+        # 10배 가까이 줄어든다. WiFi가 약한 구간에서 이게 응답성을 좌우한다.
+        enc = None
+        if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            packed = gzip.compress(body, 6)
+            if len(packed) < len(body):
+                body, enc = packed, "gzip"
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if enc:
+            self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

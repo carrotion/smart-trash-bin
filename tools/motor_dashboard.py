@@ -24,11 +24,17 @@ SLAM/맵핑과 동시에 켜둘 수 있어서, 무선조종 하듯 집안을 돌
     python3 tools/motor_dashboard.py [--port 8766]
 """
 import argparse
+import gzip
 import json
 import math
 import signal
 import threading
 import time
+# 비상정지는 맵 대시보드와 **같은 코드**를 쓴다. 복사해 두면 한쪽만 고쳐져
+# 어긋나고, 하필 비상정지에서 그러면 위험하다.
+from estop_common import kill_autonomous_processes
+
+from dashboard_icon import FAVICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
@@ -107,9 +113,15 @@ PAGE = """<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+__FAVICON__
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>모터 대시보드</title>
 <style>
+  #estopBtn { width:100%; margin:.5rem 0; padding:.9rem; font-size:1.05rem;
+              font-weight:700; border-radius:10px; cursor:pointer;
+              background:#c0392b; color:#fff; border:none; }
+  #estopBtn:active { background:#96281b; }
+  #estopMsg { font-size:.85rem; margin:.25rem 0 .5rem; }
   :root {
     color-scheme: light;
     --surface-1: #fcfcfb; --page: #f9f9f7;
@@ -244,6 +256,23 @@ let holdStartedAt = 0;
 let driveInFlight = false;
 let prevScale = 0;  // 이전 /api/drive 응답 오기 전엔 새로 안 쏨 — 요청 밀림 방지
 
+document.getElementById('estopBtn').onclick = async () => {
+  // 되돌릴 수 없는 동작은 아니지만 주행을 통째로 끊으므로 확인을 받는다.
+  if (!confirm('자율주행 프로세스를 강제 종료합니다. 진행할까요?')) return;
+  const b = document.getElementById('estopBtn');
+  b.textContent = '중단 중...';
+  try {
+    const r = await (await fetch('/api/estop', {method:'POST'})).json();
+    const n = (r.killed || []).length;
+    b.textContent = '🛑 비상정지 (자율주행 전체 중단)';
+    alert(n ? ('종료된 프로세스 ' + n + '개:\n' + r.killed.join('\n'))
+            : '종료할 자율주행 프로세스가 없었습니다.');
+  } catch (e) {
+    b.textContent = '🛑 비상정지 (자율주행 전체 중단)';
+    alert('비상정지 요청 실패: ' + e);
+  }
+};
+
 async function drive(cmd, force) {
   // 감속/정지 명령(force)은 절대 버리지 않는다 — 예전엔 이것도 스킵돼서
   // 와이파이가 느릴 때 버튼을 떼도 한참 더 나가는 원인이 됐음.
@@ -297,6 +326,10 @@ function releaseHold() {
 }
 
 async function hardStop() {
+  // 화면이 안 보이면 폴링하지 않는다. 폰 화면을 끄거나 다른 앱으로 전환해도
+  // 계속 돌면 CPU와 배터리를 낭비한다. 이 프로젝트에서 프리즈의 유력한
+  // 방아쇠가 CPU 부하였다.
+  if (document.hidden) return;
   clearInterval(tickTimer);
   tickTimer = null;
   currentScale = 0;
@@ -416,10 +449,17 @@ async function tick() {
 
 tick();
 setInterval(tick, 200);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) hardStop();
+});
 </script>
 </body>
 </html>
 """
+
+# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+
 
 class Handler(BaseHTTPRequestHandler):
     node = None
@@ -428,8 +468,17 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype):
+        # 클라이언트가 받아준다면 압축해서 보낸다. 맵 그리드나 JSON 반복 필드는
+        # 10배 가까이 줄어든다. WiFi가 약한 구간에서 이게 응답성을 좌우한다.
+        enc = None
+        if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            packed = gzip.compress(body, 6)
+            if len(packed) < len(body):
+                body, enc = packed, "gzip"
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if enc:
+            self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -457,6 +506,18 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             payload = {}
 
+        if self.path == "/api/estop":
+            # ⚠️ 순서가 중요하다. 0 속도 발행을 먼저 하면 DDS가 꼬였을 때
+            #    거기서 막혀 프로세스 종료까지 도달하지 못한다(2026-08-16에
+            #    비상정지 API가 통째로 응답불능이 된 사례). 소스를 먼저 죽인다.
+            killed = kill_autonomous_processes()
+            try:
+                Handler.node.send_cmd(0.0, 0.0)
+            except Exception:
+                pass
+            self._send(200, json.dumps({"ok": True, "killed": killed}).encode(),
+                       "application/json")
+            return
         if self.path == "/api/drive":
             Handler.node.send_cmd(payload.get("linear", 0.0), payload.get("angular", 0.0))
             self._send(200, b'{"ok":true}', "application/json")
