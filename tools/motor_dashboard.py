@@ -175,6 +175,7 @@ __FAVICON__
 </head>
 <body>
 <h1><span class="dot" id="connDot" style="background:var(--critical)"></span> 모터 대시보드</h1>
+<button id="estopBtn">🛑 비상정지 (자율주행 전체 중단)</button>
 
 <div class="card">
   <svg id="chassis" width="260" height="340" viewBox="0 0 260 340"></svg>
@@ -326,10 +327,9 @@ function releaseHold() {
 }
 
 async function hardStop() {
-  // 화면이 안 보이면 폴링하지 않는다. 폰 화면을 끄거나 다른 앱으로 전환해도
-  // 계속 돌면 CPU와 배터리를 낭비한다. 이 프로젝트에서 프리즈의 유력한
-  // 방아쇠가 CPU 부하였다.
-  if (document.hidden) return;
+  // ⚠️ 여기엔 document.hidden 가드를 넣지 말 것. ■ 정지는 안전상 지연 없이
+  // 즉시 반응해야 하는 버튼이고(위 주석 참고), 화면이 잠깐 hidden으로 잡히는
+  // 순간(탭 전환 찰나 등)에 눌렀다고 무시되면 안 된다.
   clearInterval(tickTimer);
   tickTimer = null;
   currentScale = 0;
@@ -410,6 +410,9 @@ function directionArrow(rate) {
 }
 
 async function tick() {
+  // 화면이 안 보이면 상태 조회를 쉰다. 폰 화면을 끄거나 다른 앱으로 전환해도
+  // 계속 돌면 CPU와 배터리를 낭비한다.
+  if (document.hidden) return;
   let res;
   try { res = await (await fetch('/api/status')).json(); }
   catch (e) { document.getElementById('connText').textContent = '연결 끊김'; return; }
@@ -450,7 +453,7 @@ async function tick() {
 tick();
 setInterval(tick, 200);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) hardStop();
+  if (!document.hidden) tick();
 });
 </script>
 </body>
