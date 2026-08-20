@@ -1,5 +1,9 @@
 # 스마트 쓰레기통 Phase 0 부품 리스트 및 ROS2 개발 환경 구축 가이드
 
+> ⚠️ **부품 현황의 기준은 `hardware_inventory.md`다.** 아래 표는 초기 구매 기록이라 현재 상태와 다를 수 있다.
+
+
+
 > **버전**: LD06 2D LiDAR + ICM-20948 IMU (Qwiic) + 4WD 엔코더 모터 기반 2D SLAM (SLAM Toolbox / Nav2)  
 > **작성일**: 2026-07-28 (업데이트)
 
