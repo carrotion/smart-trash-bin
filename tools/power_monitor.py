@@ -279,8 +279,14 @@ __FAVICON__
 <title>Pi5 상태 모니터</title>
 <style>
   :root { color-scheme: light dark; }
-  body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  body { font-family: -apple-system, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 16px; }
   h1 { font-size: 1.3rem; }
+  h2 { font-size: 1rem; margin: 20px 0 6px; }
+  /* 세로로 한 줄씩만 쌓으면 화면이 쓸데없이 길어진다 — 가로 공간을 씀.
+     화면이 좁으면(폰 세로) 자동으로 1열로 접힌다. */
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; align-items: start; }
+  @media (max-width: 640px) { .layout { grid-template-columns: 1fr; } }
+  .railsplit { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 16px 0; }
   .card { border: 1px solid #8884; border-radius: 8px; padding: 10px 12px; font-size: 0.9rem; }
   .ok { background: #1a7f371a; border-color: #1a7f3766; }
@@ -294,15 +300,24 @@ __FAVICON__
 </head>
 <body>
 <h1>Pi5 상태 <span id="updated" style="font-size:0.7rem; font-weight:normal;"></span></h1>
-<h2 style="font-size:1rem;">시스템</h2>
-<table id="system"></table>
-<h2 style="font-size:1rem;">WiFi 신호</h2>
-<table id="wifi"></table>
-<h2 style="font-size:1rem;">전원 경고/이력</h2>
-<div class="grid" id="flags"></div>
-<h2 style="font-size:1rem;">PMIC 레일 전압/전류</h2>
-<table id="rails"></table>
-<h2 style="font-size:1rem;">이벤트 로그</h2>
+<div class="layout">
+  <div>
+    <h2>시스템</h2>
+    <table id="system"></table>
+    <h2>WiFi 신호</h2>
+    <table id="wifi"></table>
+  </div>
+  <div>
+    <h2>전원 경고/이력</h2>
+    <div class="grid" id="flags"></div>
+    <h2>PMIC 레일 전압/전류</h2>
+    <div class="railsplit">
+      <table id="railsA"></table>
+      <table id="railsV"></table>
+    </div>
+  </div>
+</div>
+<h2>이벤트 로그</h2>
 <div id="log"></div>
 <script>
 const flagOrder = ["under_voltage_now","throttled_now","freq_capped_now","soft_temp_limit_now",
@@ -361,12 +376,15 @@ async function tick() {
     ).join('') || '<tr><td colspan="2">연결된 WiFi 없음</td></tr>';
 
   const rails = res.latest.rails || {};
-  const tbl = document.getElementById("rails");
-  let html = "<tr><th>레일</th><th>값</th></tr>";
+  // 표 하나에 23개 레일을 다 넣으면 세로로 너무 길어진다.
+  // 단위(A/V) 기준으로 둘로 쪼개서 가로로 나란히 배치.
+  const rowsA = [], rowsV = [];
   for (const [name, info] of Object.entries(rails)) {
-    html += `<tr><td>${name}</td><td>${info.value.toFixed(3)} ${info.unit}</td></tr>`;
+    const row = `<tr><td>${name}</td><td>${info.value.toFixed(3)} ${info.unit}</td></tr>`;
+    (info.unit === "A" ? rowsA : rowsV).push(row);
   }
-  tbl.innerHTML = html;
+  document.getElementById("railsA").innerHTML = "<tr><th>전류 레일</th><th>값</th></tr>" + rowsA.join('');
+  document.getElementById("railsV").innerHTML = "<tr><th>전압 레일</th><th>값</th></tr>" + rowsV.join('');
 
   const ts = res.latest.ts ? new Date(res.latest.ts * 1000).toLocaleTimeString() : "-";
   document.getElementById("updated").textContent = "(마지막 갱신: " + ts + ")";
