@@ -104,6 +104,37 @@ class DiffDriveNode(Node):
         # 자체가 실사용과 가까운 지표라 이 기준으로 캘리브레이션하는 게 맞음.
         # 0.5~0.7 구간에서 오차 1% 미만(부호 전환 지점 포함) 확인 -> 중간값 채택.
         # 사용 가능 범위(오차 <1%): trim 0.5~0.7. 채택값: 0.6.
+        # --- 채널별 PWM 오프셋 (2026-08-20 실측) ---
+        # 모터마다 기계적 드래그가 달라서 같은 PWM에도 회전수가 다르다.
+        #
+        # ⚠️ **곱셈(gain)이 아니라 덧셈(offset)이어야 한다.** 실측이 방식을 정해준다:
+        #    도크 위 채널별 개별 구동(PWM 200/300/450/600, tools/motor_channel_test.py)
+        #      M3 부족분(절대)  1005 -> 1006 -> 1031 ->  969   **거의 일정**
+        #      M3 부족분(비율) 25.6% -> 23.2% -> 20.8% -> 17.5%  감소
+        #    절대량이 일정하다는 것은 **일정한 저항 토크(기계적 드래그)**를 뜻한다.
+        #    비율로 곱해 보정하면 저속에선 모자라고 고속에선 과해진다.
+        #
+        # 원인 판별 근거 (세 가설이 서로 다른 흔적을 남긴다):
+        #    접촉 저항(I x R)  -> 전류가 클수록 부족분 **증가**  (불일치)
+        #    약한 모터(낮은 Kv) -> **비율**이 일정              (불일치)
+        #    기계적 드래그      -> **절대량**이 일정            (일치)
+        #  사용자 독립 관찰로도 확인: "M3만 관성이 부족한 것처럼 빨리 멈춘다"
+        #  — 같은 마찰이 구동 중엔 속도를 깎고 전원을 끊으면 더 빨리 세운다.
+        #
+        # 환산: 응답 기울기 약 4.2 카운트/PWM. M3 부족분 약 1000 카운트 -> +238 PWM.
+        #   검산 PWM 200: 2914 + 984 = 3898 (기준 3919) / PWM 600: 4555 + 984 = 5539 (기준 5524)
+        # M1은 부족분이 342 -> 223으로 줄어 순수 드래그는 아니다. 운용 구간
+        # (PWM 150~400)에 맞춰 약 75로 둔다.
+        #
+        # ⚠️ 정지(pwm=0)에는 적용하지 않는다 — 더하면 가만히 있어야 할 때 기어간다.
+        # ⚠️ **기체별 값이다.** 2호기는 재측정할 것(docs/fleet_and_lifecycle.md).
+        # ⚠️ 배선/바퀴를 건드리면 다시 잴 것 — 2026-08-20에 커넥터 작업 후
+        #    M3가 4382 -> 3335로 바뀌었다.
+        self.declare_parameter('motor_pwm_offset_m1', 75)    # 왼쪽 뒤
+        self.declare_parameter('motor_pwm_offset_m2', 0)     # 왼쪽 앞 (기준)
+        self.declare_parameter('motor_pwm_offset_m3', 240)   # 오른쪽 뒤 (드래그 큼)
+        self.declare_parameter('motor_pwm_offset_m4', 0)     # 오른쪽 앞 (기준)
+
         # 🔄 2026-08-19: 0.6 -> 0.0. 직진 폐루프가 이 역할을 대신한다.
         #    트림은 원리적으로 약하다(위 _on_control_timer 주석 참고) — 데드존
         #    보정에 무력화되고, 남은 좌우 PWM 차로는 스크럽 마찰을 못 이긴다.
@@ -223,6 +254,7 @@ class DiffDriveNode(Node):
         self._min_pwm = p('min_pwm').value
         self._cmd_vel_timeout = p('cmd_vel_timeout').value
         self._straight_trim = p('straight_trim').value
+        self._motor_offset = [p(f'motor_pwm_offset_m{i}').value for i in (1, 2, 3, 4)]
         self._turn_boost = p('turn_boost').value   # 미사용(회전 PWM 모델로 대체)
         self._min_turn_pwm = p('min_turn_pwm').value
         self._max_turn_pwm = p('max_turn_pwm').value
@@ -370,7 +402,16 @@ class DiffDriveNode(Node):
     def _apply_pwm(self, left_pwm, right_pwm):
         # 채널 순서 M1(왼쪽뒤) M2(왼쪽앞) M3(오른쪽뒤) M4(오른쪽앞) — CLAUDE.md 매핑
         # 4채널 전부 양수 = 전진 (좌우 부호 반전 불필요, 실측 확인됨)
-        self._send(f'$pwm:{left_pwm},{left_pwm},{right_pwm},{right_pwm}#'.encode())
+        vals = [left_pwm, left_pwm, right_pwm, right_pwm]
+        out = []
+        for i, pv in enumerate(vals):
+            if pv != 0:
+                # 부호를 따라 더한다(후진 시에도 같은 방향으로 보강).
+                # 정지(0)에는 적용하지 않는다 — 더하면 가만히 있어야 할 때 기어간다.
+                pv = pv + math.copysign(self._motor_offset[i], pv)
+                pv = max(-self._max_pwm, min(self._max_pwm, pv))
+            out.append(int(pv))
+        self._send(f'$pwm:{out[0]},{out[1]},{out[2]},{out[3]}#'.encode())
 
     # --- 제어 ---
 
