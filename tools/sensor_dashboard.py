@@ -16,6 +16,7 @@ import math
 import signal
 import threading
 import time
+import urllib.request
 from dashboard_icon import FAVICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -31,6 +32,130 @@ state = {
     "lidar": {"connected": False, "last_ts": 0.0},
 }
 STALE_S = 2.0
+
+# 온디맨드 차폐율 스캔. 판정 기준은 tools/lidar_occlusion.py와 동일 —
+# 같은 잣대로 재야 이전 결과와 비교가 된다.
+OCC_SEC = 15.0
+OCC_BIN_DEG = 2.0
+OCC_MAX_SELF_RANGE = 0.25   # m — 이보다 멀면 구조물로 안 본다
+OCC_MAX_SELF_STD = 0.02     # m — 이보다 흔들리면 환경
+OCC_MIN_PRESENCE = 0.5      # 그 각도에서 관측된 스캔 비율
+
+occ_lock = threading.Lock()
+occ_state = {"status": "idle"}   # idle | running | done | aborted
+occ_bins = {}                    # bin_idx -> [range_m, ...], running 중에만 채움
+occ_scan_count = 0
+
+
+def _motor_status():
+    """모터 대시보드(8766)에서 실측 속도(odom 기반)를 읽는다.
+
+    차폐율 판정은 로봇이 정지해 있어야 신뢰할 수 있다(환경도 "안 변하는 것처럼"
+    보여서 구조물과 구분이 안 됨) — tools/lidar_occlusion.py의 경고와 같은 이유.
+    """
+    try:
+        with urllib.request.urlopen("http://localhost:8766/api/status", timeout=1.5) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def _is_stationary():
+    m = _motor_status()
+    if m is None or not m.get("connected"):
+        return False, "모터 대시보드에서 상태를 확인할 수 없습니다 (정지 여부 판단 불가)"
+    # /odometry/filtered의 angular는 EKF가 IMU 자이로를 융합한 값이라 바이어스가
+    # 실려 있을 수 있다(실측: 바퀴 rate 전부 0인데도 angular가 +0.1714로 고정 —
+    # 흔들리지 않는 상수라 노이즈가 아니라 자이로 바이어스로 보인다).
+    # 그래서 여기서는 바퀴 엔코더 rate(물리적으로 도는지 여부)만 본다 — 이게
+    # "LiDAR가 보는 장면이 바뀌는지"를 직접 대변하는 값이라 이 용도엔 더 맞다.
+    # 임계값 30은 motor_dashboard.py가 "회전 중" 판정에 쓰는 것과 동일.
+    rate = m.get("rate") or [0, 0, 0, 0]
+    if max(abs(r) for r in rate) > 30:
+        return False, "로봇이 움직이는 중입니다 — 정지 후 다시 시도하세요"
+    return True, ""
+
+
+def _occ_sectors(self_bins):
+    """연속된 차폐 빈을 구간으로 묶는다(360도 경계를 감안). lidar_occlusion.py와 동일 로직."""
+    if not self_bins:
+        return []
+    keys = sorted(self_bins)
+    groups = []
+    cur = [keys[0]]
+    for k in keys[1:]:
+        if k == cur[-1] + 1:
+            cur.append(k)
+        else:
+            groups.append(cur)
+            cur = [k]
+    groups.append(cur)
+    total = int(360 / OCC_BIN_DEG)
+    if len(groups) > 1 and groups[0][0] == 0 and groups[-1][-1] == total - 1:
+        groups[0] = groups[-1] + groups[0]
+        groups.pop()
+    return groups
+
+
+def _run_occlusion_scan():
+    global occ_bins, occ_scan_count
+    with occ_lock:
+        occ_bins = {}
+        occ_scan_count = 0
+        occ_state.clear()
+        occ_state.update({"status": "running", "started": time.time(),
+                          "duration": OCC_SEC, "elapsed": 0.0})
+
+    end = time.time() + OCC_SEC
+    while time.time() < end:
+        time.sleep(1.0)
+        # 측정 도중에도 계속 정지 상태인지 확인 — 도중에 움직이면 결과가 오염된다.
+        ok, reason = _is_stationary()
+        if not ok:
+            with occ_lock:
+                occ_state.clear()
+                occ_state.update({"status": "aborted", "reason": reason})
+            return
+        with occ_lock:
+            occ_state["elapsed"] = round(time.time() - occ_state["started"], 1)
+
+    with occ_lock:
+        bins, n = occ_bins, occ_scan_count
+
+    self_bins, env_median = {}, {}
+    for b, vals in bins.items():
+        vals = sorted(vals)
+        med = vals[len(vals) // 2]
+        env_median[b] = med
+        if n == 0 or len(vals) < n * OCC_MIN_PRESENCE:
+            continue
+        mean = sum(vals) / len(vals)
+        sd = (sum((x - mean) ** 2 for x in vals) / len(vals)) ** 0.5
+        if med <= OCC_MAX_SELF_RANGE and sd <= OCC_MAX_SELF_STD:
+            self_bins[b] = {"median": med, "std": sd}
+
+    groups = _occ_sectors(self_bins)
+    blocked_deg = len(self_bins) * OCC_BIN_DEG
+    front_bins = [b for b in self_bins
+                  if min((b * OCC_BIN_DEG) % 360, 360 - (b * OCC_BIN_DEG) % 360) <= 30]
+    front_deg = len(front_bins) * OCC_BIN_DEG
+    sectors_out = [{
+        "from": (g[0] * OCC_BIN_DEG) % 360,
+        "to": ((g[-1] + 1) * OCC_BIN_DEG) % 360,
+        "width": len(g) * OCC_BIN_DEG,
+        "median_m": sum(self_bins[b]["median"] for b in g) / len(g),
+    } for g in groups]
+
+    with occ_lock:
+        occ_state.clear()
+        occ_state.update({
+            "status": "done", "computed_at": time.time(), "scan_count": n,
+            "bin_deg": OCC_BIN_DEG, "blocked_deg": blocked_deg,
+            "blocked_pct": 100 * blocked_deg / 360,
+            "front_deg": front_deg, "front_pct": 100 * front_deg / 60,
+            "sectors": sectors_out,
+            "self_bins": self_bins, "env_median": env_median,
+        })
 
 # 자기 편각(자북 -> 진북, 동쪽 양수, 단위 도). --declination 으로 덮어쓴다.
 # 0이면 자북 기준. 폰 나침반(진북 표시)과 맞추려면 실측해서 채울 것 —
@@ -125,6 +250,17 @@ class SensorBridge(Node):
                 "avg_range": sum(valid) / len(valid) if valid else None,
             }
 
+        global occ_scan_count
+        with occ_lock:
+            if occ_state.get("status") == "running":
+                a = msg.angle_min
+                for r in msg.ranges:
+                    deg = math.degrees(a) % 360.0
+                    a += msg.angle_increment
+                    if math.isfinite(r) and r > 0:
+                        occ_bins.setdefault(int(deg // OCC_BIN_DEG), []).append(r)
+                occ_scan_count += 1
+
 
 def staleness_watchdog():
     while True:
@@ -185,6 +321,15 @@ __FAVICON__
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px;
     font-variant-numeric: tabular-nums; }
   td, th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); }
+  button.mini { padding: .4rem .8rem; font-size: .85rem; border-radius: 6px;
+    cursor: pointer; margin-top: 10px; }
+  button.mini:disabled { opacity: .5; cursor: default; }
+  .sub { font-size: .8rem; color: var(--text-secondary); margin-top: 6px; }
+  #occSvg { display: block; margin: 10px auto; width: 100%; max-width: 300px; height: auto; }
+  .occ-legend { font-size: .75rem; color: var(--text-secondary); display: flex;
+    gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 4px; }
+  .occ-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 4px; vertical-align: -1px; }
 </style>
 </head>
 <body>
@@ -253,6 +398,17 @@ __FAVICON__
 <div class="card">
   <div class="card-head"><span class="dot" id="lidarDot"></span> LiDAR (LD06)</div>
   <table id="lidarTable"></table>
+  <button id="occBtn" class="mini">🔍 차폐율 스캔 (15초)</button>
+  <div class="sub" id="occMsg">로봇이 정지해 있어야 정확합니다. 15초간 측정합니다.</div>
+  <div id="occResult" style="display:none">
+    <svg id="occSvg" viewBox="0 0 300 300"></svg>
+    <div class="occ-legend">
+      <span><i style="background:#d03b3b"></i>구조물 차폐(&lt;15cm)</span>
+      <span><i style="background:#c98500"></i>먼 고정 반사(&gt;15cm)</span>
+      <span><i style="background:#4a9d4a"></i>열린 방향</span>
+    </div>
+    <table id="occTable"></table>
+  </div>
 </div>
 
 <script>
@@ -366,6 +522,115 @@ async function tick() {
   document.getElementById('lidarTable').innerHTML =
     lidarRows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
 }
+// ---- 차폐율 온디맨드 스캔 ----
+// 좌표 규약은 tools/lidar_occlusion_plot.py와 동일: x=전방(화면 위), y=좌측(화면 왼쪽).
+const OCC_VIEW_M = 0.45;
+const OCC_CX = 150, OCC_CY = 150, OCC_PPM = (150 * 0.82) / OCC_VIEW_M;
+function occToPx(x, y) { return [OCC_CX - y * OCC_PPM, OCC_CY - x * OCC_PPM]; }
+const occBtn = document.getElementById('occBtn');
+const occMsg = document.getElementById('occMsg');
+let occPollTimer = null;
+
+function svgEl(tag, attrs) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+function drawOcc(d) {
+  const svg = document.getElementById('occSvg');
+  svg.innerHTML = '';
+  // 거리 눈금 원
+  for (const rM of [0.1, 0.2, 0.3, 0.4]) {
+    const rp = rM * OCC_PPM;
+    svg.appendChild(svgEl('circle', {cx: OCC_CX, cy: OCC_CY, r: rp,
+      fill: 'none', stroke: '#8884', 'stroke-width': 1}));
+  }
+  // 각도 기준선 (30도 간격)
+  for (let a = 0; a < 360; a += 30) {
+    const rad = a * Math.PI / 180;
+    const [x1, y1] = occToPx(0, 0);
+    const [x2, y2] = occToPx(Math.cos(rad) * OCC_VIEW_M, Math.sin(rad) * OCC_VIEW_M);
+    svg.appendChild(svgEl('line', {x1, y1, x2, y2, stroke: '#8884', 'stroke-width': 1}));
+  }
+  // 열린 방향(비차폐) 참고점
+  for (const [bStr, med] of Object.entries(d.env_median || {})) {
+    if (d.self_bins && bStr in d.self_bins) continue;
+    const b = Number(bStr);
+    const rad = (b + 0.5) * d.bin_deg * Math.PI / 180;
+    const rr = Math.min(med, OCC_VIEW_M);
+    const [px, py] = occToPx(Math.cos(rad) * rr, Math.sin(rad) * rr);
+    svg.appendChild(svgEl('circle', {cx: px, cy: py, r: 2, fill: '#4a9d4a'}));
+  }
+  // 차폐 구간 부채꼴
+  for (const [bStr, info] of Object.entries(d.self_bins || {})) {
+    const b = Number(bStr);
+    const a0 = b * d.bin_deg * Math.PI / 180, a1 = (b + 1) * d.bin_deg * Math.PI / 180;
+    const rr = Math.min(info.median, OCC_VIEW_M);
+    const p0 = occToPx(0, 0);
+    const p1 = occToPx(Math.cos(a0) * rr, Math.sin(a0) * rr);
+    const p2 = occToPx(Math.cos(a1) * rr, Math.sin(a1) * rr);
+    const col = info.median > 0.15 ? '#c98500' : '#d03b3b';
+    const fill = info.median > 0.15 ? '#c9850044' : '#d03b3b44';
+    svg.appendChild(svgEl('polygon', {points: `${p0} ${p1} ${p2}`, fill, stroke: col}));
+  }
+  // 차체 사각형(20x20cm) + 정면 화살표
+  const half = 0.10;
+  const corners = [[half, half], [half, -half], [-half, -half], [-half, half]]
+    .map(([x, y]) => occToPx(x, y).join(',')).join(' ');
+  svg.appendChild(svgEl('polygon', {points: corners, fill: 'none', stroke: 'var(--text-muted)'}));
+  const [fx, fy] = occToPx(0.06, 0), [f1x, f1y] = occToPx(0.03, 0.018), [f2x, f2y] = occToPx(0.03, -0.018);
+  svg.appendChild(svgEl('polygon', {points: `${fx},${fy} ${f1x},${f1y} ${f2x},${f2y}`, fill: '#4a9d4a'}));
+
+  document.getElementById('occResult').style.display = 'block';
+  const rows = [
+    ['총 차폐', `${d.blocked_deg.toFixed(0)}° / 360° (${d.blocked_pct.toFixed(1)}%)`],
+    ['정면 ±30° 차폐', `${d.front_deg.toFixed(0)}° / 60° (${d.front_pct.toFixed(1)}%)`],
+    ['차폐 구간', `${d.sectors.length}개`],
+    ['스캔 수', `${d.scan_count}개`],
+  ];
+  for (const s of d.sectors) {
+    rows.push([`  ${s.from.toFixed(0)}°~${s.to.toFixed(0)}°`,
+      `폭 ${s.width.toFixed(0)}° · ${(s.median_m * 100).toFixed(0)}cm`]);
+  }
+  document.getElementById('occTable').innerHTML =
+    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}
+
+async function pollOcc() {
+  let d;
+  try { d = await (await fetch('/api/occlusion/status')).json(); } catch (e) { return; }
+  if (d.status === 'running') {
+    occBtn.disabled = true;
+    occMsg.textContent = `측정 중... ${d.elapsed.toFixed(0)} / ${d.duration.toFixed(0)}초 (정지 상태 유지)`;
+  } else if (d.status === 'aborted') {
+    clearInterval(occPollTimer); occPollTimer = null;
+    occBtn.disabled = false;
+    occMsg.textContent = `⚠️ 측정 중단: ${d.reason}`;
+  } else if (d.status === 'done') {
+    clearInterval(occPollTimer); occPollTimer = null;
+    occBtn.disabled = false;
+    const t = new Date(d.computed_at * 1000).toLocaleTimeString();
+    occMsg.textContent = `마지막 측정: ${t} (총 차폐 ${d.blocked_pct.toFixed(1)}%)`;
+    drawOcc(d);
+  }
+}
+
+occBtn.addEventListener('click', async () => {
+  occBtn.disabled = true;
+  occMsg.textContent = '요청 중...';
+  let r;
+  try { r = await (await fetch('/api/occlusion/start', {method: 'POST'})).json(); }
+  catch (e) { occBtn.disabled = false; occMsg.textContent = '요청 실패: ' + e; return; }
+  if (!r.ok) { occBtn.disabled = false; occMsg.textContent = '⚠️ ' + r.error; return; }
+  if (occPollTimer) clearInterval(occPollTimer);
+  occPollTimer = setInterval(pollOcc, 1000);
+  pollOcc();
+});
+
+// 새로고침해도 마지막 측정 결과가 남아있으면 바로 보여준다.
+pollOcc();
+
 tick();
 setInterval(tick, 500);
 document.addEventListener('visibilitychange', () => {
@@ -407,6 +672,27 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             with state_lock:
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
+        elif self.path == "/api/occlusion/status":
+            with occ_lock:
+                self._send(200, json.dumps(occ_state).encode("utf-8"), "application/json")
+        else:
+            self._send(404, b"not found", "text/plain")
+
+    def do_POST(self):
+        if self.path == "/api/occlusion/start":
+            with occ_lock:
+                busy = occ_state.get("status") == "running"
+            if busy:
+                self._send(409, json.dumps(
+                    {"ok": False, "error": "이미 측정 중입니다"}).encode(), "application/json")
+                return
+            ok, reason = _is_stationary()
+            if not ok:
+                self._send(409, json.dumps(
+                    {"ok": False, "error": reason}).encode(), "application/json")
+                return
+            threading.Thread(target=_run_occlusion_scan, daemon=True).start()
+            self._send(200, json.dumps({"ok": True}).encode(), "application/json")
         else:
             self._send(404, b"not found", "text/plain")
 
