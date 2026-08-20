@@ -266,7 +266,7 @@ document.getElementById('estopBtn').onclick = async () => {
     const r = await (await fetch('/api/estop', {method:'POST'})).json();
     const n = (r.killed || []).length;
     b.textContent = '🛑 비상정지 (자율주행 전체 중단)';
-    alert(n ? ('종료된 프로세스 ' + n + '개:\n' + r.killed.join('\n'))
+    alert(n ? ('종료된 프로세스 ' + n + '개:\\n' + r.killed.join('\\n'))
             : '종료할 자율주행 프로세스가 없었습니다.');
   } catch (e) {
     b.textContent = '🛑 비상정지 (자율주행 전체 중단)';
