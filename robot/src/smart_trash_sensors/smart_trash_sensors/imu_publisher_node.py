@@ -189,9 +189,9 @@ class ImuPublisherNode(Node):
         mag = MagneticField()
         mag.header = header
         # AK09916: 0.15 uT/LSB -> 테슬라 단위(REP-145)로 변환.
-        # 하드아이언 편향은 µT 단위에서 빼고 나서 테슬라로 바꾼다.
+        # ⚠️ 차체 전후 180° 반전(2026-08-17)으로 인해 센서 X축이 차체 후방을 향하므로 부호 반전(-)
         ox, oy, oz = self._mag_off
-        mag.magnetic_field.x = (raw[0] * MAG_SENSITIVITY_UT_PER_LSB - ox) * 1e-6
+        mag.magnetic_field.x = -(raw[0] * MAG_SENSITIVITY_UT_PER_LSB - ox) * 1e-6
         mag.magnetic_field.y = (raw[1] * MAG_SENSITIVITY_UT_PER_LSB - oy) * 1e-6
         mag.magnetic_field.z = (raw[2] * MAG_SENSITIVITY_UT_PER_LSB - oz) * 1e-6
         # 소프트아이언(타원 왜곡)은 아직 미보정이라 공분산은 미상(0)으로 둔다.
