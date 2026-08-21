@@ -1,4 +1,5 @@
 import math
+import threading
 import time
 
 import rclpy
@@ -89,6 +90,7 @@ class ImuPublisherNode(Node):
         self._mag_last_change = time.monotonic()
         self._mag_recover_at = 0.0
         self._mag_frozen = False
+        self._mag_reinit_busy = False   # 재초기화 스레드 중복 실행 방지
 
         try:
             self._imu.startupMagnetometer()
@@ -167,12 +169,26 @@ class ImuPublisherNode(Node):
                 self.get_logger().warn(
                     f'자기센서 멈춤 감지: 원시값이 {now - self._mag_last_change:.1f}초간 '
                     '변화 없음. 발행을 중단하고 재초기화를 시도한다.')
-            if now >= self._mag_recover_at:
+            # ⚠️ 2026-08-21: startupMagnetometer()를 이 콜백에서 직접(동기) 부르면
+            # I2C 재초기화가 끝날 때까지 이 콜백 전체가 블록된다 — /imu/data 발행도
+            # 같은 콜백 안에서 이루어지므로, 재초기화가 잦을 때(지금처럼 ~2초마다)
+            # 가속도/자이로 스트림에도 최대 수백ms~초 단위 공백이 생겼다(실측:
+            # ros2 topic hz /imu/data에서 최대 1.5초 공백 관측, 재초기화 빈도와
+            # 시간이 일치). 재초기화는 백그라운드 스레드로 넘겨서 /imu/data
+            # 발행 루프가 절대 이걸 기다리지 않게 한다.
+            if now >= self._mag_recover_at and not self._mag_reinit_busy:
                 self._mag_recover_at = now + 5.0
-                try:
-                    self._imu.startupMagnetometer()
-                except Exception as e:
-                    self.get_logger().warn(f'자기센서 재초기화 실패: {e}')
+                self._mag_reinit_busy = True
+
+                def _reinit():
+                    try:
+                        self._imu.startupMagnetometer()
+                    except Exception as e:
+                        self.get_logger().warn(f'자기센서 재초기화 실패: {e}')
+                    finally:
+                        self._mag_reinit_busy = False
+
+                threading.Thread(target=_reinit, daemon=True).start()
             return  # 멈춘 값은 내보내지 않는다
 
         mag = MagneticField()
