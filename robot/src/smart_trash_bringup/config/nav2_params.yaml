@@ -72,8 +72,14 @@ controller_server:
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: true
       stateful: true
+      # 2026-08-21: Twirling 추가 — 이동거리 대비 불필요한 회전에 페널티를
+      # 주는 표준 DWB critic(이미 라이브러리에 있었는데 안 쓰고 있었다).
+      # 궤적 로그에서 cmd_w가 0.3초 안에 부호를 계속 뒤집는 게 관찰됐는데
+      # ("좌우로 계속 흔들며 간다"는 지적), 이게 직진 성향을 만들어줄 것으로
+      # 기대함 — 정확한 인과관계는 아직 debug_trajectory_details로 검증 전.
       critics:
-        ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+        ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "Twirling"]
+      Twirling.scale: 10.0
       # ⚠️ 2026-08-21: 0.02는 nav2 튜토리얼 기본값 그대로였다(경로/목표 정렬
       # critic 대비 1600배 작음). 실주행 로그(controller_server 콘솔 출력)로
       # 확인된 건 이만큼이다 — 벽에 접근하는 ~22초 동안 컨트롤러는 계속 "유효한
@@ -202,7 +208,11 @@ global_costmap:
           raytrace_min_range: 0.11
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
+        # 2026-08-21: 3.0 -> 2.0. inflation_radius(0.20)는 그대로 두고
+        # (더 넓히면 0.5m급 좁은 통로가 막힘 — 위 이력 참고) 그 반경 안에서
+        # 비용이 완만하게 오르도록만 바꿈. 장애물 바로 옆보다 열린 공간
+        # 가운데를 선호하게 만드는 목적 — 통로 자체를 막지는 않는다.
+        cost_scaling_factor: 2.0
         # 0.3이면 폭 0.6m 미만 통로가 사실상 전부 고비용/통행불가로 칠해진다.
         # 집 안엔 폭 0.5m급 통로(주방 냉장고 옆 등)가 흔해서 0.20으로 낮춤.
         # robot_radius(0.15)보다는 커야 벽에 붙는 경로를 억제할 수 있다.
@@ -248,7 +258,11 @@ local_costmap:
           raytrace_min_range: 0.11
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
+        # 2026-08-21: 3.0 -> 2.0. inflation_radius(0.20)는 그대로 두고
+        # (더 넓히면 0.5m급 좁은 통로가 막힘 — 위 이력 참고) 그 반경 안에서
+        # 비용이 완만하게 오르도록만 바꿈. 장애물 바로 옆보다 열린 공간
+        # 가운데를 선호하게 만드는 목적 — 통로 자체를 막지는 않는다.
+        cost_scaling_factor: 2.0
         # 0.3이면 폭 0.6m 미만 통로가 사실상 전부 고비용/통행불가로 칠해진다.
         # 집 안엔 폭 0.5m급 통로(주방 냉장고 옆 등)가 흔해서 0.20으로 낮춤.
         # robot_radius(0.15)보다는 커야 벽에 붙는 경로를 억제할 수 있다.
