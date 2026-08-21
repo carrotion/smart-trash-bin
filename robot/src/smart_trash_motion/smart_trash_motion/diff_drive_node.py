@@ -241,6 +241,17 @@ class DiffDriveNode(Node):
         self.declare_parameter('use_imu_for_yaw', False)
         self.declare_parameter('gyro_bias_samples', 100)     # 시작 시 정지 상태 바이어스 측정
 
+        # 2026-08-21 파워 스윕 실측: 출발 즉시 목표 PWM으로 점프하면 바퀴 4개의
+        # 접지력 차이(특히 후륜/전륜 비대칭, 파워가 클수록 심해짐)가 슬립으로
+        # 드러나서 요 이탈이 생긴다(고파워 구간에서 최대 +1.63° 관측,
+        # docs/calibration/sweep_loaded_20260821_2059.json). 목표 속도까지
+        # 선형 가속도 제한을 걸어 순간 토크 스텝을 줄이면 정지마찰 한계를 넘길
+        # 확률이 줄어든다.
+        # ⚠️ **가속(출발)에만 적용, 감속(정지)은 램프 없이 즉시** — 정지 버튼은
+        # "지연 없이 즉시 반응"이 이미 문서화된 안전 요구사항이다(motor_dashboard.py
+        # hardStop 주석 참고). 슬립 최적화보다 안전이 우선이라 감속 경로는 안 건드림.
+        self.declare_parameter('linear_accel_limit', 3.0)   # m/s^2, 가속 방향에만 적용
+
         p = self.get_parameter
         self._wheel_radius = p('wheel_radius').value
         self._wheel_separation = p('wheel_separation').value
@@ -254,6 +265,7 @@ class DiffDriveNode(Node):
         self._min_pwm = p('min_pwm').value
         self._cmd_vel_timeout = p('cmd_vel_timeout').value
         self._straight_trim = p('straight_trim').value
+        self._linear_accel_limit = p('linear_accel_limit').value
         self._motor_offset = [p(f'motor_pwm_offset_m{i}').value for i in (1, 2, 3, 4)]
         self._turn_boost = p('turn_boost').value   # 미사용(회전 PWM 모델로 대체)
         self._min_turn_pwm = p('min_turn_pwm').value
@@ -307,6 +319,7 @@ class DiffDriveNode(Node):
         self._last_cmd_time = 0.0
         self._cmd_v = 0.0
         self._cmd_w = 0.0
+        self._ramped_v = 0.0          # 가속 방향 램프의 현재값(감속은 즉시 추종)
         self._turn_i = 0.0            # 회전 폐루프 적분항
         self._prev_control_time = None
         self._gyro_ts = None          # 자이로 최신 수신 시각(신선도 판단용)
@@ -499,6 +512,7 @@ class DiffDriveNode(Node):
                 self._target_right_pwm = 0
                 self._apply_pwm(0, 0)
             self._turn_i = 0.0
+            self._ramped_v = 0.0
             self._prev_control_time = now
             return
 
@@ -506,7 +520,21 @@ class DiffDriveNode(Node):
         self._prev_control_time = now
         dt = min(max(dt, 0.001), 0.1)
 
-        v, w = self._cmd_v, self._cmd_w
+        # 가속(0에서 멀어지는 방향)에만 선형 램프를 건다. 감속/역전/정지는 목표를
+        # 즉시 추종 — 정지 응답성은 안전 요구사항이라 여기서 늦추면 안 된다
+        # (위 linear_accel_limit 파라미터 선언부 주석 참고).
+        target_v = self._cmd_v
+        accelerating = (abs(target_v) > abs(self._ramped_v)
+                        and (self._ramped_v == 0.0
+                             or (target_v >= 0) == (self._ramped_v >= 0)))
+        if accelerating and self._linear_accel_limit > 0:
+            max_step = self._linear_accel_limit * dt
+            diff = target_v - self._ramped_v
+            self._ramped_v += max(-max_step, min(max_step, diff))
+        else:
+            self._ramped_v = target_v
+
+        v, w = self._ramped_v, self._cmd_w
 
         # --- 직진 성분 (개루프) ---
         if self._invert_drive:
