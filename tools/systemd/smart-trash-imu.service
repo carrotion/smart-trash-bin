@@ -14,7 +14,13 @@ WorkingDirectory=/home/carrotian/catkin_ws
 #       거의 전부 -X(전후 축) 성분이다. 다만 **일정하므로 보정으로 완전히 제거된다**
 #       (원 반지름이 지구 자기장과 일치하는 것이 그 증거).
 #    ⚠️ 레이아웃을 바꾸면 반드시 재측정할 것: tools/hand_rotation_check.py
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node --ros-args -p mag_hard_iron_x:=-88.68 -p mag_hard_iron_y:=12.81'
+#
+# 자이로 Z 바이어스: 1호기 2026-08-21 실측(IMU 전방 재장착 직후, 정지 상태
+#    90초/3066샘플 평균) -0.00782 rad/s. 표준오차 0.0011로 값 대비 충분히 작아
+#    상수 바이어스로 판정. 직진시험에서 "전진/후진이 같은 부호로 휨"의 원인 중
+#    하나로 지목됨(순수 toe 정렬이면 전진/후진 부호가 반대여야 함).
+#    ⚠️ 이것도 기체/장착위치 전용값이다 — IMU 위치를 또 옮기면 재측정할 것.
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node --ros-args -p mag_hard_iron_x:=-88.68 -p mag_hard_iron_y:=12.81 -p gyro_bias_z:=-0.00782'
 Restart=on-failure
 RestartSec=3
 
