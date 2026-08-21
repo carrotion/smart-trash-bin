@@ -23,10 +23,11 @@ DEG_TO_RAD = math.pi / 180.0
 class ImuPublisherNode(Node):
 
     def _init_magnetometer(self):
-        """AK09916 초기화 및 ICM-20948 보조 I2C 마스터 ODR 동기화(137.5Hz)."""
+        """AK09916 초기화 및 ICM-20948 보조 I2C 마스터 ODR(137.5Hz) & STOP 조건(0x17) 설정."""
         self._imu.startupMagnetometer()
         self._imu.setBank(3)
         self._imu._i2c.writeByte(self._imu.address, self._imu.AGB3_REG_I2C_MST_ODR_CONFIG, 3)
+        self._imu._i2c.writeByte(self._imu.address, self._imu.AGB3_REG_I2C_MST_CTRL, 0x17)
         self._imu._i2c.writeByte(self._imu.address, self._imu.AGB3_REG_I2C_MST_DELAY_CTRL, 0x01)
         self._imu.setBank(0)
 
@@ -152,14 +153,11 @@ class ImuPublisherNode(Node):
             if self._mag_frozen:
                 self._mag_frozen = False
                 self.get_logger().info('자기센서 복구됨 — imu/mag 발행 재개')
-        elif not is_rotating:
-            # 정지 상태에서는 값이 동일한 것이 정상이므로 타임스탬프 갱신
-            self._mag_last_change = now
         elif now - self._mag_last_change > self._mag_stale_sec:
             if not self._mag_frozen:
                 self._mag_frozen = True
                 self.get_logger().warn(
-                    f'자기센서 멈춤 감지: 회전 중 원시값이 {now - self._mag_last_change:.1f}초간 '
+                    f'자기센서 멈춤 감지: 원시값이 {now - self._mag_last_change:.1f}초간 '
                     '변화 없음. 발행을 중단하고 재초기화를 시도한다.')
             # ⚠️ 2026-08-21: startupMagnetometer()를 이 콜백에서 직접(동기) 부르면
             # I2C 재초기화가 끝날 때까지 이 콜백 전체가 블록된다 — /imu/data 발행도
