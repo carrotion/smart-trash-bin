@@ -37,7 +37,9 @@ controller_server:
 
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: false
+      # 2026-08-21: 다음 실주행부터 critic별 점수를 직접 로그로 본다 — 추측
+      # 대신 실제 데이터로 판단하기 위함(사용자 지적).
+      debug_trajectory_details: true
       min_vel_x: 0.0
       min_vel_y: 0.0
       # ⚠️ 2026-08-17 완화: 출발/정지 때 모터 토크로 바퀴가 미끄러진다(사용자 관측).
@@ -46,11 +48,13 @@ controller_server:
       # 실제로 로봇 셀 cost=99(통행불가)인데 라이다는 0.49m 여유를 보고했고,
       # 코스트맵을 비우니 즉시 0으로 떨어졌다 — 유령임이 확인됨.
       # 최고속도보다 **가감속**이 슬립의 직접 원인이므로 acc/decel을 더 크게 낮춤.
-      max_vel_x: 0.15
+      # 2026-08-21: 실주행에서 체감 속도가 빠르다는 지적(사용자 직접 관측) —
+      # 0.15 -> 0.08로 추가 하향.
+      max_vel_x: 0.08
       max_vel_y: 0.0
-      max_vel_theta: 0.6
+      max_vel_theta: 0.4
       min_speed_xy: 0.0
-      max_speed_xy: 0.15
+      max_speed_xy: 0.08
       min_speed_theta: 0.0
       acc_lim_x: 0.3
       acc_lim_y: 0.0
@@ -70,7 +74,15 @@ controller_server:
       stateful: true
       critics:
         ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
+      # ⚠️ 2026-08-21: 0.02는 nav2 튜토리얼 기본값 그대로였다(경로/목표 정렬
+      # critic 대비 1600배 작음). 실주행 로그(controller_server 콘솔 출력)로
+      # 확인된 건 이만큼이다 — 벽에 접근하는 ~22초 동안 컨트롤러는 계속 "유효한
+      # 궤적"을 찾아 주행했고, 이후 궤적 314개 전부가 무효(No valid trajectories)
+      # 판정 나며 정체됐다. 첫 구간에서 장애물 critic이 얼마나 기여했는지는
+      # **추정**이지 로그로 직접 확인한 건 아니다 — debug_trajectory_details로
+      # 다음 시도에서 critic별 점수를 직접 봐야 확정 가능. 값 자체가 다른
+      # critic 대비 극단적으로 작다는 사실만으로 올릴 근거는 충분하다고 판단.
+      BaseObstacle.scale: 20.0
       PathAlign.scale: 32.0
       GoalAlign.scale: 24.0
       PathDist.scale: 32.0

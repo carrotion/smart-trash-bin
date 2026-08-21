@@ -65,6 +65,7 @@ state = {
     "angular": 0.0,          # rad/s (odom 실측)
     "commanded": [0.0, 0.0],  # [linear, angular] 마지막 조종 명령
     "last_ts": 0.0,
+    "manual_blocked": False,  # 자율주행(controller_server) 중이라 수동 명령이 막혔는지
 }
 
 # 배터리 전압(INA219, 0x40). ROS 토픽이 아니라 I2C 직접 읽기 — 이 값이
@@ -152,7 +153,32 @@ class TeleopNode(Node):
             state["encoder"] = counts
         self._prev_enc, self._prev_enc_ts = counts, now
 
+    def autonomous_active(self):
+        """Nav2 controller_server가 지금 /cmd_vel에 붙어있는지 직접 조회한다.
+
+        2026-08-21: 자율주행(Nav2) 테스트 중 /cmd_vel 발행자가 이 대시보드,
+        map_dashboard, controller_server 셋 다 동시에 있었던 게 실측으로
+        확인됨(ros2 topic info --verbose) — 우선순위 중재가 없어서 속도 상한을
+        지키던 Nav2 명령 사이에 수동 조종 잔여 명령이 섞여 들어갈 수 있었다.
+        새 mux 노드/토픽 리매핑 대신, 발행 직전에 rclpy로 직접 물어봐서
+        controller_server가 살아있으면 그냥 안 보낸다 — 상태를 따로 관리할
+        필요가 없어 어긋날 일이 없다.
+        """
+        try:
+            infos = self.get_publishers_info_by_topic('/cmd_vel')
+        except Exception:
+            return False
+        return any(i.node_name == 'controller_server' for i in infos)
+
     def send_cmd(self, linear, angular):
+        # 정지(0,0)는 항상 통과시킨다 — 자율주행 중이라도 사람이 세우려는
+        # 시도를 막으면 안 된다. 실제 주행 명령만 자율주행 중엔 막는다.
+        if (abs(linear) > 1e-9 or abs(angular) > 1e-9) and self.autonomous_active():
+            with state_lock:
+                state["manual_blocked"] = True
+            return
+        with state_lock:
+            state["manual_blocked"] = False
         msg = Twist()
         msg.linear.x = float(max(-MAX_LINEAR, min(MAX_LINEAR, linear)))
         msg.angular.z = float(max(-MAX_ANGULAR, min(MAX_ANGULAR, angular)))
@@ -488,8 +514,9 @@ async function tick() {
 
   const connected = res.connected;
   document.getElementById('connDot').style.background = connected ? 'var(--good)' : 'var(--critical)';
-  document.getElementById('connText').textContent =
-    connected ? 'diff_drive 연결됨' : 'diff_drive 응답 없음 (노드 실행 필요)';
+  document.getElementById('connText').textContent = res.manual_blocked
+    ? '⚠️ 자율주행 중 — 수동 조종 차단됨 (정지는 항상 동작)'
+    : (connected ? 'diff_drive 연결됨' : 'diff_drive 응답 없음 (노드 실행 필요)');
 
   const rate = res.rate;
   const cmd = res.commanded || [0, 0];
@@ -762,7 +789,11 @@ def main():
     Handler.node = node
 
     threading.Thread(target=staleness_watchdog, daemon=True).start()
-    threading.Thread(target=battery_poll_loop, daemon=True).start()
+    # 2026-08-21: 자율주행 중 비상정지 채널(이 대시보드 HTTP 서버)이 세 번
+    # 먹통됐다 — 매번 이 스레드가 유력한 용의자였다(I2C 블로킹 의심, 확정은
+    # 안 됐지만 안전이 우선이라 임시로 끔). INA219 폴링 안정화는 별도로 다시
+    # 다룰 것 — 지금은 estop 응답성이 배터리 표시보다 훨씬 중요하다.
+    # threading.Thread(target=battery_poll_loop, daemon=True).start()
     spin_thread = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
     spin_thread.start()
 
