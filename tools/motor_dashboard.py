@@ -24,12 +24,14 @@ SLAM/맵핑과 동시에 켜둘 수 있어서, 무선조종 하듯 집안을 돌
     python3 tools/motor_dashboard.py [--port 8766]
 """
 import argparse
+import collections
 import gzip
 import json
 import math
 import signal
 import threading
 import time
+import urllib.parse
 # 비상정지는 맵 대시보드와 **같은 코드**를 쓴다. 복사해 두면 한쪽만 고쳐져
 # 어긋나고, 하필 비상정지에서 그러면 위험하다.
 from estop_common import kill_autonomous_processes
@@ -42,6 +44,11 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from std_msgs.msg import Int32MultiArray
+
+try:
+    import smbus2
+except ImportError:
+    smbus2 = None
 
 # 조종 상한 — diff_drive_node의 max_wheel_speed(1.0 m/s)보다 보수적으로 잡음.
 # 실내 맵핑 주행은 느릴수록 SLAM 품질이 좋아서 일부러 낮게 둔다.
@@ -59,6 +66,61 @@ state = {
     "commanded": [0.0, 0.0],  # [linear, angular] 마지막 조종 명령
     "last_ts": 0.0,
 }
+
+# 배터리 전압(INA219, 0x40). ROS 토픽이 아니라 I2C 직접 읽기 — 이 값이
+# 필요한 곳이 대시보드뿐이라 굳이 노드/토픽을 새로 만들 이유가 없다.
+# ⚠️ 2026-08-21 기준 배선은 **임시**다: Vin+/Vin-를 묶어 전압만 재고, SDA/SCL은
+# IMU와 물리 3/5번 핀을 스플라이스로 공유한다(Qwiic 데이지체인 케이블 도착 전
+# 임시 조치). docs/hardware_inventory.md 참고.
+BATTERY_I2C_ADDR = 0x40
+BATTERY_POLL_S = 2.0        # 배터리는 급변하지 않음 — 이 페이지도 부하를 아낀다
+BATTERY_HISTORY_LEN = 1800  # 2초 간격 * 1800 = 1시간
+
+battery_lock = threading.Lock()
+battery_state = {"connected": False}
+battery_history = collections.deque(maxlen=BATTERY_HISTORY_LEN)
+
+
+def _read_battery_voltage(bus):
+    # INA219 Bus Voltage 레지스터(0x02): 상위 13비트가 4mV 단위 전압,
+    # bit0=OVF(연산 오버플로), bit1=CNVR(변환 완료). smbus2는 word를
+    # little-endian으로 돌려주는데 칩은 MSB 먼저 보내므로 바이트를 뒤집어야 함.
+    raw = bus.read_word_data(BATTERY_I2C_ADDR, 0x02)
+    val = ((raw & 0xff) << 8) | (raw >> 8)
+    if val & 0x1:
+        raise IOError("INA219 OVF (측정 범위 초과)")
+    return (val >> 3) * 0.004
+
+
+def battery_poll_loop():
+    if smbus2 is None:
+        return
+    bus = None
+    n, total, vmin, vmax = 0, 0.0, None, None
+    session_started = time.time()
+    while True:
+        try:
+            if bus is None:
+                bus = smbus2.SMBus(1)
+            v = _read_battery_voltage(bus)
+            n += 1
+            total += v
+            vmin = v if vmin is None else min(vmin, v)
+            vmax = v if vmax is None else max(vmax, v)
+            now = time.time()
+            with battery_lock:
+                battery_state.update({
+                    "connected": True, "voltage": v, "ts": now,
+                    "avg": total / n, "min": vmin, "max": vmax,
+                    "session_started": session_started, "samples": n,
+                })
+                battery_history.append({"ts": now, "v": v})
+        except Exception as e:
+            with battery_lock:
+                battery_state["connected"] = False
+                battery_state["error"] = str(e)
+            bus = None  # 다음 루프에서 재오픈 — 임시 배선이라 접촉 불량 재시도 가치 있음
+        time.sleep(BATTERY_POLL_S)
 
 
 class TeleopNode(Node):
@@ -176,6 +238,13 @@ __FAVICON__
 <body>
 <h1><span class="dot" id="connDot" style="background:var(--critical)"></span> 모터 대시보드</h1>
 <button id="estopBtn">🛑 비상정지 (자율주행 전체 중단)</button>
+
+<a href="/battery" class="card" style="display:block; text-decoration:none; color:inherit;">
+  <div class="status-row" style="margin:0;">
+    <span id="battBadge">🔋 —</span>
+    <span style="color:var(--accent);">상세 →</span>
+  </div>
+</a>
 
 <div class="card">
   <svg id="chassis" width="260" height="340" viewBox="0 0 260 340"></svg>
@@ -455,6 +524,22 @@ setInterval(tick, 200);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) tick();
 });
+
+// 배터리는 급변하지 않으니 메인 화면에서는 5초에 한 번만 확인한다 —
+// 부하를 아껴야 할 곳은 여기지 tick()이 아니다.
+async function battTick() {
+  if (document.hidden) return;
+  let b;
+  try { b = await (await fetch('/api/battery')).json(); } catch (e) { return; }
+  const el = document.getElementById('battBadge');
+  if (!b.connected) { el.textContent = '🔋 연결 안 됨'; return; }
+  el.textContent = `🔋 ${b.voltage.toFixed(2)} V (세션 최저 ${b.min.toFixed(2)} V)`;
+}
+battTick();
+setInterval(battTick, 5000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) battTick();
+});
 </script>
 </body>
 </html>
@@ -462,6 +547,116 @@ document.addEventListener('visibilitychange', () => {
 
 # 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
 PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+
+BATTERY_PAGE = """<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+__FAVICON__
+<title>배터리 상세</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
+    --border: rgba(11,11,11,0.10); --accent: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --page: #0d0d0d;
+      --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
+      --border: rgba(255,255,255,0.10); --accent: #5b9bea;
+    }
+  }
+  body { background: var(--page); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 480px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 1.2rem; }
+  a.back { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin: 16px 0; }
+  .big { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 8px;
+    font-variant-numeric: tabular-nums; }
+  td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  #sparkSvg { display: block; width: 100%; height: 80px; margin-top: 8px; }
+  .sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<a class="back" href="/">← 모터 대시보드</a>
+<h1>🔋 배터리 상세</h1>
+<div class="card">
+  <div class="big" id="voltNow">— V</div>
+  <svg id="sparkSvg" viewBox="0 0 300 80" preserveAspectRatio="none"></svg>
+  <table id="statTable"></table>
+  <div class="sub" id="updated"></div>
+</div>
+<script>
+let lastTs = 0;
+let hist = [];
+
+function drawSpark() {
+  const svg = document.getElementById('sparkSvg');
+  svg.innerHTML = '';
+  if (hist.length < 2) return;
+  const vs = hist.map(h => h.v);
+  const lo = Math.min(...vs), hi = Math.max(...vs);
+  const pad = Math.max((hi - lo) * 0.15, 0.02);
+  const y0 = lo - pad, y1 = hi + pad;
+  const W = 300, H = 80;
+  const x = i => (i / (hist.length - 1)) * W;
+  const y = v => H - ((v - y0) / (y1 - y0)) * H;
+  const pts = hist.map((h, i) => `${x(i).toFixed(1)},${y(h.v).toFixed(1)}`).join(' ');
+  const ns = 'http://www.w3.org/2000/svg';
+  const poly = document.createElementNS(ns, 'polyline');
+  poly.setAttribute('points', pts);
+  poly.setAttribute('fill', 'none');
+  poly.setAttribute('stroke', 'var(--accent)');
+  poly.setAttribute('stroke-width', '2');
+  svg.appendChild(poly);
+}
+
+async function poll() {
+  if (document.hidden) return;
+  let b;
+  try { b = await (await fetch('/api/battery')).json(); } catch (e) { return; }
+  if (!b.connected) {
+    document.getElementById('voltNow').textContent = '연결 안 됨';
+    document.getElementById('updated').textContent = b.error ? ('오류: ' + b.error) : '';
+    return;
+  }
+  document.getElementById('voltNow').textContent = b.voltage.toFixed(3) + ' V';
+  const started = new Date(b.session_started * 1000).toLocaleTimeString();
+  document.getElementById('statTable').innerHTML = `
+    <tr><th>항목</th><th>값</th></tr>
+    <tr><td>평균</td><td>${b.avg.toFixed(3)} V</td></tr>
+    <tr><td>최저</td><td>${b.min.toFixed(3)} V</td></tr>
+    <tr><td>최고</td><td>${b.max.toFixed(3)} V</td></tr>
+    <tr><td>샘플 수</td><td>${b.samples}</td></tr>
+    <tr><td>세션 시작</td><td>${started}</td></tr>`;
+  document.getElementById('updated').textContent =
+    '마지막 갱신: ' + new Date(b.ts * 1000).toLocaleTimeString();
+
+  let h;
+  try { h = await (await fetch('/api/battery/history?since=' + lastTs)).json(); }
+  catch (e) { return; }
+  if (h.rows && h.rows.length) {
+    hist = hist.concat(h.rows).slice(-300);
+    lastTs = h.last_ts;
+    drawSpark();
+  }
+}
+poll();
+setInterval(poll, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+</script>
+</body>
+</html>
+"""
+BATTERY_PAGE = BATTERY_PAGE.replace("__FAVICON__", FAVICON_TAG)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -499,6 +694,30 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             with state_lock:
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
+        elif self.path == "/battery":
+            body = BATTERY_PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/api/battery":
+            with battery_lock:
+                self._send(200, json.dumps(battery_state).encode("utf-8"), "application/json")
+        elif self.path.startswith("/api/battery/history"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                since = float(q.get("since", ["0"])[0])
+            except ValueError:
+                since = 0.0
+            with battery_lock:
+                rows = [h for h in battery_history if h["ts"] > since]
+                if not since:
+                    rows = rows[-300:]
+            body = json.dumps({"rows": rows,
+                               "last_ts": rows[-1]["ts"] if rows else since}).encode("utf-8")
+            self._send(200, body, "application/json")
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -543,6 +762,7 @@ def main():
     Handler.node = node
 
     threading.Thread(target=staleness_watchdog, daemon=True).start()
+    threading.Thread(target=battery_poll_loop, daemon=True).start()
     spin_thread = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
     spin_thread.start()
 
