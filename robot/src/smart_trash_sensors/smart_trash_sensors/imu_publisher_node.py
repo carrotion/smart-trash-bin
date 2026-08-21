@@ -55,6 +55,19 @@ class ImuPublisherNode(Node):
         self.declare_parameter('mag_hard_iron_x', 0.0)
         self.declare_parameter('mag_hard_iron_y', 0.0)
         self.declare_parameter('mag_hard_iron_z', 0.0)
+
+        # 자이로 Z축 바이어스 보정 (rad/s). 정지 상태에서도 0이 아닌 상수값이 실려
+        # 나온다 — 노이즈라면 흔들려야 하는데 90초/3066샘플 평균에 표준오차가
+        # 0.0011rad/s로 매우 작아(값 대비 7배 이상 작음) 상수 바이어스로 판정.
+        # EKF는 이 값을 자이로 Z(vyaw)로 그대로 적분하므로, 정지 중에도 방향이
+        # 서서히 도는 것처럼 보이고 직진 시험에서 "전진/후진이 같은 부호로 휨"
+        # (좌우 편향이면 반대 부호여야 함)의 원인 중 하나로 지목됨(2026-08-21).
+        # 측정: 정지 상태에서 /imu/data의 angular_velocity.z를 60초 이상 평균.
+        # 1호기 2026-08-21 실측(IMU 전방 재장착 직후): -0.00782 rad/s
+        self.declare_parameter('gyro_bias_z', 0.0)
+        self._gyro_bias_z = self.get_parameter('gyro_bias_z').value
+        if self._gyro_bias_z:
+            self.get_logger().info(f'자이로 Z 바이어스 보정 적용: {self._gyro_bias_z:+.5f} rad/s')
         self._mag_off = (
             self.get_parameter('mag_hard_iron_x').value,
             self.get_parameter('mag_hard_iron_y').value,
@@ -102,7 +115,8 @@ class ImuPublisherNode(Node):
 
         msg.angular_velocity.x = self._imu.gxRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
         msg.angular_velocity.y = self._imu.gyRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
-        msg.angular_velocity.z = self._imu.gzRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
+        msg.angular_velocity.z = (self._imu.gzRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
+                                   - self._gyro_bias_z)
 
         # This node doesn't fuse orientation — robot_localization EKF (Week 4) does
         # that downstream. Mark orientation unknown per REP-145.
