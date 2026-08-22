@@ -50,11 +50,14 @@ controller_server:
       # 최고속도보다 **가감속**이 슬립의 직접 원인이므로 acc/decel을 더 크게 낮춤.
       # 2026-08-21: 실주행에서 체감 속도가 빠르다는 지적(사용자 직접 관측) —
       # 0.15 -> 0.08로 추가 하향.
-      max_vel_x: 0.08
+      # 2026-08-22: 시나리오 A 실주행 중 또 "속도를 절반으로" 지적 — 0.08 -> 0.04,
+      # max_vel_theta 0.4 -> 0.2. 실행 중인 세션엔 ros2 param set으로 즉시
+      # 반영했고(재시작 없이), 이 값은 다음 실행부터 반영되는 영구 기록.
+      max_vel_x: 0.04
       max_vel_y: 0.0
-      max_vel_theta: 0.4
+      max_vel_theta: 0.2
       min_speed_xy: 0.0
-      max_speed_xy: 0.08
+      max_speed_xy: 0.04
       min_speed_theta: 0.0
       acc_lim_x: 0.3
       acc_lim_y: 0.0
@@ -127,7 +130,11 @@ behavior_server:
     # ("Collision Ahead - Exiting Spin/DriveOnHeading"). 1.0으로 낮춰
     # 좁은 곳에서도 조금씩 빠져나올 여지를 준다.
     simulate_ahead_time: 1.0
-    max_rotational_vel: 0.6
+    # 2026-08-22: 시나리오 A 실주행 중 "속도를 절반으로" 지적 — 0.6 -> 0.3.
+    # (참고: BackUp의 후진 속도 0.15m/s는 여기 없다 — bt_navigator가 읽는
+    # BT XML의 backup_speed 속성값이라 별도로 고쳐야 함. 아래
+    # default_nav_to_pose_bt_xml 항목 참고.)
+    max_rotational_vel: 0.3
     min_rotational_vel: 0.2
     rotational_acc_lim: 1.5
 
@@ -138,7 +145,14 @@ bt_navigator:
     transform_tolerance: 0.3
     # 빈 문자열로 두면 "Empty Tree" 에러로 목표마다 즉시 실패함(2026-08-16
     # 첫 테스트에서 발견) — nav2_bt_navigator가 제공하는 표준 기본 트리로 지정.
-    default_nav_to_pose_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
+    # 2026-08-22: 표준 트리를 복사해서 backup_speed만 0.15 -> 0.075로 낮춘
+    # 우리 사본으로 교체(behavior_trees/navigate_to_pose_slow_recovery.xml).
+    # BackUp 후진 속도는 nav2_params.yaml 어디에도 파라미터가 없고 이 BT XML의
+    # 속성값으로만 박혀있어서, DWB/Spin 속도를 낮춰도 후진만 그대로 0.15로
+    # 남아있었다(실측: cmd_v 최대 관측치가 정확히 0.15로 DWB 상한 0.08을
+    # 넘어서 발견). ⚠️ 이 값은 bt_navigator가 기동(on_configure) 시점에만
+    # 읽으므로 파라미터를 바꿔도 스택 재시작 전까지는 적용 안 됨.
+    default_nav_to_pose_bt_xml: "/home/carrotian/smart-trash-bin/robot/src/smart_trash_bringup/behavior_trees/navigate_to_pose_slow_recovery.xml"
     default_nav_through_poses_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
 
 global_costmap:

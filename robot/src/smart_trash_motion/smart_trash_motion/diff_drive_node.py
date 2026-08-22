@@ -587,6 +587,22 @@ class DiffDriveNode(Node):
         clamp = lambda x: int(max(-self._max_pwm, min(self._max_pwm, x)))
         self._target_left_pwm = clamp(left_pwm)
         self._target_right_pwm = clamp(right_pwm)
+
+        # 2026-08-22: 회전 중 한쪽 바퀴가 몇 초씩 완전히 안 도는 현상을 실측
+        # (반대 방향 회전 직후 왼쪽만 엔코더 변화 0). min_turn_pwm(49)은
+        # 피드포워드에만 최소값을 보장하고, 그 위에 얹히는 폐루프 보정이
+        # 방향전환 순간 피드포워드를 깎으면 최종 합산 PWM이 49 밑으로 떨어질
+        # 수 있는데 이를 막는 장치가 없다 — 사용자 가설(데드존/스크럽마찰
+        # 임계값). 다음 재현 시 실제 숫자를 보려고 로깅만 추가, 아직 수정 안 함.
+        if abs(w) > 0.05:
+            err_val = err if (self._turn_closed_loop and moving and gyro_fresh) else float('nan')
+            near_deadzone = (0 < abs(self._target_left_pwm) < self._min_turn_pwm
+                              or 0 < abs(self._target_right_pwm) < self._min_turn_pwm)
+            level = self.get_logger().warn if near_deadzone else self.get_logger().debug
+            level(f'turn_debug w={w:.3f} gyro_z={self._gyro_z:.3f} err={err_val:.3f} '
+                  f'turn_pwm={turn:.0f} left={self._target_left_pwm} right={self._target_right_pwm}',
+                  throttle_duration_sec=0.2)
+
         self._apply_pwm(self._target_left_pwm, self._target_right_pwm)
 
     def _on_imu(self, msg: Imu):
