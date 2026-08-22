@@ -2,15 +2,76 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
-## 🧭 다음 작업: 탐색 전략 재설계 — 시나리오 A부터 (2026-08-21)
+## 🧭 다음 작업: 시뮬레이션에서 드러난 좁은 통로 문제부터 (2026-08-22/23 밤)
 
-기존 방식(파라미터 하나 고치고 실주행으로 반증)을 사용자가 명시적으로 중단시키고
-"선행연구 후 시나리오별 검증"을 요청함 → 조사 + 2단계 아키텍처 + 실험 시나리오
-A/B/C/D를 `docs/exploration_strategy_research.md`에 정리 완료.
+### 시나리오 A 실주행 결과 — 속도 문제로 판명, 시뮬레이션으로 전환
 
-**다음 세션은 여기서 시작**: 시나리오 A(explore_lite `min_frontier_size`를
-0.5→0.8~1.0m로만 올려서 "큰 벽 위주 스캔"이 되는지 격리 검증) 실행. 아직 미실행.
-B/C/D는 A 결과를 보고 순서대로 진행 — 문서의 "진행 순서 제안" 참고.
+시나리오 A(`min_frontier_size` 0.8) 실주행 4회 전부 벽 충돌/바퀴 헛돎으로 갇힘.
+매번 사용자가 안전하게 세운 뒤 옮기고 재시작(odom+SLAM+bag 전부 새로).
+**교훈: 실물 반복시험은 1회에 수 분 + 위험이 있어 비효율적** — 사용자가
+"다양한 시도 먼저 해보고 평가"를 요청하며 시뮬레이션 구축으로 전환.
+
+### stage_ros2 시뮬레이션 환경 구축 완료
+
+`robot/src/Stage`, `robot/src/stage_ros2`(둘 다 gitignore됨, 클론 명령은
+`.gitignore` 상단 주석 참고)를 실제로 clone+build함. 새 launch:
+`robot/src/smart_trash_bringup/launch/sim_autonomous_mapping.launch.py` —
+explore_lite/Nav2/SLAM 설정 파일을 **실물과 완전히 동일하게 재사용**,
+Stage만 센서/오도메트리 소스로 교체(`base_scan`→`scan` 리매핑 외엔 기본값 그대로
+실물과 일치 — odom 프레임명, base_link 프레임명, TF까지 Stage가 알아서 맞춰줌).
+
+⚠️ **반드시 실물과 다른 `ROS_DOMAIN_ID`(42 사용 중)에서 띄울 것.** 같은 도메인에서
+처음 실행했다가 `/cmd_vel`이 겹칠 뻔했다(다행히 명령이 안 나가 무사). 실행 예:
+`ROS_DOMAIN_ID=42 xvfb-run -a ros2 launch smart_trash_bringup sim_autonomous_mapping.launch.py world:=<이름>`
+(Pi가 헤드리스라 `xvfb-run` 필수, `sudo apt install xvfb`)
+
+⚠️ **좀비 Stage 프로세스 주의.** `kill -9`로 대충 죽이면 다음 실행과 이름이
+겹쳐 TF/시계가 꼬인다(실측: `Requested time 0.4 but earliest data is at 2951`).
+매번 `ps aux | grep stage_ros2`로 확인 후 완전히 죽이고, `mapping_cleanup.
+clean_orphan_shm()`(파이썬 함수로 직접 import해서 씀)으로 DDS 고아 파일 정리할 것.
+
+**실시간 시각화**: `ros-jazzy-foxglove-bridge` 설치, 도메인 42에서
+`ros2 run foxglove_bridge foxglove_bridge -p port:=8785`로 띄움(8765는
+power_monitor가 이미 씀). PC에서 app.foxglove.dev → Open connection →
+Foxglove WebSocket → `ws://192.168.0.189:8785`.
+
+### 시뮬레이션으로 확인된 것 (전부 오늘 밤 재현·비교 완료)
+
+1. **어제 설정 변경이 실제 개선이었음을 검증** — 같은 cave 월드(16m)에서
+   old(potential_scale 3.0/gain_scale 1.0/min_frontier_size 0.2) vs
+   현재(2.0/2.0/0.8) A/B 비교: old는 200초 넘도록 못 끝나고 목표가 먼 거리를
+   왕복(14회 전환, 충돌/실패 10건), 현재 설정은 **80초에 자연 완료**(8회 전환,
+   3건). 감으로 바꿨던 게 진짜 개선이었다는 최초의 확실한 증거.
+2. **`min_frontier_size: 0.8`이 큰 공간에서 역효과** — 25x25m hallway 월드
+   (로봇 1대로 수정한 `hallway_single.world`)에서 같은 현재 설정으로 돌리니
+   목표전환 6회 만에, 반경 1m도 못 벗어나고 "모든 프론티어 소진"으로 조기 종료.
+   좁은 cave에선 딱 맞던 문턱값이 넓은 공간에선 시야 안의 "큰" 프론티어를
+   금방 소진해서 그 너머 공간을 아예 못 봄. **작은 세계에서 검증한 값을 큰
+   세계에 그대로 못 옮긴다**는 교훈.
+3. **⚠️ 실제 집 맵으로 돌리니 새 문제 발견, 미해결.** `~/maps/latest.pgm`
+   (오늘 23:30 실물 세션 스냅샷)을 Stage 비트맵으로 변환
+   (`robot/src/stage_ros2/world/home_real.world` + `bitmaps/home_real.png`,
+   변환 스크립트는 이 세션 기록에만 있음 — 재현 필요시 PGM 값 0→검정/그 외→흰색,
+   고립 픽셀<2개 이웃은 잡음으로 제거). 노이즈 제거 후에도 "Failed to make
+   progress"가 15초마다 무한 반복(충돌은 아님, Spin/Backup은 성공하는데 그
+   다음도 또 실패). **가설(미검증): 실제 집의 좁은 통로가 지금 footprint+
+   inflation_radius(0.20m)로는 못 지나갈 만큼 좁을 수 있다** — 장난감 cave/
+   hallway 월드는 통로가 넉넉해 이 문제가 안 드러났었다.
+
+### 다음 세션은 여기서 시작
+
+1. `home_real` 월드에서 "Failed to make progress" 무한반복 원인 규명 —
+   국소 코스트맵을 Foxglove로 직접 보면서 실제로 통로가 막혔는지, 아니면
+   다른 원인인지 확인. 좁은 통로 가설이 맞으면 `inflation_radius`/footprint
+   축소를 시뮬에서 먼저 시험(실물 위험 없이).
+2. Davi가 지난 세션(2026-08-21 23:54)에 커밋+푸시한 IMU 3건
+   (`01f5a38`,`4fe270a`,`5ed0bd5`) 아직 팩트체크 안 함 — 지자기 X축 부호
+   반전 포함. 검토 필요.
+3. `diff_drive_node.py`에 추가한 `turn_debug` 로깅(회전 중 한쪽 PWM이
+   데드존 근접 시 WARN) — 방향전환 직후 왼쪽 바퀴만 몇 초씩 안 돌던 현상
+   재현 시 이 로그로 원인 확정할 것(2026-08-22 밤 실측, 원인 미확정 —
+   "스크럽 마찰+폐루프 보정이 피드포워드를 깎는다" 가설, 코드는 대칭적이라
+   검증 전).
 
 ## 🔴 하드웨어 얘기 전에 반드시 읽을 것 — `docs/hardware_inventory.md`
 
