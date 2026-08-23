@@ -158,3 +158,21 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   완화 방향(미착수, 논의 필요): (a) Nav2/SLAM이 안정된 뒤 explore_node를
   지연 기동, (b) explore_lite 패치로 첫 N회 실패는 블랙리스트 대신 재시도,
   (c) 초반 구간만 transform_tolerance를 넉넉히.
+
+- **완화책 (a) 적용 + 재검증 완료** (2026-08-23 밤, Resie): Remi 결정대로 (a)
+  먼저 적용. 고정 시간 지연 대신 `lifecycle_manager`의 "Managed nodes are
+  active" 로그를 `OnProcessIO`로 감지해서 그 시점에 explore_node/frontier_node를
+  시작하도록 `sim_autonomous_mapping.launch.py` 수정(부하에 따라 부트스트랩
+  시간이 달라져도 견고). 60초 스모크 테스트로 첫 목표부터 정상 진행 확인 후,
+  Phase 1과 동일 조건(3회씩, 좀비 없는 상태)으로 재검증:
+
+  | explorer | rep0 | rep1 | rep2 | 평균 | 변동폭 |
+  |---|---|---|---|---|---|
+  | explore_lite (수정 전) | 7.2% | 44.4% | 32.9% | 28.2% | 6배 |
+  | **explore_lite (수정 후)** | 42.0% | 35.1% | 32.0% | **36.4%** | **1.3배** |
+  | frontier (수정 후) | 30.2% | 28.6% | 32.9% | 30.6% | 수정 전과 거의 동일 |
+
+  **"조기종료(1회 시도 후 포기)" 패턴 완전히 사라짐.** explore_lite가 이제
+  frontier보다 평균 커버리지도 높고(36.4% vs 30.6%) 안정성도 크게 개선됨 —
+  (b) 패치 없이 (a)만으로 충분해 보임. 단 3회는 여전히 작은 표본, 확정하려면
+  반복 수를 더 늘려볼 가치 있음.
