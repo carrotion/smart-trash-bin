@@ -17,26 +17,37 @@ Pi 세션(Claude)이 오케스트레이션을 맡고, PC 세션(Claude)이 무�
   (`tools/sim_param_sweep.py`), 진단 도구(TF 스톨 조사용, 원인은 자원경쟁으로 해소).
   파이 배치 스윕 결과: **속도 0.04m/s + progress_checker 여유 30초 +
   min_frontier_size 0.4**가 지금까지 최적(66초에 완료, 목표전환 4회, 실패 1회).
-- **Phase 1 (PC 담당, 진행 중)**: explore_lite vs frontier_exploration_ros2 비교.
-- **Phase 2 (예정)**: Phase 1 승자를 여러 시작 위치에서 반복 검증(단일 시작점
-  과적합 여부 확인) — Pi가 스크립트 준비 중.
+- **Phase 1 (완료, Resie)**: explore_lite vs frontier_exploration_ros2 비교 +
+  Optuna 파라미터 탐색(스코프 확장, 결과 좋음). 상세: `docs/sim_optimization_2026-08-23.md`,
+  리뷰: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1).
+  핵심 발견: (1) 승자가 맵에 따라 뒤집힘(단일 맵 결론 금지), (2) TF 스톨은
+  자원경합이 원인으로 확정(구조적 버그 아님), (3) Optuna 최적값 발견했으나
+  24개 중 8개(33%)가 정확히 동일값(7.191%)에서 조기종료 — 미해결.
+- **Phase 1.5 (PC 담당, 다음)**: 위 7.191% 조기종료 실패모드 원인 규명.
+  `home_real` 오탐, 파이 배치 스윕의 "목표전환 0회" 사례와 같은 부트스트랩
+  실패 계열로 추정 — 확정 전까지 Optuna 최적값(44.2%)을 프로덕션 후보로
+  확정하지 말 것. frontier_exploration_ros2도 동일 Optuna 하네스로 탐색.
+- **Phase 2 (예정)**: 승자를 여러 시작 위치에서 반복 검증(단일 시작점 과적합
+  여부 확인) — Pi가 스크립트 준비 중.
 - **Phase 3 (예정)**: 검증된 설정을 실물 로봇에 반영, 최종 실주행.
 
-## PC 세션 현재 할당 작업 (Phase 1)
+## PC 세션 현재 할당 작업 (Phase 1.5)
 
-**목표**: explore_lite vs frontier_exploration_ros2, 같은 조건에서 공정 비교.
+**목표**: Optuna 탐색 24트라이얼 중 8개(33%)가 정확히 동일 커버리지(7.191%)에서
+멈춘 원인 규명 — 파라미터 최적화보다 이게 먼저.
 
-- 설정: potential_scale=2.0 / gain_scale=2.0 / min_frontier_size=0.4,
-  속도 0.04m/s, progress_checker 여유 30초 (파이에서 검증된 값 그대로)
-- 월드: `our_home`, 같은 시작지점
-- 반복: 각 전략 **최소 3회**(재현성 확인 — 단발성 결과로 결론내지 말 것)
-- 지표: 완료여부 / 소요시간 / 목표전환 횟수 / progress_fail 횟수 / 충돌 횟수 /
-  최종 맵 커버리지 %(map_coverage_logger.py 활용)
-- **원본 로그도 남길 것** — 숫자 요약만으로는 Pi가 검증할 수 없음
+- 실패한 8개 트라이얼의 파라미터 조합과 로그를 다시 살펴, 공통점(예: 특정
+  랜덤시드 타이밍, 특정 파라미터 조합과 무관하게 항상 동일값이면 파라미터
+  이전 단계=부트스트랩 자체의 결정론적 실패) 찾을 것
+- `home_real`에서의 explore_lite "오탐 완료"(§1)와 근본원인이 같은지 로그로 확인
+- 원인 확정되면: (a) Optuna 탐색을 그 조건을 배제/보정해서 재실행, (b) 실물/파이
+  탐색 로직에도 같은 문제가 있는지 확인
+- 다음: frontier_exploration_ros2도 동일 Optuna 하네스로 탐색
 
-**보고 방법**: 이 파일 아래 "## PC 보고" 섹션에 결과 표 + 로그 파일 경로(pc_results/
-또는 저장소 내 경로) 채워서 커밋+푸시. Pi가 pull해서 직접 로그 검토 후 승자 결정.
+**보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
+코멘트로.
 
 ## PC 보고
 
-_(아직 없음 — Phase 1 완료 후 여기에 작성)_
+- Phase 1 결과: `docs/sim_optimization_2026-08-23.md` (2026-08-23, Resie)
+- Phase 1.5: _(진행 중)_
