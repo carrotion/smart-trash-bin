@@ -1,4 +1,5 @@
 import os
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -6,7 +7,8 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
                              OpaqueFunction, SetLaunchConfiguration)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, TextSubstitution
+from launch.substitutions import (LaunchConfiguration, PythonExpression,
+                                   TextSubstitution)
 from launch_ros.actions import Node
 
 """
@@ -54,6 +56,21 @@ def generate_launch_description():
     declare_world_cmd = DeclareLaunchArgument(
         'world', default_value=TextSubstitution(text='cave'),
         description='stage_ros2/world/<world>.world (확장자 없이)')
+    # 2026-08-23: explore_lite vs frontier_exploration_ros2 전략 비교용
+    # (docs/exploration_strategy_research.md 후속). 같은 world/시작지점/Nav2/SLAM
+    # 스택 위에서 프론티어 탐색기만 바꿔 낀다.
+    declare_explorer_cmd = DeclareLaunchArgument(
+        'explorer', default_value='explore_lite',
+        description="'explore_lite' 또는 'frontier' (frontier_exploration_ros2)")
+    # 2026-08-23: home_real/our_home 양쪽에서 공통으로 나온 "Transform data too
+    # old"(map->odom TF 지연) 진단용. 빈 문자열이면 프로덕션 값(0.3) 그대로 —
+    # nav2_params.yaml은 절대 안 건드리고 런치 오버레이로만 적용해서, 진단이
+    # 끝나면 이 인자를 안 주는 것만으로 원래 상태로 완전히 돌아온다.
+    declare_diag_tf_tolerance_cmd = DeclareLaunchArgument(
+        'diag_transform_tolerance', default_value='',
+        description='비우면 프로덕션 값(0.3) 유지. 숫자를 주면 controller_server/'
+                    'behavior_server/bt_navigator/global·local_costmap의 '
+                    'transform_tolerance를 전부 이 값으로 일괄 오버라이드(진단용).')
 
     def stage_world_configuration(context):
         f = os.path.join(stage_ros2_share, 'world',
@@ -61,6 +78,41 @@ def generate_launch_description():
         return [SetLaunchConfiguration('world_file', f)]
 
     stage_world_configuration_cmd = OpaqueFunction(function=stage_world_configuration)
+
+    def diag_tf_tolerance_configuration(context):
+        val = context.launch_configurations.get('diag_transform_tolerance', '')
+        with tempfile.NamedTemporaryFile(
+                mode='w', suffix='.yaml', prefix='diag_tf_tolerance_',
+                delete=False) as f:
+            if val:
+                for node_block in (
+                    f'controller_server:\n  ros__parameters:\n'
+                    f'    transform_tolerance: {val}\n'
+                    f'    FollowPath:\n      transform_tolerance: {val}\n',
+                    f'local_costmap:\n  local_costmap:\n    ros__parameters:\n'
+                    f'      transform_tolerance: {val}\n',
+                    f'planner_server:\n  ros__parameters:\n'
+                    f'    transform_tolerance: {val}\n',
+                    f'global_costmap:\n  global_costmap:\n    ros__parameters:\n'
+                    f'      transform_tolerance: {val}\n'
+                    f'      static_layer:\n        transform_tolerance: {val}\n',
+                    f'behavior_server:\n  ros__parameters:\n'
+                    f'    transform_tolerance: {val}\n',
+                    f'bt_navigator:\n  ros__parameters:\n'
+                    f'    transform_tolerance: {val}\n',
+                ):
+                    f.write(node_block)
+            else:
+                # 오버라이드 없음 — 무해한 no-op(이미 True인 값 재확인)만 적힌
+                # 유효한 yaml. 빈 파일/빈 매핑을 --params-file로 주면 일부
+                # rclcpp 버전에서 파싱 경고가 나서 이렇게 채워둔다.
+                f.write('/**:\n  ros__parameters:\n    use_sim_time: true\n')
+            diag_file = f.name
+        return [SetLaunchConfiguration('diag_tf_override_file', diag_file)]
+
+    diag_tf_tolerance_configuration_cmd = OpaqueFunction(
+        function=diag_tf_tolerance_configuration)
+    diag_tf_override_file = LaunchConfiguration('diag_tf_override_file')
 
     # stage_ros2/launch/stage.launch.py를 그대로 include하지 않고 직접 Node로
     # 띄운다 — base_scan -> scan 리매핑을 넣기 위함(include로는 이 remap을
@@ -84,30 +136,81 @@ def generate_launch_description():
     controller_server = Node(
         package='nav2_controller', executable='controller_server',
         name='controller_server', output='screen',
-        parameters=[{'use_sim_time': True}, nav2_params_file])
+        parameters=[{'use_sim_time': True}, nav2_params_file, diag_tf_override_file])
     planner_server = Node(
         package='nav2_planner', executable='planner_server',
         name='planner_server', output='screen',
-        parameters=[{'use_sim_time': True}, nav2_params_file])
+        parameters=[{'use_sim_time': True}, nav2_params_file, diag_tf_override_file])
     behavior_server = Node(
         package='nav2_behaviors', executable='behavior_server',
         name='behavior_server', output='screen',
-        parameters=[{'use_sim_time': True}, nav2_params_file])
+        parameters=[{'use_sim_time': True}, nav2_params_file, diag_tf_override_file])
+    # ⚠️ nav2_params.yaml의 default_nav_to_pose_bt_xml은 실물 Pi 홈 경로
+    # (/home/carrotian/...)로 하드코딩돼 있어 이 시뮬 환경(사용자명이 다름)에서는
+    # 존재하지 않는 파일이 된다 — bt_navigator가 활성화 자체에 실패한다
+    # (2026-08-23 첫 시도에서 확인). 패키지에 설치된 share 경로로 오버라이드.
+    #
+    # ⚠️ 처음엔 이걸 plain dict로 parameters 리스트 맨 뒤에 넣었는데 안 먹혔다.
+    # launch_ros가 plain dict를 임시 yaml로 만들 때 노드 이름이 아니라 "/**"
+    # 와일드카드로 스코프를 잡는데, ROS2 파라미터 우선순위는 **와일드카드보다
+    # 노드명 명시 항목이 파일 순서와 무관하게 항상 이긴다.** nav2_params.yaml은
+    # "bt_navigator:" 로 명시 스코프라 와일드카드 오버라이드가 항상 졌다
+    # (2026-08-23, ps로 --params-file 순서까지 확인했는데도 값이 안 바뀌어서
+    # 발견 — 순서 문제가 아니라 스코프 문제였음). 그래서 직접 노드명으로 스코프한
+    # 임시 yaml을 만들어 맨 뒤에 넣는다(같은 스코프끼리는 파일 순서상 마지막이 이김).
+    bt_xml_override_path = os.path.join(
+        bringup_share, 'behavior_trees', 'navigate_to_pose_slow_recovery.xml')
+    with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.yaml', prefix='bt_navigator_override_', delete=False) as f:
+        f.write('bt_navigator:\n  ros__parameters:\n'
+                f'    default_nav_to_pose_bt_xml: "{bt_xml_override_path}"\n')
+        bt_xml_override_file = f.name
+
     bt_navigator = Node(
         package='nav2_bt_navigator', executable='bt_navigator',
         name='bt_navigator', output='screen',
-        parameters=[{'use_sim_time': True}, nav2_params_file])
+        parameters=[
+            {'use_sim_time': True},
+            nav2_params_file,
+            bt_xml_override_file,
+            diag_tf_override_file,
+        ])
     lifecycle_manager = Node(
         package='nav2_lifecycle_manager', executable='lifecycle_manager',
         name='lifecycle_manager_navigation', output='screen',
         parameters=[{'use_sim_time': True}, nav2_params_file])
+
+    explore_lite_condition = IfCondition(PythonExpression([
+        "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
+        LaunchConfiguration('explorer'), "' == 'explore_lite'"]))
+    frontier_condition = IfCondition(PythonExpression([
+        "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
+        LaunchConfiguration('explorer'), "' == 'frontier'"]))
 
     explore_node = Node(
         package='explore_lite', executable='explore',
         name='explore_node', output='screen',
         parameters=[{'use_sim_time': True}, explore_params_file],
         remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
-        condition=IfCondition(LaunchConfiguration('enable_explore')))
+        condition=explore_lite_condition)
+
+    # frontier_exploration_ros2 (mertgulerx) — explore_lite 대체 후보 비교용.
+    # 패키지 기본값(config/params.yaml)은 TurtleBot3 Waffle 기준이라 그대로 못
+    # 쓰는 파라미터만 오버라이드한다: robot_base_frame(우리는 base_footprint가
+    # 없고 base_link뿐 — Stage가 odom->base_link를 직접 발행), 그리고 로봇
+    # 반경 기반 권장값(2.5x 외접반경 0.141m ≈ 0.35m)으로 두 거리 파라미터.
+    # 나머지(MRTSP, map 최적화, QoS 등)는 패키지 자체 기본값을 그대로 써서
+    # "우리가 튜닝한 explore_lite" vs "저쪽 기본 전략" 비교가 되게 한다.
+    frontier_node = Node(
+        package='frontier_exploration_ros2', executable='frontier_explorer',
+        name='frontier_explorer', output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'robot_base_frame': 'base_link',
+            'frontier_selection_min_distance': 0.35,
+            'frontier_candidate_min_goal_distance_m': 0.35,
+        }],
+        condition=frontier_condition)
 
     ld = LaunchDescription()
     ld.add_action(declare_nav2_params_cmd)
@@ -115,7 +218,10 @@ def generate_launch_description():
     ld.add_action(declare_slam_params_cmd)
     ld.add_action(declare_enable_explore_cmd)
     ld.add_action(declare_world_cmd)
+    ld.add_action(declare_explorer_cmd)
+    ld.add_action(declare_diag_tf_tolerance_cmd)
     ld.add_action(stage_world_configuration_cmd)
+    ld.add_action(diag_tf_tolerance_configuration_cmd)
     ld.add_action(stage_node)
     ld.add_action(slam_toolbox_launch)
     ld.add_action(controller_server)
@@ -124,4 +230,5 @@ def generate_launch_description():
     ld.add_action(bt_navigator)
     ld.add_action(lifecycle_manager)
     ld.add_action(explore_node)
+    ld.add_action(frontier_node)
     return ld
