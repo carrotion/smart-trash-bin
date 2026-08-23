@@ -112,9 +112,12 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
    vs frontier 30.7%(일관적, 완료 0/3)
 3. ~~Phase 1.5 원인 규명~~ **완료** — explore_lite가 첫 목표 실패(부트스트랩 시점
    TF 지연) 단 1회만으로 블랙리스트 오판하는 게 근본원인으로 확정됨
-4. **(진행) Phase 1.5 완화책 (a)**: explore_node를 SLAM/코스트맵 준비 확인 후
-   지연 기동하도록 launch 순서 조정, 재시험. (b) explore_lite 패치는 (a) 이후
-   재발하면 착수. (c)는 스킵(합의: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1) 참고)
+4. **(진행) Phase 1.5 완화책 (a)**: `e07eed4`로 구현 완료, 코드 리뷰 승인
+   (OnProcessIO 이벤트 기반 지연 기동, 이중시작 없음 확인 — [Issue #1 코멘트](https://github.com/carrotion/smart-trash-bin/issues/1#issuecomment-5385346141)).
+   **단, 60초 스모크 테스트 1건뿐이라 "해결"로 보기엔 이름** — Phase 1과 같은
+   방법론(3회 반복, world=our_home, 200초 캡)으로 정식 재검증 요청, 특히
+   7.191% 조기종료가 나왔던 N=4 병렬(ROS_DOMAIN_ID 100~103) 조건 최소 1회 포함.
+   통과하면 close, 재발하면 (b) 착수. (c)는 스킵(합의: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1) 참고)
 5. frontier_exploration_ros2도 Optuna 하네스로 별도 탐색 — (4)와 병행 가능
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
