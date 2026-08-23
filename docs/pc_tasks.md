@@ -222,9 +222,55 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   넘어가 탐색은 계속됨. patches/README.md에 배경/검증 기록 완료. 다음:
   frontier_exploration_ros2 Optuna 탐색 착수.
 
+- **🔴 explore_lite Optuna 24트라이얼 재탐색에서 79%(19/24) 조기종료 재현 —
+  원인은 (a)/(b)가 아니라 도메인 슬롯 풀 자체의 좀비 누수였다** (2026-08-23 밤
+  ~2026-08-24 새벽, Resie): (b) 적용 후 `retry_delay_ms`(즉시 재시도 →
+  1500ms 지연 재시도로 개정, `same_goal` 최적화를 우회하려고 `prev_goal_`을
+  NaN으로 무효화하는 처리도 함께 넣음)까지 적용했는데도 24트라이얼 재검증에서
+  87.5%(run4 이전 배치) → 79%(run4)로 조기종료가 거의 안 줄었다. 일부는
+  `tf_stale=0`인데도 실패해서 TF 지연과 무관한 원인을 의심하고 로그를 보니
+  `slam_toolbox` lifecycle 전이 실패(`Failed to make transition
+  'TRANSITION_CONFIGURE'`, `No transition matching 3 found for current state
+  active`)와 `Detected jump back in time. Clearing TF buffer.`가 찍혀 있었음.
+
+  프로세스 트리를 전수조사한 결과 **도메인 100/101/102/103 각각에 좀비 트리가
+  하나씩, 11시간 넘게(etimes 39500~41700초) 눌러앉아 있었다** — `[stage_ros2]`,
+  `[planner_server]`, `[behavior_server]`, `[bt_navigator]`는 `<defunct>`
+  (진짜 죽은 좀비)였지만, 그 부모인 `timeout`/`ros2 launch` 파이썬 프로세스
+  자체는 **살아있는 상태**였다. 즉 이번 run4의 24트라이얼 전부가 4개 도메인
+  전부 이미 오염된 채로 실행됐다 — (a)/(b) 로직이 잘못된 게 아니라애초에
+  **깨끗한 도메인에서 실행된 트라이얼이 하나도 없었다.**
+
+  **좀비의 근본원인 — `optuna_search.py`의 `os.killpg(os.getpgid(proc.pid),
+  ...)` 자체가 버그였다.** `proc.wait()`가 정상 반환되면(타임아웃이 아니라
+  exit 0으로 끝나면) 그 시점에 파이썬이 이미 `proc.pid`를 reap한 상태다.
+  그 뒤 `os.getpgid(proc.pid)`를 부르면 이미 사라진 PID라 `ProcessLookupError`
+  (ESRCH)가 나고, 바로 아래 `except: pass`가 이를 조용히 삼켜서 **killpg가
+  사실상 한 번도 실행되지 않았다** — grandchildren(ros2 launch가 띄운 노드
+  전부)이 그대로 좀비/고아로 남았다. 타임아웃 경로에서만 pid가 아직 살아있어
+  우연히 성공했던 것. `preexec_fn=os.setsid`로 시작했으므로 그룹 리더의
+  pgid는 항상 `proc.pid`와 동일(reap 여부와 무관하게 이미 알고 있는 값) —
+  `getpgid` 조회 자체를 없애고 `proc.pid`를 pgid로 직접 쓰도록 수정
+  (`tools/optuna_search.py` `run_trial()`).
+
+  좀비 4개 그룹을 `kill -9 -<pgid>`로 전부 정리, `mapping_cleanup.clean_orphan_shm()`으로
+  DDS shm 잔재 정리, 프로세스 완전히 0개 확인 후 수정된 코드로
+  `study_explore_lite_v5_fixed.db`에 24트라이얼 재검증 중(결과는 아래 이어서
+  기록).
+
+  ⚠️ **교훈**: (a)/(b) 자체의 재검증(N=4, 4회)은 전부 순수 신규 프로세스로
+  돌렸기 때문에 그 결과(조기종료 0/4)는 여전히 유효하다. 문제는 그 이후
+  **장시간 Optuna 배치(24트라이얼, 여러 차례 재시도)를 거치며 좀비가 누적됐고,
+  그 누적을 매 배치 시작 전에 확인하지 않은 것**이다 — `docs/pc_tasks.md`
+  "공유 자원 규칙"에 있던 "자기 자신의 이전 배치 좀비도 확인" 원칙을 정확히
+  어긴 사례. `optuna_search.py`를 재실행하기 전에는 항상
+  `ps -eo pid,ppid,pgid,etimes,cmd | grep -E 'ros2 launch|stage_ros2|Xvfb'`로
+  0개인지 확인할 것 — 프로세스가 남아있으면 `kill -9 -<pgid>`(음수 pgid,
+  즉 killpg)로 그룹째 정리.
+
 - **Phase 1.5 완화책 (b) 적용 + N=4 병렬 검증 완료** (2026-08-23 밤, Resie):
-  m-explore-ros2에 패치 추가() — 좌표별 실패 횟수를 세서
-  (기본 2) 미만이면 blacklist 대신 makePlan() 재호출로
+  m-explore-ros2에 패치 추가(`robot/patches/`) — 좌표별 실패 횟수를 세서
+  `max_frontier_retries`(기본 2) 미만이면 blacklist 대신 makePlan() 재호출로
   재시도. (a)와 함께 적용한 채로 같은 N=4 병렬 조건(도메인 100~103, 200초)
   재검증:
 
@@ -236,4 +282,5 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   | 3 | 23 | 6 | 13 | 정상 진행(타임아웃) |
 
   **조기종료(goal_switches=1) 0/4 — (a) 단독 4/4 재현에서 완전히 해소됨.**
-  TF 스톨 자체는 여전히 자주 발생하지만(런당 6~10회), 매번 retrying
+  TF 스톨 자체는 여전히 자주 발생하지만(런당 6~10회), 매번 재시도 로그로
+  넘어가 탐색은 계속됨. patches/README.md에 배경/검증 기록 완료.

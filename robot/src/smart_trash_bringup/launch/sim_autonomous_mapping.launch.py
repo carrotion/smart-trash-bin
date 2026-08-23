@@ -73,6 +73,14 @@ def generate_launch_description():
         description='비우면 프로덕션 값(0.3) 유지. 숫자를 주면 controller_server/'
                     'behavior_server/bt_navigator/global·local_costmap의 '
                     'transform_tolerance를 전부 이 값으로 일괄 오버라이드(진단용).')
+    # 2026-08-23: frontier_exploration_ros2 파라미터 탐색(Optuna)용 — 아래
+    # frontier_node의 하드코딩 파라미터는 로봇 기하 기반 상수(robot_base_frame,
+    # 거리 2개)만 유지하고, 나머지 탐색 대상 파라미터는 이 파일로 오버라이드한다.
+    # 빈 문자열이면 패키지 기본값 그대로.
+    declare_frontier_params_cmd = DeclareLaunchArgument(
+        'frontier_params_file', default_value='',
+        description='frontier_exploration_ros2 파라미터 오버라이드 yaml(비우면 '
+                    '패키지 기본값 + 로봇 기하 상수만 적용).')
 
     def stage_world_configuration(context):
         f = os.path.join(stage_ros2_share, 'world',
@@ -115,6 +123,21 @@ def generate_launch_description():
     diag_tf_tolerance_configuration_cmd = OpaqueFunction(
         function=diag_tf_tolerance_configuration)
     diag_tf_override_file = LaunchConfiguration('diag_tf_override_file')
+
+    def frontier_params_configuration(context):
+        val = context.launch_configurations.get('frontier_params_file', '')
+        if val:
+            return [SetLaunchConfiguration('frontier_params_override_file', val)]
+        with tempfile.NamedTemporaryFile(
+                mode='w', suffix='.yaml', prefix='frontier_params_noop_',
+                delete=False) as f:
+            f.write('frontier_explorer:\n  ros__parameters:\n    use_sim_time: true\n')
+            noop_file = f.name
+        return [SetLaunchConfiguration('frontier_params_override_file', noop_file)]
+
+    frontier_params_configuration_cmd = OpaqueFunction(
+        function=frontier_params_configuration)
+    frontier_params_override_file = LaunchConfiguration('frontier_params_override_file')
 
     # stage_ros2/launch/stage.launch.py를 그대로 include하지 않고 직접 Node로
     # 띄운다 — base_scan -> scan 리매핑을 넣기 위함(include로는 이 remap을
@@ -211,7 +234,7 @@ def generate_launch_description():
             'robot_base_frame': 'base_link',
             'frontier_selection_min_distance': 0.35,
             'frontier_candidate_min_goal_distance_m': 0.35,
-        }],
+        }, frontier_params_override_file],
         condition=frontier_condition)
 
     # ⚠️ 2026-08-23 밤 (Phase 1.5 완화책 a, Remi 결정): explore_node/frontier_node를
@@ -254,8 +277,10 @@ def generate_launch_description():
     ld.add_action(declare_world_cmd)
     ld.add_action(declare_explorer_cmd)
     ld.add_action(declare_diag_tf_tolerance_cmd)
+    ld.add_action(declare_frontier_params_cmd)
     ld.add_action(stage_world_configuration_cmd)
     ld.add_action(diag_tf_tolerance_configuration_cmd)
+    ld.add_action(frontier_params_configuration_cmd)
     ld.add_action(stage_node)
     ld.add_action(slam_toolbox_launch)
     ld.add_action(controller_server)
