@@ -1,13 +1,40 @@
 diff --git a/explore/include/explore/explore.h b/explore/include/explore/explore.h
-index 7741ce0..2b1830b 100644
+index 7741ce0..d59d0a8 100644
 --- a/explore/include/explore/explore.h
 +++ b/explore/include/explore/explore.h
-@@ -140,6 +140,8 @@ private:
+@@ -97,6 +97,10 @@ private:
+       const std::vector<frontier_exploration::Frontier>& frontiers);
+ 
+   bool goalOnBlacklist(const geometry_msgs::msg::Point& goal);
++  // 2026-08-23 추가(smart-trash-bin, Phase 1.5 완화책 b): 좌표별 실패 횟수를
++  // 찾아서 참조로 반환(없으면 0으로 새로 만들어 반환) — goalOnBlacklist와
++  // 같은 근접 허용오차(tolerance)로 좌표를 비교한다.
++  int& getFailureCount(const geometry_msgs::msg::Point& goal);
+ 
+   NavigationGoalHandle::SharedPtr navigation_goal_handle_;
+   // void
+@@ -128,6 +132,10 @@ private:
+   void resumeCallback(const std_msgs::msg::Bool::SharedPtr msg);
+ 
+   std::vector<geometry_msgs::msg::Point> frontier_blacklist_;
++  // 2026-08-23 추가(smart-trash-bin, Phase 1.5 완화책 b): 좌표별 ABORTED 횟수.
++  // frontier_blacklist_와 별개 — 이쪽은 "몇 번 실패했는지"만 세고,
++  // max_frontier_retries_ 문턱을 넘어야 실제 blacklist로 넘어간다.
++  std::vector<std::pair<geometry_msgs::msg::Point, int>> frontier_failure_counts_;
+   geometry_msgs::msg::Point prev_goal_;
+   double prev_distance_;
+   rclcpp::Time last_progress_;
+@@ -140,6 +148,13 @@ private:
    double planner_frequency_;
    double potential_scale_, orientation_scale_, gain_scale_;
    double progress_timeout_;
 +  // 2026-08-17 추가(smart-trash-bin): 이 거리보다 가까운 프론티어는 목표로 삼지 않음.
 +  double min_frontier_distance_;
++  // 2026-08-23 추가(smart-trash-bin, Phase 1.5 완화책 b): ABORTED 결과가 이
++  // 횟수 미만이면 blacklist 대신 재시도(makePlan 재호출). 시뮬 부트스트랩
++  // 극초반의 일시적 TF 지연 같은 "곧 회복될 실패"를 영구 포기로 오판하는 걸
++  // 막는다 — 근거: robot/patches/README.md의 Phase 1.5 조사 기록.
++  int max_frontier_retries_;
    bool visualize_;
    bool return_to_init_;
    std::string robot_base_frame_;
@@ -46,7 +73,7 @@ index 0f8e610..a9d8a57 100644
  };
  }  // namespace frontier_exploration
 diff --git a/explore/src/explore.cpp b/explore/src/explore.cpp
-index 6a1125c..d1e04f2 100644
+index 6a1125c..f8f406d 100644
 --- a/explore/src/explore.cpp
 +++ b/explore/src/explore.cpp
 @@ -36,6 +36,8 @@
@@ -58,7 +85,7 @@ index 6a1125c..d1e04f2 100644
  #include <explore/explore.h>
  
  #include <thread>
-@@ -70,6 +72,18 @@ Explore::Explore()
+@@ -70,6 +72,29 @@ Explore::Explore()
    this->declare_parameter<float>("gain_scale", 1.0);
    this->declare_parameter<float>("min_frontier_size", 0.5);
    this->declare_parameter<bool>("return_to_init", false);
@@ -74,18 +101,30 @@ index 6a1125c..d1e04f2 100644
 +  // 최소 거리를 걸면 로봇이 실제로 이동하게 되고, **이동하면 사각지대도 같이
 +  // 움직여서 이전에 못 보던 곳이 채워진다** — 쐐기는 스스로 메워진다.
 +  this->declare_parameter<double>("min_frontier_distance", 0.6);
++  // ⚠️ 2026-08-23 추가 (smart-trash-bin, Phase 1.5 완화책 b): 목표가
++  // ABORTED되면 원래 즉시 영구 blacklist였다(reachedGoal 참고) — 시뮬레이션
++  // 부트스트랩 극초반(SLAM/코스트맵 초기화 부하가 몰리는 시점)에 map->odom TF가
++  // 살짝 지연되면 첫 목표가 그 순간 실패하고, 그 즉시 blacklist에 들어가
++  // 다음 makePlan에서 후보가 하나도 안 남아 "All frontiers traversed"로 완전히
++  // 포기해버렸다(N=4 병렬 조건 100% 재현 — 실물/home_real의 유사 사례와 같은 계열).
++  // 완화책(a, launch에서 SLAM 활성화 신호를 기다린 뒤 지연 기동)은 순차 실행에서는
++  // 통했지만 병렬(자원경합 심함)에서는 활성화 신호 자체가 TF 안정성을 보장 못 해
++  // 그대로 재현됐다 — 그래서 "일시적 실패를 영구 실패로 오판하지 않는다"를
++  // explore_lite 자체의 불변조건으로 만든다: 첫 N회는 재시도, 그 이후만 blacklist.
++  this->declare_parameter<int>("max_frontier_retries", 2);
  
    this->get_parameter("planner_frequency", planner_frequency_);
    this->get_parameter("progress_timeout", timeout);
-@@ -79,6 +93,7 @@ Explore::Explore()
+@@ -79,6 +104,8 @@ Explore::Explore()
    this->get_parameter("gain_scale", gain_scale_);
    this->get_parameter("min_frontier_size", min_frontier_size);
    this->get_parameter("return_to_init", return_to_init_);
 +  this->get_parameter("min_frontier_distance", min_frontier_distance_);
++  this->get_parameter("max_frontier_retries", max_frontier_retries_);
    this->get_parameter("robot_base_frame", robot_base_frame_);
  
    progress_timeout_ = timeout;
-@@ -86,9 +101,9 @@ Explore::Explore()
+@@ -86,9 +113,9 @@ Explore::Explore()
        rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
            this, ACTION_NAME);
  
@@ -98,7 +137,7 @@ index 6a1125c..d1e04f2 100644
  
    if (visualize_) {
      marker_array_publisher_ =
-@@ -193,7 +208,7 @@ void Explore::visualizeFrontiers(
+@@ -193,7 +220,7 @@ void Explore::visualizeFrontiers(
      m.scale.y = 0.1;
      m.scale.z = 0.1;
      m.points = frontier.points;
@@ -107,7 +146,7 @@ index 6a1125c..d1e04f2 100644
        m.color = red;
      } else {
        m.color = blue;
-@@ -202,7 +217,7 @@ void Explore::visualizeFrontiers(
+@@ -202,7 +229,7 @@ void Explore::visualizeFrontiers(
      ++id;
      m.type = visualization_msgs::msg::Marker::SPHERE;
      m.id = int(id);
@@ -116,7 +155,7 @@ index 6a1125c..d1e04f2 100644
      // scale frontier according to its cost (costier frontiers will be smaller)
      double scale = std::min(std::abs(min_cost * 0.4 / frontier.cost), 0.5);
      m.scale.x = scale;
-@@ -255,7 +270,7 @@ void Explore::makePlan()
+@@ -255,7 +282,7 @@ void Explore::makePlan()
    auto frontier =
        std::find_if_not(frontiers.begin(), frontiers.end(),
                         [this](const frontier_exploration::Frontier& f) {
@@ -125,7 +164,7 @@ index 6a1125c..d1e04f2 100644
                         });
    if (frontier == frontiers.end()) {
      RCLCPP_WARN(logger_, "All frontiers traversed/tried out, stopping.");
-@@ -265,7 +280,36 @@ void Explore::makePlan()
+@@ -265,7 +292,36 @@ void Explore::makePlan()
      stop(true);
      return;
    }
@@ -163,6 +202,66 @@ index 6a1125c..d1e04f2 100644
  
    // time out if we are not making any progress
    bool same_goal = same_point(prev_goal_, target_position);
+@@ -361,6 +417,26 @@ bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
+   return false;
+ }
+ 
++// 2026-08-23 추가(smart-trash-bin, Phase 1.5 완화책 b): goalOnBlacklist와
++// 동일한 근접 허용오차로 좌표를 찾아 실패 횟수를 참조로 반환. 처음 보는
++// 좌표면 0으로 새로 등록한다.
++int& Explore::getFailureCount(const geometry_msgs::msg::Point& goal)
++{
++  constexpr static size_t tolerace = 5;
++  nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
++
++  for (auto& entry : frontier_failure_counts_) {
++    double x_diff = fabs(goal.x - entry.first.x);
++    double y_diff = fabs(goal.y - entry.first.y);
++
++    if (x_diff < tolerace * costmap2d->getResolution() &&
++        y_diff < tolerace * costmap2d->getResolution())
++      return entry.second;
++  }
++  frontier_failure_counts_.push_back({goal, 0});
++  return frontier_failure_counts_.back().second;
++}
++
+ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
+                           const geometry_msgs::msg::Point& frontier_goal)
+ {
+@@ -368,13 +444,28 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
+     case rclcpp_action::ResultCode::SUCCEEDED:
+       RCLCPP_DEBUG(logger_, "Goal was successful");
+       break;
+-    case rclcpp_action::ResultCode::ABORTED:
+-      RCLCPP_DEBUG(logger_, "Goal was aborted");
+-      frontier_blacklist_.push_back(frontier_goal);
+-      RCLCPP_DEBUG(logger_, "Adding current goal to black list");
++    case rclcpp_action::ResultCode::ABORTED: {
++      // 2026-08-23 수정(smart-trash-bin, Phase 1.5 완화책 b): 원래는 여기서
++      // 무조건 즉시 blacklist였다 — 시뮬 부트스트랩 극초반의 일시적 TF 지연
++      // 같은 "곧 회복될 실패"까지 영구 포기로 오판했다(N=4 병렬 100% 재현,
++      // 상세 근거는 max_frontier_retries_ 선언부 주석 참고). max_frontier_retries_
++      // 문턱을 넘을 때까지는 재시도만 한다.
++      int& fail_count = getFailureCount(frontier_goal);
++      ++fail_count;
++      if (fail_count >= max_frontier_retries_) {
++        frontier_blacklist_.push_back(frontier_goal);
++        RCLCPP_DEBUG(logger_, "Goal aborted %d times, adding to black list",
++                     fail_count);
++      } else {
++        RCLCPP_WARN(logger_,
++                    "Goal aborted (%d/%d) — retrying instead of blacklisting",
++                    fail_count, max_frontier_retries_);
++        makePlan();
++      }
+       // If it was aborted probably because we've found another frontier goal,
+       // so just return and don't make plan again
+       return;
++    }
+     case rclcpp_action::ResultCode::CANCELED:
+       RCLCPP_DEBUG(logger_, "Goal was canceled");
+       // If goal canceled might be because exploration stopped from topic. Don't make new plan.
 diff --git a/explore/src/frontier_search.cpp b/explore/src/frontier_search.cpp
 index 6085fd8..03b82e8 100644
 --- a/explore/src/frontier_search.cpp
