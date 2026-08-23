@@ -233,9 +233,20 @@ class ImuPublisherNode(Node):
         mag = MagneticField()
         mag.header = header
         # AK09916: 0.15 uT/LSB -> 테슬라 단위(REP-145)로 변환.
-        # ⚠️ 차체 전후 180° 반전(2026-08-17)으로 인해 센서 X축이 차체 후방을 향하므로 부호 반전(-)
+        # 하드아이언 편향은 µT 단위에서 빼고 나서 테슬라로 바꾼다.
+        #
+        # ⚠️ 2026-08-21 밤 01f5a38이 여기 X축에 "차체 전후 180° 반전(base_link 반전)"을
+        # 근거로 부호(-)를 추가했었는데, 2026-08-26 팩트체크로 되돌림 — 그런 반전은
+        # 문서 어디에도 없다(08-17 라이다 상판→하판 재장착은 라이다 자체 얘기고,
+        # 같은 날 IMU 재장착(b65fef5)도 "PCB 앞쪽 끝단, z 유지"라는 위치 이동이지
+        # 회전이 아니다). 같은 날 밤 dfb71af가 sensor_dashboard.py의 atan2 부호도
+        # 반대로 되돌려서, 두 반전이 우연히 상쇄되지 않고 겹쳐 정확히 180°(+잔차)
+        # 틀어진 방위가 나왔다 — 사용자가 실제로 동쪽을 보고 있는데 대시보드가
+        # 282°(서쪽 근처)를 표시해서 발견됨. 라이브 원시값(x=4.05, y=-18.6µT)에
+        # 이 줄의 원래(부호 없는) 형태 + dashboard의 원래 -atan2(y,x)를 같이 적용하면
+        # 77.7°로 동쪽에 가깝게 복원됨 — 두 부호는 항상 같이 검증할 것.
         ox, oy, oz = self._mag_off
-        mag.magnetic_field.x = -(raw[0] * MAG_SENSITIVITY_UT_PER_LSB - ox) * 1e-6
+        mag.magnetic_field.x = (raw[0] * MAG_SENSITIVITY_UT_PER_LSB - ox) * 1e-6
         mag.magnetic_field.y = (raw[1] * MAG_SENSITIVITY_UT_PER_LSB - oy) * 1e-6
         mag.magnetic_field.z = (raw[2] * MAG_SENSITIVITY_UT_PER_LSB - oz) * 1e-6
         # 소프트아이언(타원 왜곡)은 아직 미보정이라 공분산은 미상(0)으로 둔다.
