@@ -112,13 +112,16 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
    vs frontier 30.7%(일관적, 완료 0/3)
 3. ~~Phase 1.5 원인 규명~~ **완료** — explore_lite가 첫 목표 실패(부트스트랩 시점
    TF 지연) 단 1회만으로 블랙리스트 오판하는 게 근본원인으로 확정됨
-4. **(진행) Phase 1.5 완화책 (a)**: `e07eed4`로 구현 완료, 코드 리뷰 승인
-   (OnProcessIO 이벤트 기반 지연 기동, 이중시작 없음 확인 — [Issue #1 코멘트](https://github.com/carrotion/smart-trash-bin/issues/1#issuecomment-5385346141)).
-   **단, 60초 스모크 테스트 1건뿐이라 "해결"로 보기엔 이름** — Phase 1과 같은
-   방법론(3회 반복, world=our_home, 200초 캡)으로 정식 재검증 요청, 특히
-   7.191% 조기종료가 나왔던 N=4 병렬(ROS_DOMAIN_ID 100~103) 조건 최소 1회 포함.
-   통과하면 close, 재발하면 (b) 착수. (c)는 스킵(합의: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1) 참고)
-5. frontier_exploration_ros2도 Optuna 하네스로 별도 탐색 — (4)와 병행 가능
+4. ~~Phase 1.5 완화책 (a)~~ **완료, 순차 조건에서만 유효**: `e07eed4`,
+   순차 재검증(변동폭 6배→1.3배)은 성공했으나 N=4 병렬(Optuna와 동일 조건)에서는
+   **4/4(100%) 조기종료 재현** — "Managed nodes are active"가 SLAM TF 안정성을
+   보장하지 않음이 확인됨. (a)는 유지, 위에 (b) 추가 필요.
+5. **(진행) Phase 1.5 완화책 (b)**: explore_lite에 `frontier_goal_selection.patch`와
+   같은 방식으로 패치 — 첫 N회(N=2~3부터 시작, sweep으로 조정) 목표 실패는
+   블랙리스트 대신 재시도. 결정 근거: [Issue #1 코멘트](https://github.com/carrotion/smart-trash-bin/issues/1#issuecomment-5385653990)
+   ("SLAM 신호 대기"보다 일반적 — 부트스트랩/런 중간 자원경합 둘 다 방어).
+   `robot/patches/README.md`에 적용법 기록할 것. 완료 후 N=4 병렬로 재검증.
+6. frontier_exploration_ros2도 Optuna 하네스로 별도 탐색 — (5)와 병행 가능
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
 코멘트로.
