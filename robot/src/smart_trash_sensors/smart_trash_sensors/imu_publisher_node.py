@@ -8,6 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Imu, MagneticField
 
 import qwiic_icm20948
+from geometry_msgs.msg import Twist
 
 # ICM-20948 default full-scale range after begin(): accel +/-2g, gyro +/-250dps.
 # AK09916 magnetometer: 0.15 uT/LSB (16-bit, +/-4912 uT).
@@ -70,6 +71,31 @@ class ImuPublisherNode(Node):
                 '하드아이언 보정값이 0이다 — 방위가 최대 수십 도 틀어질 수 있다. '
                 'tools/mag_calibrate.py로 측정할 것.')
 
+        # 2026-08-23: 왕복(전진-정지-후진) 진단(tools/round_trip_gyro_diag.py)에서
+        # 발견 — 모터 시작/정지/역전 순간에 자이로 z가 순간적으로 크게 튄다
+        # (정지 상태 기준 표준편차 0.057rad/s의 5~8배, 예: +0.31~+0.44rad/s).
+        # 로봇이 그렇게 빨리 회전한 게 아니라 모터 전류 서지/진동이 자이로에
+        # 노이즈로 잡힌 것으로 추정 — 그런데 EKF는 이걸 실제 회전으로 믿고
+        # 적분해서, 왕복 20회 후 요 이탈이 휠 단독(13.1°)보다 EKF 쪽이 더
+        # 컸다(33.1°, 원래는 EKF가 더 나아야 정상).
+        # 같은 로그의 전환-이후-경과시간별 |자이로z| 평균을 보면 20~100ms 구간이
+        # 정지 기준선 대비 1.1~1.8배로 들뜨고 120~150ms부터 기준선으로 돌아온다
+        # (표본 15개, 거칠지만 방향은 뚜렷함 — 모터 캘리브레이션 때처럼 반복
+        # cliff test로 다듬을 여지 있음). 데이터를 버리지 않고 **공분산을
+        # 부풀려서 EKF가 알아서 덜 믿게** 하는 쪽을 택함 — 이미 이 노드가
+        # orientation_covariance[0]=-1로 "이 필드는 못 믿는다"를 표시하던
+        # 방식과 같은 원리.
+        self.declare_parameter('cmd_vel_topic', '/cmd_vel')
+        self.declare_parameter('gyro_settle_after_cmd_sec', 0.15)
+        self.declare_parameter('gyro_unsettled_covariance', 50.0)  # 정상치(0.0004)보다 훨씬 큼
+        self._gyro_settle_sec = self.get_parameter('gyro_settle_after_cmd_sec').value
+        self._gyro_unsettled_cov = self.get_parameter('gyro_unsettled_covariance').value
+        self._last_cmd_v = 0.0
+        self._last_cmd_w = 0.0
+        self._last_cmd_change_t = 0.0  # 시작하자마자는 "막 전환된" 것으로 보수적으로 취급
+        self.create_subscription(
+            Twist, self.get_parameter('cmd_vel_topic').value, self._on_cmd_vel, 10)
+
         self.declare_parameter('mag_stale_sec', 2.0)
         self._mag_stale_sec = self.get_parameter('mag_stale_sec').value
         self._mag_last_raw = None
@@ -87,6 +113,16 @@ class ImuPublisherNode(Node):
             self.get_logger().warn(f'자기센서 초기화 실패: {e} (IMU 나머지는 정상 동작)')
         self._timer = self.create_timer(1.0 / rate_hz, self._on_timer)
         self.get_logger().info(f'ICM-20948 연결됨, {rate_hz}Hz로 imu/data 퍼블리시 시작')
+
+    def _on_cmd_vel(self, msg):
+        # 부호가 바뀌거나 정지<->구동 전환이면 "모터 전환"으로 본다. 아주 미세한
+        # 값 흔들림(PID 잔진동 등)까지 매번 반응하지 않게 임계값을 둠.
+        eps = 1e-3
+        if (abs(msg.linear.x - self._last_cmd_v) > eps
+                or abs(msg.angular.z - self._last_cmd_w) > eps):
+            self._last_cmd_change_t = time.monotonic()
+        self._last_cmd_v = msg.linear.x
+        self._last_cmd_w = msg.angular.z
 
     def _on_timer(self):
         if not self._imu.dataReady():
@@ -115,6 +151,13 @@ class ImuPublisherNode(Node):
         for i in (0, 4, 8):
             msg.angular_velocity_covariance[i] = 0.0004       # (rad/s)^2
             msg.linear_acceleration_covariance[i] = 0.02      # (m/s^2)^2
+
+        # 모터 전환 직후 settle 구간이면 z축(요 회전에 쓰이는 축)만 공분산을
+        # 크게 부풀려서 EKF가 이 순간의 자이로z를 덜 믿게 한다. x/y는 안 건드림
+        # (진단 데이터가 z만 다뤘고, 평지 주행에선 x/y 자이로가 요 추정에 안 쓰임).
+        since_cmd = time.monotonic() - self._last_cmd_change_t
+        if since_cmd < self._gyro_settle_sec:
+            msg.angular_velocity_covariance[8] = self._gyro_unsettled_cov
 
         self._pub.publish(msg)
 
