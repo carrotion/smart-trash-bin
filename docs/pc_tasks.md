@@ -78,7 +78,12 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   150ms 동안 자이로z 공분산을 0.0004→50.0으로 부풀려 EKF가 그 구간을 덜
   믿게 함(데이터를 버리지 않고 신뢰도로 표시 — 기존 orientation_covariance=-1
   관례와 동일 원리). 라이브로 게이팅 타이밍 검증 완료(0~140ms=50.0, 160ms부터
-  0.0004로 정확히 복귀). **아직 재측정으로 개선 효과 확인 전.**
+  0.0004로 정확히 복귀).
+- **검증 완료 (재측정, 20회 왕복)**: 요(yaw) 이탈 — 휠 +13.1°→+5.3°,
+  **EKF +33.1°→+5.2°(휠과 동등 또는 소폭 우위로 역전)**. 수정 전 "EKF가 휠보다
+  2.5배 나쁨"이 수정 후 해소됨 — Track 0 첫 성과. (전체 드리프트 절대량은
+  160.9cm→87.7cm로 같이 줄었는데 휠 채널도 같이 줄어서 측정 간 자연 변동으로
+  추정 — 진짜 신호는 휠-EKF 상대 비교.) 상세: [Issue #2](https://github.com/carrotion/smart-trash-bin/issues/2)
 
 ## Track A′ — 탐색 전략 (Resie 담당, 시뮬레이션, Layer 2 전용임을 명시)
 
@@ -107,9 +112,12 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
    vs frontier 30.7%(일관적, 완료 0/3)
 3. ~~Phase 1.5 원인 규명~~ **완료** — explore_lite가 첫 목표 실패(부트스트랩 시점
    TF 지연) 단 1회만으로 블랙리스트 오판하는 게 근본원인으로 확정됨
-4. **(진행) Phase 1.5 완화책 (a)**: explore_node를 SLAM/코스트맵 준비 확인 후
-   지연 기동하도록 launch 순서 조정, 재시험. (b) explore_lite 패치는 (a) 이후
-   재발하면 착수. (c)는 스킵(합의: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1) 참고)
+4. **(진행) Phase 1.5 완화책 (a)**: `e07eed4`로 구현 완료, 코드 리뷰 승인
+   (OnProcessIO 이벤트 기반 지연 기동, 이중시작 없음 확인 — [Issue #1 코멘트](https://github.com/carrotion/smart-trash-bin/issues/1#issuecomment-5385346141)).
+   **단, 60초 스모크 테스트 1건뿐이라 "해결"로 보기엔 이름** — Phase 1과 같은
+   방법론(3회 반복, world=our_home, 200초 캡)으로 정식 재검증 요청, 특히
+   7.191% 조기종료가 나왔던 N=4 병렬(ROS_DOMAIN_ID 100~103) 조건 최소 1회 포함.
+   통과하면 close, 재발하면 (b) 착수. (c)는 스킵(합의: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1) 참고)
 5. frontier_exploration_ros2도 Optuna 하네스로 별도 탐색 — (4)와 병행 가능
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
