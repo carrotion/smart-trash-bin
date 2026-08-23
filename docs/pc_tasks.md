@@ -101,8 +101,10 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   타임아웃 예외 경로에서만 `killpg`를 호출해서, 정상반환처럼 보이는 경로에서
   자식이 안 죽는 case를 놓쳤다(위 "공유 자원 규칙" 2번 참고). **우선 이 버그부터
   고치고(killpg를 예외와 무관하게 항상 호출), 그 다음 6회 비교를 재실행할 것.**
-- **Phase 1.5**: Optuna 24트라이얼 중 8개(33%)가 정확히 동일값(7.191%)에서
-  조기종료된 원인 규명 — Phase 1 재실행과 같이 진행 가능(별개 이슈).
+- **Phase 1.5 (완료, close)**: Optuna 24트라이얼 중 8개(33%)가 정확히 동일값
+  (7.191%)에서 조기종료된 원인을 explore_lite 블랙리스트 오판으로 확정, (a)+(b)
+  로 N=4 병렬 조건까지 해소 확인. 단 오염됐던 그 8개 트라이얼 때문에 기존
+  Optuna 최적값이 신뢰할 수 없어짐 — 아래 PC 세션 할당 작업 6번 참고.
 - **Phase 2 (예정)**: 승자를 여러 시작 위치에서 반복 검증 — Remi가 스크립트 준비 예정.
 
 ## PC 세션 현재 할당 작업
@@ -121,7 +123,12 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
    문턱 미만이면 blacklist 대신 재시도. 패치/README: `robot/patches/`.
    N=4 병렬 재검증: **조기종료 0/4**(적용 전 4/4), goal_switches 14~23회,
    재시도 로직 런당 10~13회 실제 발동. 상세는 아래 PC 보고.
-6. frontier_exploration_ros2도 Optuna 하네스로 별도 탐색 — 다음 착수
+6. **(다음) explore_lite Optuna 재실행 — (b) 적용 상태로**: 기존 24트라이얼
+   결과(최적값 potential_scale=1.56/gain_scale=2.50/..., 44.2%) 중 8개(33%)가
+   정확히 이번에 고친 조기종료 버그로 7.191%까지 깎였던 것들 — 오염된 데이터로
+   최적값을 뽑았을 가능성 있음. (b) 적용 후 재실행해서 최적값이 바뀌는지 확인.
+   결정 근거: [Issue #1 코멘트](https://github.com/carrotion/smart-trash-bin/issues/1#issuecomment-5385722249)
+7. 그 다음 frontier_exploration_ros2도 Optuna 하네스로 별도 탐색
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
 코멘트로.
