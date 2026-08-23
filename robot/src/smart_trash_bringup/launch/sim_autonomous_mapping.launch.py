@@ -4,8 +4,10 @@ import tempfile
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                             OpaqueFunction, SetLaunchConfiguration)
+                             OpaqueFunction, RegisterEventHandler,
+                             SetLaunchConfiguration)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessIO
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (LaunchConfiguration, PythonExpression,
                                    TextSubstitution)
@@ -212,6 +214,38 @@ def generate_launch_description():
         }],
         condition=frontier_condition)
 
+    # ⚠️ 2026-08-23 밤 (Phase 1.5 완화책 a, Remi 결정): explore_node/frontier_node를
+    # 그냥 나열하면 lifecycle_manager/SLAM과 동시에 시작돼서, 부트스트랩 극초반
+    # (SLAM/코스트맵 초기화 부하가 몰리는 시점, 실측 t≈9s)에 TF가 살짝 지연된
+    # 채로 첫 목표를 계산해버린다. explore_lite는 이 첫 실패 단 1회만으로
+    # "모든 프론티어 소진"으로 오판하고 완전히 포기한다(explore_lite_r0.log로
+    # 확인, home_real 3번실패/파이 0회전환과 같은 계열).
+    #
+    # 고정 시간 지연(TimerAction) 대신 lifecycle_manager가 실제로 찍는
+    # "Managed nodes are active" 로그를 감지해서 그 시점에 시작한다 — 부트스트랩
+    # 소요시간이 부하에 따라 달라져도(N=4 병렬 등) 견고하다. 문자열이 두 번
+    # 이상 매치돼 두 번 시작되는 걸 막기 위해 플래그로 1회만 트리거.
+    _explore_start_state = {'triggered': False}
+
+    def start_explorer_when_nav2_active(event):
+        if _explore_start_state['triggered']:
+            return None
+        text = event.text
+        if isinstance(text, (bytes, bytearray)):
+            text = text.decode('utf-8', errors='ignore')
+        if 'Managed nodes are active' in text:
+            _explore_start_state['triggered'] = True
+            return [explore_node, frontier_node]
+        return None
+
+    explorer_start_handler = RegisterEventHandler(
+        OnProcessIO(
+            target_action=lifecycle_manager,
+            on_stdout=start_explorer_when_nav2_active,
+            on_stderr=start_explorer_when_nav2_active,
+        )
+    )
+
     ld = LaunchDescription()
     ld.add_action(declare_nav2_params_cmd)
     ld.add_action(declare_explore_params_cmd)
@@ -229,6 +263,5 @@ def generate_launch_description():
     ld.add_action(behavior_server)
     ld.add_action(bt_navigator)
     ld.add_action(lifecycle_manager)
-    ld.add_action(explore_node)
-    ld.add_action(frontier_node)
+    ld.add_action(explorer_start_handler)
     return ld
