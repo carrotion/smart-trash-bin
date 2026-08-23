@@ -116,12 +116,12 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
    순차 재검증(변동폭 6배→1.3배)은 성공했으나 N=4 병렬(Optuna와 동일 조건)에서는
    **4/4(100%) 조기종료 재현** — "Managed nodes are active"가 SLAM TF 안정성을
    보장하지 않음이 확인됨. (a)는 유지, 위에 (b) 추가 필요.
-5. **(진행) Phase 1.5 완화책 (b)**: explore_lite에 `frontier_goal_selection.patch`와
-   같은 방식으로 패치 — 첫 N회(N=2~3부터 시작, sweep으로 조정) 목표 실패는
-   블랙리스트 대신 재시도. 결정 근거: [Issue #1 코멘트](https://github.com/carrotion/smart-trash-bin/issues/1#issuecomment-5385653990)
-   ("SLAM 신호 대기"보다 일반적 — 부트스트랩/런 중간 자원경합 둘 다 방어).
-   `robot/patches/README.md`에 적용법 기록할 것. 완료 후 N=4 병렬로 재검증.
-6. frontier_exploration_ros2도 Optuna 하네스로 별도 탐색 — (5)와 병행 가능
+5. ~~Phase 1.5 완화책 (b)~~ **완료, N=4 병렬에서도 해소 확인** — `max_frontier_retries`
+   파라미터(기본 2) 추가, `reachedGoal`의 ABORTED 케이스가 실패 횟수를 세서
+   문턱 미만이면 blacklist 대신 재시도. 패치/README: `robot/patches/`.
+   N=4 병렬 재검증: **조기종료 0/4**(적용 전 4/4), goal_switches 14~23회,
+   재시도 로직 런당 10~13회 실제 발동. 상세는 아래 PC 보고.
+6. frontier_exploration_ros2도 Optuna 하네스로 별도 탐색 — 다음 착수
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
 코멘트로.
@@ -203,3 +203,37 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   lifecycle 전이(controller/planner/behavior/bt_navigator activate)와 SLAM의
   실제 TF 안정화는 별개 신호이며, 병렬 조건의 CPU 경쟁 때문에 activation 이후에도
   SLAM이 계속 지연될 수 있음. **(a)만으로는 부족 — (b) 착수 필요.**
+
+- **Phase 1.5 완화책 (b) 적용 + N=4 병렬 검증 완료** (2026-08-23 밤, Resie):
+  m-explore-ros2에 패치 추가(`robot/patches/`) — 좌표별 실패 횟수를 세서
+  `max_frontier_retries`(기본 2) 미만이면 blacklist 대신 makePlan() 재호출로
+  재시도. (a)와 함께 적용한 채로 같은 N=4 병렬 조건(도메인 100~103, 200초)
+  재검증:
+
+  | run | goal_switches | tf_stale | 재시도 발동 | 결과 |
+  |---|---|---|---|---|
+  | 0 | 19 | 10 | 12 | 정상 진행(타임아웃) |
+  | 1 | 14 | 9 | 10 | 정상 진행(타임아웃) |
+  | 2 | 17 | 9 | 12 | 정상 완료(All frontiers traversed) |
+  | 3 | 23 | 6 | 13 | 정상 진행(타임아웃) |
+
+  **조기종료(goal_switches=1) 0/4 — (a) 단독 4/4 재현에서 완전히 해소됨.**
+  TF 스톨 자체는 여전히 자주 발생하지만(런당 6~10회), 매번 재시도 로그로
+  넘어가 탐색은 계속됨. patches/README.md에 배경/검증 기록 완료. 다음:
+  frontier_exploration_ros2 Optuna 탐색 착수.
+
+- **Phase 1.5 완화책 (b) 적용 + N=4 병렬 검증 완료** (2026-08-23 밤, Resie):
+  m-explore-ros2에 패치 추가() — 좌표별 실패 횟수를 세서
+  (기본 2) 미만이면 blacklist 대신 makePlan() 재호출로
+  재시도. (a)와 함께 적용한 채로 같은 N=4 병렬 조건(도메인 100~103, 200초)
+  재검증:
+
+  | run | goal_switches | tf_stale | 재시도 발동 | 결과 |
+  |---|---|---|---|---|
+  | 0 | 19 | 10 | 12 | 정상 진행(타임아웃) |
+  | 1 | 14 | 9 | 10 | 정상 진행(타임아웃) |
+  | 2 | 17 | 9 | 12 | **정상 완료**(All frontiers traversed) |
+  | 3 | 23 | 6 | 13 | 정상 진행(타임아웃) |
+
+  **조기종료(goal_switches=1) 0/4 — (a) 단독 4/4 재현에서 완전히 해소됨.**
+  TF 스톨 자체는 여전히 자주 발생하지만(런당 6~10회), 매번 retrying

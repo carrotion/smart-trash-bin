@@ -1,9 +1,9 @@
-# m-explore-ros2 패치: 프론티어 목표 지점 선택
+# m-explore-ros2 패치: 프론티어 목표 지점 선택 + 실패 시 재시도
 #
 # 적용 대상 : https://github.com/robo-friends/m-explore-ros2.git
 # 브랜치    : feature/slam_toolbox_compat
 # 기준 커밋 : 9b64d8d35213dd50bc44f1b5b4959c1f58c32d2e
-# 작성      : 2026-08-17
+# 작성      : 2026-08-17 (목표 지점 선택), 2026-08-23 밤 개정 (실패 시 재시도 추가)
 
 ## 왜 필요한가
 
@@ -87,3 +87,34 @@ Nav2가 즉시 "도달"로 처리하고, 로봇은 이동 없이 다음 프론�
 - 덩어리 전체가 `min_frontier_distance` 안에 들어오면 가장 먼 점을 쓴다(거리도 그에 맞춤)
 - `points`가 비는 고립 셀이면 `middle`을 `initial`로 둔다. 안 그러면 기본값 (0,0),
   즉 **맵 원점**이 목표가 된다
+
+## 이 패치가 고치는 것 (2026-08-23 밤 추가 — 실패 시 재시도)
+
+시뮬레이션(`docs/pc_tasks.md` Phase 1.5)에서 새로 발견된 문제: 목표가
+`ABORTED`되면 원본 코드는 **단 1회 실패만으로 즉시 영구 blacklist**였다
+(`reachedGoal`). 시뮬 부트스트랩 극초반(SLAM/코스트맵 초기화 부하가 몰리는
+시점)에 map->odom TF가 살짝 지연되면 첫 목표가 그 순간 실패하고, 그 즉시
+blacklist에 들어가 다음 계획에서 후보가 하나도 안 남아 "All frontiers
+traversed"로 완전히 포기해버린다.
+
+**진단 과정**: 처음엔 launch 쪽에서 SLAM/Nav2가 활성화된 뒤 explore_node를
+지연 기동시키는 완화책(a)를 시도했다 — 순차 실행에서는 완전히 해소됐지만
+(변동폭 6배→1.3배), **N=4 병렬(자원경합 심함) 조건에서는 4/4(100%) 그대로
+재현됐다.** 원인: "Managed nodes are active"(Nav2 lifecycle 전이)는 "SLAM이
+실제로 안정된 TF를 발행 중"을 보장하지 않는다 — 별개 신호다. 병렬 조건에서는
+activation 이후에도 SLAM이 계속 지연될 수 있다.
+
+그래서 "부트스트랩 시점에 더 똑똑하게 기다리기"(문턱을 옮기는 것) 대신, **"일시적
+실패를 영구 실패로 오판하지 않는다"를 explore_lite 자체의 불변조건으로 만든다**
+— 좌표별 실패 횟수(`frontier_failure_counts_`, `getFailureCount`)를 세서
+`max_frontier_retries`(기본 2) 미만이면 blacklist 대신 `makePlan()` 재호출로
+재시도한다. 부트스트랩 때뿐 아니라 런 중간의 자원경합에도 동일하게 방어된다.
+
+`max_frontier_retries` 파라미터(기본 2)도 신설. 설정은
+`smart_trash_bringup/config/explore_params.yaml`.
+
+**검증**: (a)만 적용한 N=4 병렬 4회 — 4/4 조기종료(goal_switches=1). (a)+(b)
+적용 후 N=4 병렬 4회 재검증 — **조기종료 0/4**, goal_switches 14~23회,
+"retrying instead of blacklisting" 로그가 런당 10~13회 발동(재시도 로직이
+실제로 여러 번 발동해서 탐색을 이어갔다는 직접 증거). 상세: `docs/pc_tasks.md`,
+[Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1).

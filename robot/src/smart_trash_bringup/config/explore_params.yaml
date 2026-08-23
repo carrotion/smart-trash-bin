@@ -60,3 +60,9 @@
     # 이동하면 사각지대도 같이 움직여 쐐기가 스스로 메워진다.
     min_frontier_distance: 0.6
     return_to_init: false
+    # 2026-08-23 추가 — Phase 1.5 완화책 b(robot/patches/README.md 참고).
+    # 목표가 ABORTED되면 원래 1회 실패만으로 즉시 영구 blacklist였다. 시뮬
+    # 부트스트랩 극초반의 일시적 TF 지연(N=4 병렬에서 100% 재현)처럼 "곧
+    # 회복될 실패"까지 영구 포기로 오판하는 걸 막는다 — 이 횟수 미만이면
+    # blacklist 대신 재시도. 관측 패턴(단 1회 실패로 포기)에 맞춰 2로 시작.
+    max_frontier_retries: 2
