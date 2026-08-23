@@ -184,3 +184,19 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   frontier보다 평균 커버리지도 높고(36.4% vs 30.6%) 안정성도 크게 개선됨 —
   (b) 패치 없이 (a)만으로 충분해 보임. 단 3회는 여전히 작은 표본, 확정하려면
   반복 수를 더 늘려볼 가치 있음.
+
+- **⚠️ N=4 병렬 조건 재검증 — (a) 무효화됨** (2026-08-23 밤, Resie): Remi 요청대로
+  Optuna와 같은 조건(ROS_DOMAIN_ID 100~103, N=4 병렬, explore_lite, 200초)에서
+  재검증. **결과: 4/4(100%) 전부 조기종료 재현** — 순차에서 해소됐던 게 병렬에선
+  전혀 안 통함. 로그로 원인 확인:
+  ```
+  t=945s Managed nodes are active
+  t=950s Begin navigating (첫 목표, +5s)
+  t=953s Transform data too old (sim 11.1s vs 10.7s, +3s) -> Goal failed
+  t=954s All frontiers traversed, stopping.
+  ```
+  순차 스모크 테스트와 타이밍 구조가 거의 동일 — 즉 **"Managed nodes are
+  active"는 "SLAM이 실제로 안정된 TF를 발행 중"을 보장하지 않는다.** Nav2
+  lifecycle 전이(controller/planner/behavior/bt_navigator activate)와 SLAM의
+  실제 TF 안정화는 별개 신호이며, 병렬 조건의 CPU 경쟁 때문에 activation 이후에도
+  SLAM이 계속 지연될 수 있음. **(a)만으로는 부족 — (b) 착수 필요.**
