@@ -100,4 +100,10 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
 - Phase 1 결과: `docs/sim_optimization_2026-08-23.md` (2026-08-23, Resie) — 비교
   6회분은 오염으로 무효, 나머지(맵별 승자 뒤집힘, TF 스톨 자원경합 확정,
   Optuna 24트라이얼)는 유효
-- Phase 1 재실행 / Phase 1.5: _(진행 중)_
+- **killpg 버그 수정 완료** (2026-08-23 밤, Resie): `tools/optuna_search.py`,
+  `robot/phase1_compare.py` 둘 다 `finally`로 옮겨서 정상반환/타임아웃 무관하게
+  항상 프로세스 그룹 정리하도록 고침. 오염됐던 좀비(trial0/trial13, PID
+  70404/70406/75003/75005 + Xvfb 70400)는 정확한 PID로 kill 확인, 재확인 결과
+  깨끗함.
+- Phase 1 재실행: 시작함(6회 순차, `robot/phase1_compare.py`) — 진행 중
+- Phase 1.5(7.191% 조기종료 원인): 재실행 결과 나오는 대로 착수 예정

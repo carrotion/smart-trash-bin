@@ -95,19 +95,32 @@ def run_trial(explore_file, domain, duration, tag):
     # 그 bash가 백그라운드(&)로 띄운 xvfb-run/ros2 launch 자식들은 안 죽는다 —
     # 그대로 두면 오늘 하루 종일 씨름한 것과 같은 고아 프로세스가 생긴다.
     # tools/sim_param_sweep.py(Remi 작성)와 동일하게 setsid로 새 프로세스
-    # 그룹을 만들고, timeout 시 그룹 전체를 killpg로 정리한다.
+    # 그룹을 만들고 killpg로 정리한다.
+    #
+    # ⚠️⚠️ 2026-08-23 밤: 처음엔 killpg를 TimeoutExpired 예외 처리 안에만
+    # 뒀었다(Remi가 docs/pc_tasks.md에서 지적). bash 스크립트 자체(wait $LP;
+    # kill -INT $CP; wait $CP)는 정상 종료(exit 0)됐는데 xvfb-run/launch가
+    # SIGINT 처리 중 일부 자식만 남기고 죽는 경우, proc.wait()는 정상 반환되고
+    # 그 경로에는 killpg가 없어서 좀비가 그대로 남았다 — 실제로 trial13(수정
+    # "후"에도 재현)이 ~2시간 살아남아 다음 배치(phase1_compare.py)와 같은
+    # ROS_DOMAIN_ID에서 충돌, 그 비교 결과 6개 전부 무효화됨. 정상/타임아웃
+    # 무관하게 **항상** killpg를 호출하도록 finally로 옮긴다.
     with open(log_path, 'w') as logf:
         proc = subprocess.Popen(['bash', '-c', full_cmd], stdout=logf, stderr=subprocess.STDOUT,
                                  env=env, preexec_fn=os.setsid)
         try:
             proc.wait(timeout=duration + 120)
         except subprocess.TimeoutExpired:
-            logf.write('\n[optuna_search] subprocess timeout — 프로세스 그룹 강제 종료\n')
+            logf.write('\n[optuna_search] subprocess timeout\n')
+        finally:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            proc.wait(timeout=10)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
     return cov_path, log_path
 
 
