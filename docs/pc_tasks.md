@@ -105,5 +105,36 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   항상 프로세스 그룹 정리하도록 고침. 오염됐던 좀비(trial0/trial13, PID
   70404/70406/75003/75005 + Xvfb 70400)는 정확한 PID로 kill 확인, 재확인 결과
   깨끗함.
-- Phase 1 재실행: 시작함(6회 순차, `robot/phase1_compare.py`) — 진행 중
-- Phase 1.5(7.191% 조기종료 원인): 재실행 결과 나오는 대로 착수 예정
+- **Phase 1 재실행 완료** (좀비 정리 후 깨끗한 상태, `our_home`, 200초 캡, 3회씩):
+
+  | explorer | rep | goal_switches | coverage% | completed |
+  |---|---|---|---|---|
+  | explore_lite | 0 | 1 | 7.2 | True (조기종료) |
+  | explore_lite | 1 | 10 | 44.4 | True |
+  | explore_lite | 2 | 19 | 32.9 | False (진행중) |
+  | frontier | 0 | 13 | 32.2 | False (진행중) |
+  | frontier | 1 | 7 | 28.4 | False (진행중) |
+  | frontier | 2 | 13 | 31.5 | False (진행중) |
+
+  평균 커버리지는 explore_lite 28.2% vs frontier 30.7%로 비슷하지만,
+  **explore_lite는 변동폭이 6배(7.2~44.4%)로 매우 불안정**한 반면
+  frontier는 28.4~32.2%로 훨씬 일관적(대신 200초 내 완료 0/3).
+  원본 로그: `/tmp/phase1_compare/*.log`(로컬, git 미포함 — 필요하면 요청).
+
+- **Phase 1.5 원인 확정** (좀비와 무관한 진짜 버그): `explore_lite_r0.log`를
+  직접 확인한 결과, 정확한 인과관계가 나왔음:
+  ```
+  t=6s  Begin navigating (0,0) -> (0.52,0.18)   <- 첫 목표
+  t=9s  Transform data too old (map->odom, 0.4s 지연) -> Goal failed
+  t=13s explore_node: "All frontiers traversed/tried out, stopping."
+  ```
+  **시뮬레이션 시작 극초반(SLAM/코스트맵 초기화 부하가 몰리는 시점)에 TF가
+  살짝 지연된 상태에서 explore_lite가 첫 목표를 보냈고, 그게 실패하자
+  재시도 없이 단 1번의 실패만으로 "모든 프론티어 소진"으로 오판하고 완전히
+  포기했다.** `home_real`의 "3번 실패 후 포기", 파이의 "0회 전환" 사례와
+  같은 계열 — **explore_lite의 프론티어 블랙리스트 로직이 초반 부트스트랩
+  타이밍의 일시적 TF 지연에 지나치게 취약**한 게 근본원인으로 보임.
+
+  완화 방향(미착수, 논의 필요): (a) Nav2/SLAM이 안정된 뒤 explore_node를
+  지연 기동, (b) explore_lite 패치로 첫 N회 실패는 블랙리스트 대신 재시도,
+  (c) 초반 구간만 transform_tolerance를 넉넉히.
