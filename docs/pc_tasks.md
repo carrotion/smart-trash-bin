@@ -148,6 +148,42 @@ frontier_exploration_ros2를 권장.** explore_lite를 계속 쓰려면 (b) 패�
 왜 일부 케이스에서 재시도해도 결국 실패하는지 추가 규명이 필요(다음
 세션 후보 작업).
 
+## 🏠 Phase 2 — frontier_exploration_ros2 최적값 다중 시작위치 검증 (2026-08-24, Resie)
+
+`our_home.png` 비트맵에서 0.5m 반경 완전 개방인 지점을 자동 탐색해(원형
+마스크 브루트포스 스캔, `scipy` 미설치라 numpy만으로 구현) 집 안 서로 다른
+5개 구역(거실 다른 지점, 침실1, 침실2, 왼쪽 복도, 오른쪽 아래 공간=주방
+추정)에서 시작점을 하나씩 골랐다. Stage 좌표계 매핑(비트맵 row 0 = world
++y)은 원래 시작점(-2.7, 3.43)과 픽셀 좌표가 정확히 일치하는 것으로 검증.
+world 파일 변형(`our_home_start_*.world`)은 `robot/src/stage_ros2/world/`에
+저장(서브모듈이라 gitignore됨 — 재현하려면 `tools/phase2_multi_start.py`의
+`STARTS`/좌표 계산 로직 참고). 원래 Optuna 탐색 기준점(거실)도 `baseline_living`
+으로 포함해 총 6개 시작위치, N=4 병렬로 `tools/phase2_multi_start.py` 신규
+작성해 실행.
+
+| 시작위치 | 구역 | coverage% | tf_stale | progress_fail | collisions |
+|---|---|---|---|---|---|
+| baseline_living | 거실(원래 Optuna 기준점) | 21.4 | 145 | 1 | 0 |
+| living2 | 거실 다른 지점 | 31.5 | 157 | 1 | 0 |
+| bed1 | 침실1 | 22.1 | 140 | 4 | 0 |
+| bed2 | 침실2 | 44.2 | 135 | 4 | 0 |
+| hallway | 왼쪽 복도/안방 | 35.5 | 138 | 2 | 0 |
+| kitchen | 오른쪽 아래(주방 추정) | 71.9 | 133 | 1 | 0 |
+
+**전부 정상 완료(조기종료 0/6), 충돌 0건.** coverage는 21.4~71.9%로 시작
+위치에 따라 편차가 크지만(3배 이상) — 이건 위치별로 150초 안에 실제 도달
+가능한 개방 공간의 크기/형태가 다르기 때문으로 보이며, 안정성과는 별개
+지표다. tf_stale은 이번에도 130~157회로 explore_lite(0~7)보다 훨씬 많은데도
+단 한 번도 조기종료로 이어지지 않았다 — 24트라이얼 Optuna 탐색에서 확인된
+"frontier가 TF 지연에 훨씬 강건하다"는 결론이 시작 위치와 무관하게 일반화됨을
+확인. **frontier_exploration_ros2 권장 결론이 특정 시작위치(거실)에 우연히
+맞춰진 결과가 아님이 확정됨.**
+
+⚠️ coverage 편차(21.4~71.9%)가 위치별 공간 크기 차이 때문인지, 아니면 다른
+요인(예: 시작 지점이 벽/문에 얼마나 가까운지)이 섞여 있는지는 미분석 —
+필요하면 각 위치의 도달가능 면적을 정규화해서 재비교할 가치 있음(우선순위
+낮음, Phase 2의 핵심 질문인 "안정성이 위치와 무관한가"는 이미 확정 답변됨).
+
 ## 🐛 killpg 버그 2건 완전 수정 기록 (2026-08-23 밤~2026-08-24 새벽, Resie)
 
 **버그 1 — `os.getpgid(proc.pid)`가 reap 이후 실패**: `proc.wait()`가
@@ -212,9 +248,8 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
    우선순위는 낮음 — 이미 frontier_exploration_ros2가 안정성 면에서 명확한
    대안으로 확정됐으므로, 급하지 않다면 스킵하고 Phase 2(승자 반복검증)로
    바로 넘어가도 됨.
-9. **Phase 2**: frontier_exploration_ros2 최적값(`weight_distance_wd=0.37,
-   weight_gain_ws=0.39, occ_threshold=68, min_frontier_size_cells=8,
-   mrtsp_solver=greedy`)을 여러 시작 위치에서 반복 검증.
+9. ~~Phase 2~~ **완료** — frontier_exploration_ros2 최적값을 6개 시작 위치에서
+   검증, **전부 조기종료 없음(0/6), 충돌 0건**. 상세는 아래 "🏠 Phase 2" 섹션.
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
 코멘트로.
