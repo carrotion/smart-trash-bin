@@ -11,8 +11,12 @@ Yahboom 4채널 드라이버와 시리얼로 통신한다. 프로토콜/안전 �
 물리 파라미터는 2026-08-15 실측값이 기본값 (바퀴 지름 67mm, 좌우 간격 170mm,
 1회전당 899.1카운트). 엔코더는 PWM 양수(전진)일 때 카운트가 감소해서 부호 반전 필요.
 
-⚠️ 이 노드는 모터 시리얼 포트(/dev/motor)를 독점하므로 motor_dashboard 서비스와 동시 실행 불가.
-   `sudo systemctl stop smart-trash-motor-dashboard` 후 실행할 것.
+2026-08-24 정정: 아래 경고는 낡은 문서였다 — motor_dashboard.py는 이미 `340fdc5`
+커밋(과거)에서 시리얼 직결이 아니라 **`/cmd_vel` 발행 방식**으로 바뀌었다.
+그래서 지금은 이 노드와 **동시 실행해도 포트 경합이 없다**(motor_dashboard가
+/dev/motor를 아예 안 만짐). 실물 매핑 시험 중 엔코더가 35초간 조용히 멈추는
+현상을 motor_dashboard 탓으로 오판해서 껐다가, 코드를 직접 보고서야 틀렸음을
+확인 — 진짜 원인은 아직 미확정이다(_on_odom_timer의 새 stale 경고 참고).
 """
 import math
 import re
@@ -389,16 +393,31 @@ class DiffDriveNode(Node):
         for line in reversed(raw.decode(errors='replace').split('\r\n')):
             m = _MALL_RE.match(line.strip())
             if m:
-                return [int(g) for g in m.groups()]
-        return None
+                return [int(g) for g in m.groups()], raw
+        return None, raw
 
     def _encoder_poll_loop(self):
         """백그라운드 스레드: 시리얼 왕복(~60ms)이 걸리는 엔코더 폴링을 ROS
         실행기 스레드 밖에서 계속 반복한다. cmd_vel 콜백이 이 폴링에 막히지
-        않게 하는 게 목적 — 클래스 docstring 및 __init__ 주석 참고."""
+        않게 하는 게 목적 — 클래스 docstring 및 __init__ 주석 참고.
+
+        2026-08-24 진단용 계측 추가: 실물 매핑 시험 중 원인불명으로 엔코더가
+        수십 초씩 조용히 멈추는 현상을 실측(motor_dashboard 무관, CPU 부하도
+        무관 — power_trace.csv로 반증됨). 실패 구간의 시작/끝/원시 바이트를
+        남겨서 다음 재현 시 원인(시리얼 프로토콜 상태 꼬임 vs 실제 물리적
+        정지 등)을 가릴 수 있게 한다."""
+        fail_streak = 0
+        fail_streak_start = None
+        last_heartbeat = 0.0
         while not self._encoder_thread_stop.is_set():
-            counts = self._read_encoder()
+            counts, raw = self._read_encoder()
             if counts is not None:
+                if fail_streak > 0:
+                    dur = time.time() - fail_streak_start
+                    self.get_logger().warn(
+                        f'엔코더 응답 복구됨 — {fail_streak}회 연속 실패, '
+                        f'{dur:.1f}초 동안 정지해있었음')
+                fail_streak = 0
                 now = time.time()
                 with self._counts_lock:
                     self._latest_counts = counts
@@ -410,6 +429,18 @@ class DiffDriveNode(Node):
                 except Exception:
                     pass  # 노드 종료 중 퍼블리셔가 이미 정리됐을 수 있음
             else:
+                now = time.time()
+                if fail_streak == 0:
+                    fail_streak_start = now
+                    self.get_logger().warn(
+                        f'엔코더 응답 파싱 실패 시작 — 원시 바이트({len(raw)}): {raw!r}')
+                fail_streak += 1
+                if now - last_heartbeat > 2.0:
+                    self.get_logger().warn(
+                        f'엔코더 응답 계속 실패 중 — {fail_streak}회, '
+                        f'{now - fail_streak_start:.1f}초째. 최근 원시 바이트'
+                        f'({len(raw)}): {raw!r}')
+                    last_heartbeat = now
                 time.sleep(0.02)  # 응답 없을 때 바쁜 대기 방지
 
     def _apply_pwm(self, left_pwm, right_pwm, apply_offset=True):
@@ -662,6 +693,19 @@ class DiffDriveNode(Node):
             return
 
         if self._prev_odom_time is not None and now == self._prev_odom_time:
+            # 2026-08-24: 예전엔 이 경로가 조용히 그냥 return이었다 — 백그라운드
+            # 폴링 스레드가 몇 초든 몇십 초든 새 값을 못 읽어도(시리얼 포트 경합,
+            # 드라이버 응답 파싱 실패 등) 아무 신호 없이 odom이 멈췄다. 실물
+            # 매핑 시험에서 35초간 조용히 멈춘 게 실측 확인됨(원인 후보:
+            # motor_dashboard와 포트 동시 점유 — 문서화된 금지 조합인데 그날
+            # 안 지켜져 있었음). 얼마나 오래 멈췄는지는 알아야 하므로 경고한다.
+            stale_sec = time.time() - now
+            if stale_sec > 0.5:
+                self.get_logger().warn(
+                    f'엔코더 값이 {stale_sec:.1f}초째 갱신 안 됨 — odom이 멈춰있다 '
+                    '(시리얼 포트 경합/드라이버 무응답 의심, motor_dashboard 등 '
+                    '다른 프로세스가 같은 포트를 열고 있지 않은지 확인할 것)',
+                    throttle_duration_sec=2.0)
             return  # 백그라운드 스레드가 아직 새 값을 못 읽음 — 중복 계산 방지
 
         if self._prev_counts is None:
