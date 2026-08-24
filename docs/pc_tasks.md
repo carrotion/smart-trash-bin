@@ -167,6 +167,27 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   `docs/calibration/maps/layer1_test1_20260824.pgm/yaml`(+`_view.png`
   3배 확대본).
 
+- **🔴 [최우선] 휠 오도메트리 실주행 중 조용한 "동결" — 원인 미확정, 종합
+  리뷰 + 배제 시험 완료 (2026-08-24 밤)**: 위 웨이포인트 시험용으로 만든
+  `tools/loop_gyro_diag.py`(연속 로깅)로 처음 몇 분짜리 실주행을 들여다보다
+  발견. `/odom`이 수십 초씩 완전히 멈추는 동안 EKF는 계속 갱신됨(`ekf.yaml`이
+  x,y/vx는 휠 의존이라 동결 구간의 실이동을 EKF도 놓침 — 큰 위치 오차의
+  유력한 메커니즘). motor_dashboard 포트경합으로 오판했다가 코드 확인 후
+  정정(`/cmd_vel` 발행 방식으로 이미 리팩터링돼 있어 무관, CLAUDE.md/
+  diff_drive_node.py 낡은 경고 문구도 같이 정정함). CPU 부하설은
+  `power_trace.csv` 대조로 반증. Phase A(정지 10분)/B(도크 무부하 모터
+  구동 5분) 둘 다 재현 안 됨 — **실제 바닥 하중 걸린 주행에서만 재현**돼서
+  USB 케이블/커넥터 접촉불량 쪽으로 후보 좁혀짐. `_read_encoder()`에 실패
+  진단 로깅(시작/heartbeat/복구+원시바이트) 추가해둠.
+  **다음 세션 시작점(Phase E, 접촉불량 확인)**: `docs/odometry_comprehensive_review_20260824.md`
+  "Phase E" 절 참고 — 케이블 손으로 스트레스 주기(E-1) → dmesg 동시 캡처(E-2)
+  → 케이블 고정 A/B(E-3) → 재체결(E-4) 순서.
+- Davi의 2026-08-17 제안 재검토(`rf2o_laser_odometry`, ZUPT, 슬립 감지 공분산
+  등) + 외부 리서치(광학플로우 PMW3901 등) 포함 종합 정리:
+  `docs/odometry_comprehensive_review_20260824.md`. 요약: 센서 추가보다
+  위 오도메트리 동결부터 잡는 게 먼저, 그다음 `rf2o_laser_odometry`(비용 0원,
+  이미 추천됐던 것) 시도가 다음 순서.
+
 ## Track A′ — 탐색 전략 (Resie 담당, 시뮬레이션, Layer 2 전용임을 명시)
 
 ⚠️ 이 트랙의 결과는 **"위치를 완벽히 안다면 어디로 갈지"**에 대한 답이지,

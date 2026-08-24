@@ -1441,7 +1441,14 @@ EXT4-fs (sda2): Remounting filesystem read-only
 
 - **접속 주소** (Pi IP는 유동적일 수 있음, `hostname -I`로 확인): 허브 `http://<Pi IP>:8764` (여기서 시작, 카드 클릭하면 상세로 이동), 전원 `:8765`, 모터 `:8766`.
 - **관리 명령**: `sudo systemctl status/restart/stop smart-trash-{power-monitor,motor-dashboard,dashboard-hub}.service`, 로그는 `sudo journalctl -u smart-trash-motor-dashboard -f` 식으로.
-- **motor_dashboard.py가 시리얼 포트(`/dev/ttyUSB0`)를 독점 소유**함 — 이 서비스가 떠 있는 동안은 다른 스크립트/노드가 같은 포트를 못 엶(`Device or resource busy`). 임시로 직접 `pyserial`로 테스트하려면 먼저 `sudo systemctl stop smart-trash-motor-dashboard`로 내려야 함. 나중에 `smart_trash_motion` ROS2 노드를 만들면 이 대시보드와 포트를 두고 경합하게 되므로, **그때 가서 모터 제어 소유권을 노드 쪽으로 넘기고 대시보드는 노드의 상태 토픽을 구독하는 방식으로 리팩터링 필요** (지금은 임시 진단용 구조).
+- ~~motor_dashboard.py가 시리얼 포트를 독점 소유함~~ **2026-08-24 정정: 낡은 문서 —
+  이미 리팩터링 완료됨.** `motor_dashboard.py`는 `340fdc5` 커밋에서 시리얼 직결이
+  아니라 `/cmd_vel` 발행 방식으로 바뀌었다(`tools/motor_dashboard.py:131`
+  `self.pub = self.create_publisher(Twist, 'cmd_vel', 1)`). **지금은
+  `smart_trash_motion`(diff_drive_node)과 동시 실행해도 포트 경합이 없다** —
+  이 줄을 안 믿고 실물 매핑 시험 중 엔코더 35초 정지를 motor_dashboard 탓으로
+  오판해서 껐다가 사용자 조종이 끊긴 사고가 있었음(2026-08-24). 진짜 원인 미확정,
+  `diff_drive_node.py` `_on_odom_timer`에 stale 경고만 추가해둠.
 - 유닛 파일 내용을 바꾸면 `~/smart-trash-bin/tools/systemd/*.service` 원본을 고치고 `sudo cp`로 다시 복사 + `sudo systemctl daemon-reload` + 해당 서비스 `restart`까지 해야 반영됨 (자동 동기화 안 됨).
 
 ## ⚠️⚠️ 안전 경고 — 모터 드라이버 관련 (2026-08-14 사고 발생, 필독)
