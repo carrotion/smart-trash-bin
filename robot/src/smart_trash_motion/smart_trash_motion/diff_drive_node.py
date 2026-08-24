@@ -412,15 +412,17 @@ class DiffDriveNode(Node):
             else:
                 time.sleep(0.02)  # 응답 없을 때 바쁜 대기 방지
 
-    def _apply_pwm(self, left_pwm, right_pwm):
+    def _apply_pwm(self, left_pwm, right_pwm, apply_offset=True):
         # 채널 순서 M1(왼쪽뒤) M2(왼쪽앞) M3(오른쪽뒤) M4(오른쪽앞) — CLAUDE.md 매핑
         # 4채널 전부 양수 = 전진 (좌우 부호 반전 불필요, 실측 확인됨)
         vals = [left_pwm, left_pwm, right_pwm, right_pwm]
         out = []
         for i, pv in enumerate(vals):
-            if pv != 0:
+            if pv != 0 and apply_offset:
                 # 부호를 따라 더한다(후진 시에도 같은 방향으로 보강).
                 # 정지(0)에는 적용하지 않는다 — 더하면 가만히 있어야 할 때 기어간다.
+                # 순수 회전(apply_offset=False, 호출부 주석 참고)에도 적용 안 함 —
+                # 직진 드래그 보정용 상수라 회전 폐루프의 좌우 대칭 가정을 깬다.
                 pv = pv + math.copysign(self._motor_offset[i], pv)
                 pv = max(-self._max_pwm, min(self._max_pwm, pv))
             out.append(int(pv))
@@ -603,7 +605,20 @@ class DiffDriveNode(Node):
                   f'turn_pwm={turn:.0f} left={self._target_left_pwm} right={self._target_right_pwm}',
                   throttle_duration_sec=0.2)
 
-        self._apply_pwm(self._target_left_pwm, self._target_right_pwm)
+        # 2026-08-24: motor_pwm_offset은 직진 드래그(M3) 보정용으로 08-20에
+        # 추가됐는데, 08-19에 튜닝된 회전 폐루프(turn_kp/turn_ki)는 이걸 감안한
+        # 적이 없다. 순수 회전(v≈0)에서 좌우가 대칭(left=-right)이라고 가정하고
+        # 게인을 잡았는데, 오프셋이 그대로 얹히면 비대칭이 커진다 — 실측(예:
+        # left=-33/right=+33에 오프셋 적용 시 M1=-108/M2=-33/M3=+273/M4=+33,
+        # M3만 8배 가까이 세게 밀림). 재현 시험에서 방향반전 없이 한 방향만
+        # 명령해도 자이로z가 명령(0.6)의 3~5배(최대 2.9)까지 발진하는 걸
+        # 확인했고, 순수 회전에서 오프셋을 끄니(정지 시 오프셋 미적용과 같은
+        # 논리 연장) 평균 0.603/표준편차 0.164로 안정화됨을 실측 확인(수정 전:
+        # 부호까지 뒤집히는 발진). 방향전환 재현시험(6회)의 데드존 경고도
+        # 17건 -> 3건으로 줄어듦 — 원래 2026-08-22에 미확정이었던 "회전 중
+        # 한쪽 바퀴가 안 도는 현상"의 주 원인이었던 것으로 결론.
+        apply_offset = abs(v) > 1e-3
+        self._apply_pwm(self._target_left_pwm, self._target_right_pwm, apply_offset)
 
     def _on_imu(self, msg: Imu):
         """자이로 z를 받아 바이어스 보정 후 보관. 회전각은 이 값으로 적분한다."""
