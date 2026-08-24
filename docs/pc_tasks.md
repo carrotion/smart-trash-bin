@@ -92,20 +92,21 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
 여기서 나온 전략을 실물에 반영하는 게 의미 있다. 그래도 시뮬레이션은 실물 위험이
 없어 계속 병렬로 진행 가치 있음.
 
+**⚠️ 2026-08-24 갱신 — 아래 항목들의 최신 상태는 이 파일 뒷부분의 전용 섹션
+참고, 여기는 요약만:**
+
 - **Phase 0 (완료)**: 시뮬레이션 인프라, `our_home` 월드, 배치 스윕 도구.
-- **Phase 1 (진행 중, 재작업 필요)**: explore_lite vs frontier_exploration_ros2
-  비교 + Optuna 파라미터 탐색. 상세: `docs/sim_optimization_2026-08-23.md`,
-  리뷰: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1).
-  ⚠️ **2026-08-23 밤: 비교용 6회 실행분(explore_lite/frontier 각 3회)이 자기
-  좀비 프로세스 오염으로 무효 처리됨** — `optuna_search.py`의 `run_trial`이
-  타임아웃 예외 경로에서만 `killpg`를 호출해서, 정상반환처럼 보이는 경로에서
-  자식이 안 죽는 case를 놓쳤다(위 "공유 자원 규칙" 2번 참고). **우선 이 버그부터
-  고치고(killpg를 예외와 무관하게 항상 호출), 그 다음 6회 비교를 재실행할 것.**
-- **Phase 1.5 (완료, close)**: Optuna 24트라이얼 중 8개(33%)가 정확히 동일값
-  (7.191%)에서 조기종료된 원인을 explore_lite 블랙리스트 오판으로 확정, (a)+(b)
-  로 N=4 병렬 조건까지 해소 확인. 단 오염됐던 그 8개 트라이얼 때문에 기존
-  Optuna 최적값이 신뢰할 수 없어짐 — 아래 PC 세션 할당 작업 6번 참고.
-- **Phase 2 (예정)**: 승자를 여러 시작 위치에서 반복 검증 — Remi가 스크립트 준비 예정.
+- **Phase 1 (완료)**: explore_lite vs frontier_exploration_ros2 비교 + Optuna
+  파라미터 탐색. → "🏁 explore_lite vs frontier_exploration_ros2 — 최종 결론"
+  섹션. **frontier_exploration_ros2 권장**으로 확정(안정성 압도적 우위).
+- **Phase 1.5 (완료)**: 조기종료 버그 원인 규명 + 완화책 (a)(b) 적용 +
+  근본원인(`getRobotPose()` empty_pose) 확정·수정 — 단 조기종료율 자체는
+  크게 개선 안 됨(58%→62.5%, 오차범위 내). → "🔬 explore_lite 조기종료
+  근본원인 조사" 섹션.
+- **Phase 2 (완료)**: frontier_exploration_ros2 최적값을 6개 시작위치에서
+  검증, 전부 정상 완료. → "🏠 Phase 2" 섹션.
+- 상세 리뷰: [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
+  (전체 조사 과정이 댓글로 시간순 기록됨).
 
 ## 🏁 explore_lite vs frontier_exploration_ros2 — 최종 결론 (2026-08-24 아침, Resie)
 
@@ -437,21 +438,5 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
   어긴 사례. `optuna_search.py`를 재실행하기 전에는 항상
   `ps -eo pid,ppid,pgid,etimes,cmd | grep -E 'ros2 launch|stage_ros2|Xvfb'`로
   0개인지 확인할 것 — 프로세스가 남아있으면 `kill -9 -<pgid>`(음수 pgid,
-  즉 killpg)로 그룹째 정리.
-
-- **Phase 1.5 완화책 (b) 적용 + N=4 병렬 검증 완료** (2026-08-23 밤, Resie):
-  m-explore-ros2에 패치 추가(`robot/patches/`) — 좌표별 실패 횟수를 세서
-  `max_frontier_retries`(기본 2) 미만이면 blacklist 대신 makePlan() 재호출로
-  재시도. (a)와 함께 적용한 채로 같은 N=4 병렬 조건(도메인 100~103, 200초)
-  재검증:
-
-  | run | goal_switches | tf_stale | 재시도 발동 | 결과 |
-  |---|---|---|---|---|
-  | 0 | 19 | 10 | 12 | 정상 진행(타임아웃) |
-  | 1 | 14 | 9 | 10 | 정상 진행(타임아웃) |
-  | 2 | 17 | 9 | 12 | **정상 완료**(All frontiers traversed) |
-  | 3 | 23 | 6 | 13 | 정상 진행(타임아웃) |
-
-  **조기종료(goal_switches=1) 0/4 — (a) 단독 4/4 재현에서 완전히 해소됨.**
-  TF 스톨 자체는 여전히 자주 발생하지만(런당 6~10회), 매번 재시도 로그로
-  넘어가 탐색은 계속됨. patches/README.md에 배경/검증 기록 완료.
+  즉 killpg)로 그룹째 정리. (아래 "Phase 1.5 완화책 (b) 적용" 항목에 이어짐 —
+  같은 내용이 중복 기록됐던 것을 여기서 정리함, 2026-08-24)
