@@ -86,7 +86,7 @@ index 0f8e610..a9d8a57 100644
  };
  }  // namespace frontier_exploration
 diff --git a/explore/src/explore.cpp b/explore/src/explore.cpp
-index 6a1125c..adbbc36 100644
+index 6a1125c..2640f99 100644
 --- a/explore/src/explore.cpp
 +++ b/explore/src/explore.cpp
 @@ -36,6 +36,8 @@
@@ -174,7 +174,51 @@ index 6a1125c..adbbc36 100644
      // scale frontier according to its cost (costier frontiers will be smaller)
      double scale = std::min(std::abs(min_cost * 0.4 / frontier.cost), 0.5);
      m.scale.x = scale;
-@@ -255,7 +288,7 @@ void Explore::makePlan()
+@@ -228,6 +261,43 @@ void Explore::visualizeFrontiers(
+ 
+ void Explore::makePlan()
+ {
++  // 2026-08-24 추가(smart-trash-bin): costmap_client_.getRobotPose()는 TF
++  // lookup이 실패하면(LookupException/ExtrapolationException 등) 예외를
++  // 삼키고 원점(0,0,0)/identity의 기본생성 Pose를 반환한다(costmap_client.cpp
++  // getRobotPose() 참고). 이 잘못된 위치를 실제 로봇 위치로 오인해 탐색하면,
++  // 이미 지나온 지점(대개 blacklist에 걸린 프론티어들) 기준으로 재탐색해
++  // "All frontiers traversed"로 오판하는 사고가 실측됨 — Phase 1.5 완화책
++  // (b, 재시도 로직)가 retry_timer_로 makePlan()을 재호출할 때, 그 시점에
++  // TF가 아직 stale이면 이 문제가 발동한다(Optuna run6 trial15/16, N=4
++  // 병렬에서 tf_stale=0인데도 조기종료된 사례의 진짜 원인이었음).
++  //
++  // ⚠️⚠️ 두 번의 실패한 시도: (1) orientation(x=y=z=w=0)으로 판별하려 했으나
++  // geometry_msgs/msg/Quaternion.msg의 IDL 기본값이 w=1(identity)이라 항상
++  // 거짓 — 방어코드가 한 번도 안 발동함을 로그로 확인. (2) position==(0,0,0)
++  // 으로 판별했더니 정반대로 **항상 참**이 됐다 — 로봇이 시뮬레이션에서
++  // 정확히 원점(0,0,0)에서 스폰되므로, 탐색 시작 직후의 정상적인 makePlan()
++  // 호출도 진짜로 position이 (0,0,0)이라 전부 오탐, 결과 24/24(100%)
++  // 조기종료로 악화됨. **반환값만으로는 성공/실패를 구분할 방법이 없다.**
++  //
++  // 최종: costmap_client_가 내부적으로 하는 것과 동일한 조건(transform_
++  // tolerance 파라미터, 이 시점의 now())으로 Explore 자신의 tf_buffer_에
++  // 직접 lookupTransform을 시도해 **예외 발생 여부로** 정확히 판별한다.
++  // transform_tolerance는 costmap_client_ 생성자가 이미 이 노드에
++  // declare해뒀으므로 여기서는 get만 한다(중복 declare 시 예외 발생).
++  double transform_tolerance = 0.3;
++  this->get_parameter("transform_tolerance", transform_tolerance);
++  try {
++    tf_buffer_.lookupTransform(costmap_client_.getGlobalFrameID(),
++                               robot_base_frame_, this->now(),
++                               tf2::durationFromSec(transform_tolerance));
++  } catch (tf2::TransformException& ex) {
++    RCLCPP_WARN(logger_,
++                "TF not ready yet (%s) — skipping this planning cycle "
++                "instead of exploring from a bogus origin pose",
++                ex.what());
++    return;
++  }
++
+   // find frontiers
+   auto pose = costmap_client_.getRobotPose();
+   // get frontiers sorted according to cost
+@@ -255,7 +325,7 @@ void Explore::makePlan()
    auto frontier =
        std::find_if_not(frontiers.begin(), frontiers.end(),
                         [this](const frontier_exploration::Frontier& f) {
@@ -183,7 +227,7 @@ index 6a1125c..adbbc36 100644
                         });
    if (frontier == frontiers.end()) {
      RCLCPP_WARN(logger_, "All frontiers traversed/tried out, stopping.");
-@@ -265,7 +298,36 @@ void Explore::makePlan()
+@@ -265,7 +335,36 @@ void Explore::makePlan()
      stop(true);
      return;
    }
@@ -221,7 +265,7 @@ index 6a1125c..adbbc36 100644
  
    // time out if we are not making any progress
    bool same_goal = same_point(prev_goal_, target_position);
-@@ -361,6 +423,26 @@ bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
+@@ -361,6 +460,26 @@ bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
    return false;
  }
  
@@ -248,7 +292,7 @@ index 6a1125c..adbbc36 100644
  void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
                            const geometry_msgs::msg::Point& frontier_goal)
  {
-@@ -368,13 +450,46 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
+@@ -368,13 +487,46 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
      case rclcpp_action::ResultCode::SUCCEEDED:
        RCLCPP_DEBUG(logger_, "Goal was successful");
        break;

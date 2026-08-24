@@ -184,6 +184,55 @@ world 파일 변형(`our_home_start_*.world`)은 `robot/src/stage_ros2/world/`�
 필요하면 각 위치의 도달가능 면적을 정규화해서 재비교할 가치 있음(우선순위
 낮음, Phase 2의 핵심 질문인 "안정성이 위치와 무관한가"는 이미 확정 답변됨).
 
+## 🔬 explore_lite 조기종료 근본원인 조사 (2026-08-24 낮, Resie) — 버그 확정, 완전 해결은 아님
+
+run6 trial15/16(파라미터가 거의 같은데 성공/실패가 갈림, tf_stale=0인데도
+실패)을 직접 로그 분석했다.
+
+**확정된 버그**: `costmap_client_.getRobotPose()`(`costmap_client.cpp:222`)가
+TF lookup 실패(LookupException/ExtrapolationException 등) 시 예외를 삼키고
+**원점(0,0,0)의 기본생성 Pose를 반환**한다. `makePlan()`은 이 반환값이
+성공인지 실패인지 구분할 방법이 없어서, 실패 시에도 "로봇이 원점에 있다"고
+믿고 그 위치 기준으로 프론티어를 재탐색한다 — 로봇이 이미 이동한 상태라면
+완전히 엉뚱한(대개 이미 blacklist된) 프론티어를 골라 "All frontiers
+traversed"로 오판한다. Phase 1.5 (b) 패치가 `retry_timer_`로 makePlan()을
+재호출할 때, 그 시점에 TF가 아직 stale이면 이 문제가 발동한다.
+
+**수정 시행착오 세 번** (전부 실측으로 검증, `robot/src/m-explore-ros2`
+서브모듈 `explore.cpp` `makePlan()` 시작부):
+1. `pose.orientation.x==y==z==w==0`으로 판별 → **완전히 무효**.
+   `geometry_msgs/msg/Quaternion.msg`의 IDL 기본값이 `w=1`(identity)이라
+   이 조건은 항상 거짓 — 방어코드가 한 번도 안 발동함을 로그로 확인, 12트라이얼
+   재검증에서 조기종료율이 오히려 58%→83%로 나빠짐(수정 자체는 무효했고
+   표본 편향이었을 뿐).
+2. `pose.position.x==y==z==0`으로 판별 → **정반대로 항상 참**. 로봇이
+   Stage 시뮬레이션에서 정확히 원점(0,0,0)에서 스폰되므로, 탐색 시작 직후의
+   **정상적인** makePlan() 호출도 진짜로 position이 (0,0,0)이라 전부 오탐 —
+   24/24(100%) 조기종료로 완전히 악화됨. **반환값만으로는 성공/실패를 구분할
+   방법이 없다**는 걸 이 두 실패로 확정.
+3. **최종(채택)**: `costmap_client_`와 동일한 조건(`transform_tolerance`
+   파라미터, 호출 시점 `now()`)으로 `Explore` 자신의 `tf_buffer_`에 직접
+   `lookupTransform()`을 시도해 **예외 발생 여부로 정확히 판별**, 실패 시
+   해당 사이클을 skip. `transform_tolerance`는 `costmap_client_` 생성자가
+   이미 이 노드에 declare해뒀으므로 get만 함(중복 declare 시 예외 발생 주의).
+
+**검증 결과 (24트라이얼, N=4, `study_explore_lite_v10_final.db`)**: 조기종료
+15/24(62.5%) — 수정 전(run6, 14/24=58.3%)과 **실질적으로 동일**. 즉 이
+버그는 실재했고 코드 정확성 관점에서 고칠 가치가 있었지만(안전성 문제이기도
+함 — 잘못된 위치 기준 탐색), **조기종료의 주된 원인은 아니었다.**
+
+**결론**: 조기종료는 단일 원인이 아니라 `reachedGoal`의 ABORTED→blacklist
+분기가 `makePlan()`을 즉시 재호출하지 않고 `exploring_timer_`(주기
+`1000/planner_frequency_`≈6.67초)까지 기다려야 하는 설계, `retry_timer_`가
+wall-clock 기반이라 sim_time과 시간축이 다른 문제, N=4 병렬의 심한 TF 지연
+빈도(재시도 2회로도 부족한 경우가 실제 다수) 등이 복합적으로 작용하는
+것으로 보인다. 이는 어제 결론(frontier_exploration_ros2가 TF 지연에 30~40배
+더 강건하고 한 번도 조기종료 안 함)을 다시 한번 강하게 뒷받침한다 — **패치로
+땜질하기보다 frontier_exploration_ros2를 쓰는 게 훨씬 실용적**이라는 권고를
+유지/강화한다. `getRobotPose()` empty_pose 수정 자체는 정당한 버그 수정이라
+패치에 유지하되, 여기서 추가 investigation은 중단한다(수확체감 — 이미
+명확한 대안이 있는 상태에서 구조적 재설계급 작업에 더 투자할 실익이 낮음).
+
 ## 🐛 killpg 버그 2건 완전 수정 기록 (2026-08-23 밤~2026-08-24 새벽, Resie)
 
 **버그 1 — `os.getpgid(proc.pid)`가 reap 이후 실패**: `proc.wait()`가
@@ -239,15 +288,9 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
    상세: 위 "🏁 최종 결론" 섹션.
 7. ~~frontier_exploration_ros2 Optuna 탐색~~ **완료** — 24/24(100%) 정상 완료,
    최적값 37.4%, `study_frontier.db`.
-8. **(다음, 미착수) explore_lite의 잔존 조기종료 원인 규명**: trial14(성공)와
-   trial15/16(실패)이 거의 동일한 파라미터인데 결과가 갈림 — tf_stale=0인데도
-   실패하는 케이스(trial16)까지 있어 TF 지연이 유일한 원인이 아님. (b) 패치의
-   재시도가 발동은 해도 결국 실패로 귀결되는 경로가 있다는 뜻. `reachedGoal`의
-   ABORTED 외에 다른 실패 코드(REJECTED, CANCELED 등)가 재시도 로직을 안 타고
-   바로 blacklist되는 건 아닌지, 혹은 재시도 자체가 3~4회로는 부족한지 확인 필요.
-   우선순위는 낮음 — 이미 frontier_exploration_ros2가 안정성 면에서 명확한
-   대안으로 확정됐으므로, 급하지 않다면 스킵하고 Phase 2(승자 반복검증)로
-   바로 넘어가도 됨.
+8. ~~explore_lite의 잔존 조기종료 원인 규명~~ **완료(부분 해결) — 진짜
+   버그 하나는 고쳤지만 조기종료율은 그대로**. 상세는 아래 "🔬 explore_lite
+   조기종료 근본원인 조사" 섹션.
 9. ~~Phase 2~~ **완료** — frontier_exploration_ros2 최적값을 6개 시작 위치에서
    검증, **전부 조기종료 없음(0/6), 충돌 0건**. 상세는 아래 "🏠 Phase 2" 섹션.
 
