@@ -311,10 +311,12 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
 
 **Track A′는 이걸로 완료 처리 (2026-08-24, Remi 리뷰).** 새 작업:
 
-10. **(신규) 웨이포인트 오차 계산/비교 도구** — Track 0(Remi, 실물)가
-    "시작점→방 중앙→복귀" 웨이포인트 대조에 착수하는데, 그 결과를 채점할
-    도구를 합성 데이터로 미리 만들고 검증해두는 작업. 실물 데이터 불필요.
-    상세 스펙: [Issue #3](https://github.com/carrotion/smart-trash-bin/issues/3)
+10. ~~웨이포인트 오차 계산/비교 도구~~ **완료** (2026-08-24, Resie) —
+    `tools/waypoint_error.py`(핵심 계산: 위치/거리/방위 오차 3종,
+    `--self-test`로 합성 데이터 15케이스 전부 통과) +
+    `tools/waypoint_capture.py`(실물 캡처, 로봇 몰지 않고 시작/도착 시점
+    Enter로 pose 스냅샷). 상세: [Issue #3](https://github.com/carrotion/smart-trash-bin/issues/3)
+    코멘트.
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #3](https://github.com/carrotion/smart-trash-bin/issues/3)
 코멘트로 (Issue #1은 Track A′ 완료로 종결).
