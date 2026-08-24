@@ -20,6 +20,7 @@ SIGKILL 몰살+SSH 단절까지 겪었다. PC(12코어)에서만 병렬화한다
 """
 import argparse
 import csv
+import glob
 import os
 import signal
 import subprocess
@@ -76,6 +77,42 @@ def make_param_variant(base_file, params, tag, prefix):
     return path
 
 
+def kill_process_tree(root_pid):
+    """root_pid와 그 모든 자손을 SIGKILL — /proc의 ppid 체인을 직접 순회한다.
+    2026-08-24 새벽 실측: os.killpg(pgid, ...)는 job-control로 프로세스
+    그룹이 갈라지면 무력화된다 — `inner_cmd`(timeout ... ros2 launch ...)가
+    bash 안에서 `&`로 백그라운드 실행되면서 setsid로 만든 원래 그룹과
+    분리된 **새 프로세스 그룹**을 얻는 경우가 실제로 관측됐다(24트라이얼 중
+    1개가 17분+ 동안 안 죽고 도메인을 계속 점유). killpg는 이렇게 갈라진
+    하위 그룹까지는 못 잡지만, ppid 트리는 그룹과 무관하게 항상 유효하므로
+    이쪽이 더 견고하다(tools/killproc.py, mapping_cleanup.py와 같은 원리)."""
+    pid_to_ppid = {}
+    for stat_path in glob.glob('/proc/[0-9]*/stat'):
+        try:
+            with open(stat_path) as f:
+                content = f.read()
+            # comm(2번째 필드)이 괄호+공백을 포함할 수 있어 마지막 ')' 뒤로 split
+            rest = content.rsplit(')', 1)[1].split()
+            pid = int(os.path.basename(os.path.dirname(stat_path)))
+            ppid = int(rest[1])  # state 다음이 ppid
+            pid_to_ppid[pid] = ppid
+        except (FileNotFoundError, ValueError, IndexError, OSError):
+            continue
+    to_kill = {root_pid}
+    frontier = [root_pid]
+    while frontier:
+        parent = frontier.pop()
+        for pid, ppid in pid_to_ppid.items():
+            if ppid == parent and pid not in to_kill:
+                to_kill.add(pid)
+                frontier.append(pid)
+    for pid in to_kill:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def run_trial(explorer, param_file, domain, duration, tag):
     log_path = os.path.join(SCRATCH, f'{tag}.log')
     cov_path = os.path.join(SCRATCH, f'{tag}_coverage.csv')
@@ -124,23 +161,26 @@ def run_trial(explorer, param_file, domain, duration, tag):
     # **killpg가 사실상 한 번도 실행되지 않았다** — grandchildren(ros2 launch가
     # 띄운 stage/slam/controller/planner/... 전부)이 그대로 살아남아 좀비/고아가
     # 됐다. 타임아웃 경로에서만 pid가 아직 살아있어 우연히 성공했던 것.
-    # preexec_fn=os.setsid로 시작했으므로 그룹 리더의 pgid는 항상 proc.pid와
-    # 동일하다 — reap 여부와 무관하게 이미 알고 있는 값이니 getpgid 조회 자체가
-    # 불필요하고 위험하다. proc.pid를 pgid로 바로 쓴다(ESRCH만 그룹이 이미
-    # 전멸했다는 뜻이므로 무시).
+    # (1차 수정: proc.pid를 pgid로 직접 사용 — getpgid 조회 제거)
+    #
+    # ⚠️⚠️⚠️⚠️ 2026-08-24 새벽: 1차 수정 후에도 24트라이얼 중 1개가 17분+
+    # 안 죽고 도메인을 점유했다. 원인은 killpg 자체의 한계 — `inner_cmd`
+    # (timeout ... ros2 launch ...)가 bash 안에서 `&`로 백그라운드 실행되면서
+    # setsid로 만든 최상위 그룹과 **분리된 새 프로세스 그룹**을 얻은 경우가
+    # 실측 확인됨(해당 트라이얼의 timeout 프로세스가 자기 자신을 pgid로
+    # 가지고 있었음). killpg(원래그룹)는 이렇게 갈라진 하위 그룹을 못 잡는다.
+    # ppid 트리는 그룹과 무관하게 항상 유효하므로, kill_process_tree()로
+    # /proc 기반 재귀 탐색+개별 SIGKILL로 교체(2차 수정, 최종).
     with open(log_path, 'w') as logf:
         proc = subprocess.Popen(['bash', '-c', full_cmd], stdout=logf, stderr=subprocess.STDOUT,
                                  env=env, preexec_fn=os.setsid)
-        pgid = proc.pid  # setsid 세션 리더 = pgid. reap 후에도 유효한 값이라 getpgid() 불필요.
+        root_pid = proc.pid
         try:
             proc.wait(timeout=duration + 120)
         except subprocess.TimeoutExpired:
             logf.write('\n[optuna_search] subprocess timeout\n')
         finally:
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            kill_process_tree(root_pid)
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
