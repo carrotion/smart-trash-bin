@@ -107,6 +107,77 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
   Optuna 최적값이 신뢰할 수 없어짐 — 아래 PC 세션 할당 작업 6번 참고.
 - **Phase 2 (예정)**: 승자를 여러 시작 위치에서 반복 검증 — Remi가 스크립트 준비 예정.
 
+## 🏁 explore_lite vs frontier_exploration_ros2 — 최종 결론 (2026-08-24 아침, Resie)
+
+killpg 버그 2건(아래 상세)을 완전히 수정하고 좀비 없는 깨끗한 상태에서
+explore_lite Optuna 24트라이얼을 재검증했다(`study_explore_lite_v6_final.db`,
+프로세스 완전 클린 확인됨). **좀비/자원경합은 이제 원인이 아니지만, 여전히
+58.3%(14/24)가 조기종료(coverage 7.2%)됐다.** frontier_exploration_ros2는
+이미 확정된 24/24(100%) 정상 완료.
+
+| | explore_lite (v6, 좀비버그 수정 후) | frontier_exploration_ros2 |
+|---|---|---|
+| 트라이얼 수 | 24 | 24 |
+| 조기종료 비율 | **58.3%(14개)** | **0%** |
+| 최고 coverage | 41.5% | 37.4% |
+| 정상 트라이얼 평균 | ~34% (10개 중) | ~29.7% (24개 전체) |
+| tf_stale 범위 | 0~7 | **228~332** (훨씬 많음!) |
+
+**결정적 관찰 — 조기종료가 파라미터 문제가 아니라 비결정적 실행 문제임을
+입증**: trial14(41.5%, 성공)와 trial15/16(7.2%, 실패)의 파라미터가 거의
+동일하다(`potential_scale≈0.52~0.59, gain_scale≈3.65~3.91,
+min_frontier_size≈0.13~0.17, min_frontier_distance≈0.68~0.70`) — 같은
+파라미터 조합이 실행마다 성공/실패가 갈린다. 게다가 trial16은
+`tf_stale=0`(TF 지연이 전혀 없었음)인데도 실패했다 — **TF 지연이 원인이
+아닌 실패 경로가 아직 남아있다는 뜻.** (b) 패치(재시도 로직)가 있는데도
+결국 실패로 귀결된다는 건, 재시도가 발동은 해도 매번 다시 실패해서
+결국 blacklist되는 경우가 있다는 것.
+
+부가 관찰(표본 작아 확정 아님): 도메인별로 나눠보면 `ROS_DOMAIN_ID=101`에서
+6/6(100%) 전부 실패, `103`에서는 1/6만 실패 — 도메인 자체의 문제라기보다는
+Optuna의 트라이얼-도메인 배정이 우연히 편향됐을 가능성이 높지만(확률
+0.5^6≈1.5%로 낮긴 함), 추가 조사 가치는 있음.
+
+**결론 및 권고**: coverage 최댓값 자체는 explore_lite가 근소 우위(41.5%
+vs 37.4%)지만, **안정성 측면에서 frontier_exploration_ros2가 압도적으로
+우위**다 — tf_stale이 explore_lite의 30~40배(228~332 vs 0~7)인데도
+단 한 번도 조기종료되지 않았다. 즉 frontier_exploration_ros2의 재시도/
+블랙리스트 로직이 explore_lite보다 훨씬 견고하다. **실물 로봇에 적용할
+경우 58%의 조기종료 확률은 받아들이기 어려운 리스크 — 현재 상태로는
+frontier_exploration_ros2를 권장.** explore_lite를 계속 쓰려면 (b) 패치가
+왜 일부 케이스에서 재시도해도 결국 실패하는지 추가 규명이 필요(다음
+세션 후보 작업).
+
+## 🐛 killpg 버그 2건 완전 수정 기록 (2026-08-23 밤~2026-08-24 새벽, Resie)
+
+**버그 1 — `os.getpgid(proc.pid)`가 reap 이후 실패**: `proc.wait()`가
+정상 반환(exit 0)되면 그 시점에 파이썬이 이미 `proc.pid`를 reap한다.
+그 뒤 `os.getpgid(proc.pid)`를 부르면 ProcessLookupError가 나고, 바로
+아래 `except: pass`가 조용히 삼켜서 killpg가 사실상 실행되지 않았다 —
+grandchildren(ros2 launch가 띄운 노드 전부)이 좀비/고아로 남음. 실제로
+도메인 100~103 각각에 11시간 넘게 눌러앉은 좀비 트리 4개가 발견됨.
+`preexec_fn=os.setsid`로 시작했으므로 pgid는 항상 `proc.pid`와 동일 —
+getpgid 조회 자체를 없애고 `proc.pid`를 pgid로 직접 사용하도록 수정
+(커밋 `c0415f2`).
+
+**버그 2 — killpg가 job-control로 갈라진 하위 프로세스 그룹을 못 잡음**:
+버그 1을 고친 뒤에도 24트라이얼 중 1개가 17분 넘게 안 죽었다. 원인은
+`inner_cmd`(`timeout ... ros2 launch ...`)가 bash 안에서 `&`로 백그라운드
+실행되면서 setsid로 만든 최상위 그룹과 **분리된 새 프로세스 그룹**을
+얻는 경우가 실측 확인됨(해당 트라이얼의 `timeout` 프로세스가 자기 자신을
+pgid로 갖고 있었음). `/proc`의 ppid 체인은 프로세스 그룹과 무관하게
+항상 유효하므로, `kill_process_tree()`로 재귀 탐색 + 개별 SIGKILL로
+교체(`tools/killproc.py`/`mapping_cleanup.py`와 같은 원리, 커밋 `549bf3c`).
+throwaway sleep 트리로 유닛 테스트 후 재검증 — 24트라이얼 전부 좀비 없이
+완전히 클린 확인됨.
+
+**교훈**: 두 버그 모두 "정상 종료처럼 보이는 케이스"에서만 발동해서
+오랫동안 안 잡혔다. `docs/pc_tasks.md` "공유 자원 규칙" 2번(자기 자신의
+이전 배치 좀비도 확인)을 실제로 지키지 않은 채 장시간 여러 차례 재시도를
+반복한 게 사고를 키웠다 — 다음에 유사한 병렬 배치 스크립트를 쓸 때는
+매 실행 전후로 `ps -eo pid,ppid,pgid,etimes,cmd | grep -E 'ros2
+launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
+
 ## PC 세션 현재 할당 작업
 
 1. ~~`optuna_search.py` `run_trial`의 killpg 버그 수정~~ **완료** (Resie, finally로 이동)
@@ -123,12 +194,27 @@ Layer 3: 실제 작업(쓰레기 수거 등) — "상상력과 소프트웨어�
    문턱 미만이면 blacklist 대신 재시도. 패치/README: `robot/patches/`.
    N=4 병렬 재검증: **조기종료 0/4**(적용 전 4/4), goal_switches 14~23회,
    재시도 로직 런당 10~13회 실제 발동. 상세는 아래 PC 보고.
-6. **(다음) explore_lite Optuna 재실행 — (b) 적용 상태로**: 기존 24트라이얼
-   결과(최적값 potential_scale=1.56/gain_scale=2.50/..., 44.2%) 중 8개(33%)가
-   정확히 이번에 고친 조기종료 버그로 7.191%까지 깎였던 것들 — 오염된 데이터로
-   최적값을 뽑았을 가능성 있음. (b) 적용 후 재실행해서 최적값이 바뀌는지 확인.
-   결정 근거: [Issue #1 코멘트](https://github.com/carrotion/smart-trash-bin/issues/1#issuecomment-5385722249)
-7. 그 다음 frontier_exploration_ros2도 Optuna 하네스로 별도 탐색
+6. ~~explore_lite Optuna 재실행 — (b) 적용 상태로~~ **완료, 하지만 새 버그 2건
+   발견/수정 후에도 58.3% 조기종료 잔존**: 재실행 과정에서 optuna_search.py의
+   killpg 자체가 이중으로 고장나 있었음을 발견(getpgid reap 버그, job-control
+   그룹 분리 버그 — 둘 다 커밋 완료, 상세는 위 "killpg 버그 2건" 섹션). 완전히
+   좀비 없는 상태로 재검증해도 58.3%(14/24)가 여전히 조기종료 — 좀비/자원경합이
+   원인이 아니라 explore_lite 자체의 비결정적 실패 경로가 남아있음이 확정됨.
+   상세: 위 "🏁 최종 결론" 섹션.
+7. ~~frontier_exploration_ros2 Optuna 탐색~~ **완료** — 24/24(100%) 정상 완료,
+   최적값 37.4%, `study_frontier.db`.
+8. **(다음, 미착수) explore_lite의 잔존 조기종료 원인 규명**: trial14(성공)와
+   trial15/16(실패)이 거의 동일한 파라미터인데 결과가 갈림 — tf_stale=0인데도
+   실패하는 케이스(trial16)까지 있어 TF 지연이 유일한 원인이 아님. (b) 패치의
+   재시도가 발동은 해도 결국 실패로 귀결되는 경로가 있다는 뜻. `reachedGoal`의
+   ABORTED 외에 다른 실패 코드(REJECTED, CANCELED 등)가 재시도 로직을 안 타고
+   바로 blacklist되는 건 아닌지, 혹은 재시도 자체가 3~4회로는 부족한지 확인 필요.
+   우선순위는 낮음 — 이미 frontier_exploration_ros2가 안정성 면에서 명확한
+   대안으로 확정됐으므로, 급하지 않다면 스킵하고 Phase 2(승자 반복검증)로
+   바로 넘어가도 됨.
+9. **Phase 2**: frontier_exploration_ros2 최적값(`weight_distance_wd=0.37,
+   weight_gain_ws=0.39, occ_threshold=68, min_frontier_size_cells=8,
+   mrtsp_solver=greedy`)을 여러 시작 위치에서 반복 검증.
 
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1)
 코멘트로.
