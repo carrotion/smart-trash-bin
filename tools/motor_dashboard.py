@@ -719,8 +719,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif self.path == "/api/status":
-            with state_lock:
-                self._send(200, json.dumps(state).encode("utf-8"), "application/json")
+            # 허브(dashboard_hub.py)가 이 한 엔드포인트만 보고 모터 카드를
+            # 그리므로, 배터리 전압도 여기 곁들여 보낸다(2026-08-25 — 허브
+            # 카드의 "드라이버 연결됨" 텍스트를 전압으로 바꾸기 위함. 연결
+            # 상태 자체는 카드 색(녹/빨 원)이 이미 표시하므로 중복이었음).
+            with state_lock, battery_lock:
+                out = dict(state)
+                out["battery"] = {"connected": battery_state.get("connected", False),
+                                   "voltage": battery_state.get("voltage")}
+                self._send(200, json.dumps(out).encode("utf-8"), "application/json")
         elif self.path == "/battery":
             body = BATTERY_PAGE.encode("utf-8")
             self.send_response(200)
