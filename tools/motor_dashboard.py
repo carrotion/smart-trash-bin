@@ -70,9 +70,9 @@ state = {
 
 # 배터리 전압(INA219, 0x40). ROS 토픽이 아니라 I2C 직접 읽기 — 이 값이
 # 필요한 곳이 대시보드뿐이라 굳이 노드/토픽을 새로 만들 이유가 없다.
-# ⚠️ 2026-08-21 기준 배선은 **임시**다: Vin+/Vin-를 묶어 전압만 재고, SDA/SCL은
-# IMU와 물리 3/5번 핀을 스플라이스로 공유한다(Qwiic 데이지체인 케이블 도착 전
-# 임시 조치). docs/hardware_inventory.md 참고.
+# Vin+/Vin-는 묶어서 전압만 잰다. 2026-08-25: SDA/SCL은 정식 Qwiic 데이지체인
+# 케이블로 IMU 스페어 포트에 연결됨(이전엔 물리 핀 스플라이스 임시 배선이었음
+# — docs/hardware_inventory.md 변경 이력 참고).
 BATTERY_I2C_ADDR = 0x40
 BATTERY_POLL_S = 2.0        # 배터리는 급변하지 않음 — 이 페이지도 부하를 아낀다
 BATTERY_HISTORY_LEN = 1800  # 2초 간격 * 1800 = 1시간
@@ -791,9 +791,14 @@ def main():
     threading.Thread(target=staleness_watchdog, daemon=True).start()
     # 2026-08-21: 자율주행 중 비상정지 채널(이 대시보드 HTTP 서버)이 세 번
     # 먹통됐다 — 매번 이 스레드가 유력한 용의자였다(I2C 블로킹 의심, 확정은
-    # 안 됐지만 안전이 우선이라 임시로 끔). INA219 폴링 안정화는 별도로 다시
-    # 다룰 것 — 지금은 estop 응답성이 배터리 표시보다 훨씬 중요하다.
-    # threading.Thread(target=battery_poll_loop, daemon=True).start()
+    # 안 됐지만 안전이 우선이라 임시로 껐었다). 그 의심의 배경은 당시 배선이
+    # INA219 SDA/SCL을 IMU 물리 핀에 스플라이스로 공유한 **임시 배선**이었다는
+    # 점 — 접촉 불량이 I2C를 정말로 블로킹시켰을 가능성이 있었다.
+    # 2026-08-25: 정식 Qwiic 데이지체인 케이블 도착·연결 후 재검증 —
+    # /api/status 132회 연속 요청(20초, 폴링주기 2초 10회 이상 포함) 최대
+    # 37.9ms/평균 1.9ms, /api/estop 45.4ms로 전부 정상 응답, 행 없음 확인 후
+    # 다시 켬.
+    threading.Thread(target=battery_poll_loop, daemon=True).start()
     spin_thread = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
     spin_thread.start()
 
