@@ -302,9 +302,12 @@ async function tick() {
       const cmd = d.commanded || [0,0];
       const movingWheels = rate.filter(r => Math.abs(r) > 30).length;
       const moving = movingWheels > 0;
+      const batt = d.battery || {};
+      const battLabel = batt.connected && batt.voltage != null
+        ? f(batt.voltage, 2, 'V') : '읽기 실패';
       return card(mod, rows([
         ['상태', moving ? '주행 중' : '정지'],
-        ['드라이버', connected ? '연결됨' : '연결 안 됨', !connected],
+        ['배터리', battLabel, batt.connected === false],
         ['회전 중 바퀴', `${movingWheels} / 4`],
         ['명령 속도', `${f(cmd[0], 2, ' m/s')} / ${f(cmd[1], 2, ' rad/s')}`],
       ]), !connected ? 'var(--critical)' : (moving ? 'var(--accent)' : 'var(--good)'), false);
