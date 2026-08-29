@@ -118,3 +118,49 @@ activation 이후에도 SLAM이 계속 지연될 수 있다.
 "retrying instead of blacklisting" 로그가 런당 10~13회 발동(재시도 로직이
 실제로 여러 번 발동해서 탐색을 이어갔다는 직접 증거). 상세: `docs/pc_tasks.md`,
 [Issue #1](https://github.com/carrotion/smart-trash-bin/issues/1).
+
+---
+
+# rf2o_laser_odometry 패치: Jazzy 빌드 수정 (2026-08-29)
+
+적용 대상: https://github.com/linuxsen/rf2o_laser_odometry_ros2.git (main)
+패치 파일: `rf2o_laser_odometry_jazzy_build_fix.patch`
+
+## 왜 필요한가
+
+포크가 아니라 upstream을 그대로 클론해 쓴다(`.gitignore`에 디렉터리 통째로
+제외돼 있음 — 재클론하면 이 패치가 사라진다). 원본이 Humble 기준이라 Jazzy에서
+바로 빌드가 안 됨:
+
+1. **최신 Eigen과의 비호환**: `CLaserOdometry2D.cpp`에서 `float`를 행렬 인덱스로
+   바로 넣던 코드(`wacu(std::round(uwarp))`)가 최신 Eigen에서 `IndexedView`로
+   해석되며 컴파일 실패(`YOU_TRIED_CALLING_A_VECTOR_METHOD_ON_A_MATRIX`).
+   `int`로 명시 캐스팅해서 해결.
+2. **tf2 헤더 확장자**: Jazzy부터 `tf2_geometry_msgs/tf2_geometry_msgs.h`가
+   `.hpp`로 바뀜(`.h`는 삭제됨). `CLaserOdometry2DNode.h`에서 확장자만 수정.
+
+기능은 원본 그대로 — 순수 빌드 호환성 패치.
+
+## 적용 방법
+
+```bash
+cd ~/smart-trash-bin/robot/src
+git clone https://github.com/linuxsen/rf2o_laser_odometry_ros2.git rf2o_laser_odometry
+cd rf2o_laser_odometry
+git apply ../../patches/rf2o_laser_odometry_jazzy_build_fix.patch
+cd ~/smart-trash-bin/robot
+colcon build --symlink-install --packages-select rf2o_laser_odometry
+```
+
+## 실행 시 주의
+
+`launch/rf2o_laser_odometry.launch.py` 기본값 `publish_tf: True`를 **반드시
+`False`로 덮어쓸 것** — 그대로 두면 `smart-trash-ekf.service`가 이미 발행하는
+`odom->base_link` TF와 충돌한다. 지금은 비교 로깅 단계(`/odom_rf2o` 토픽만
+받아 EKF와 대조)이지 융합/교체가 아니다 — `docs/midterm_review_20260829.md`
+계획 2번 참고.
+
+## TODO
+
+fork 안 만듦(Jazzy 대응이 upstream에 없어 언젠가 필요할 수 있음). 채택이
+확정되면 `carrotion/rf2o_laser_odometry`로 fork 후 서브모듈 전환 검토.
