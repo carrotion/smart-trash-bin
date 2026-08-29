@@ -407,6 +407,49 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
     Enter로 pose 스냅샷). 상세: [Issue #3](https://github.com/carrotion/smart-trash-bin/issues/3)
     코멘트.
 
+11. **[신규, 2026-08-29] SLAM 파라미터 재생 스윕 하네스 + rf2o 비교 분석 도구**
+    (Track 0 후속 — 배경은 `docs/midterm_review_20260829.md` 전체를 먼저 읽을 것):
+
+    Pi에서 오늘 M1 오도메트리 동결 버그가 완전히 해결·검증됐는데, 실물 매핑을
+    2회 돌려보니 **둘 다 루프클로저가 0건**이고 맵이 20~60° 틀어짐(map→odom
+    yaw 보정 62.8°/-30.3°). 자이로 잔류 바이어스가 세션 중 +2.9°/min씩 방랑하는
+    것도 실측 확인됨(정지구간 28.4초 평균). 실물 반복 주행은 비효율적이라
+    (`CLAUDE.md`의 "🧪 검증 방식 전환" 절, 2026-08-17 합의 — 로직은 시뮬/재생,
+    물리는 실물만) 이 부분은 PC에서 오프라인으로 하네스를 짜는 게 맞다.
+
+    **11-a. 루프클로저 파라미터 스윕 하네스** (`optuna_search.py`/
+    `sim_param_sweep.py`와 같은 구조 재사용):
+    - 입력: rosbag(`/scan`, `/scan_raw`, `/tf`, `/odometry/filtered` 포함,
+      Remi가 곧 Pi에서 녹화해 올릴 예정 — **그 전까지는 PC의 stage_ros2로
+      직접 임의 세션을 녹화해서 하네스 배관만 먼저 검증**해도 됨, 최종
+      튜닝은 실물 bag로)
+    - `ros2 bag play` + `mapper_params_online_async.yaml` 오버라이드
+      (`loop_search_maximum_distance`, `loop_match_minimum_response_coarse/fine`,
+      `loop_match_minimum_chain_size` 등) 조합별로 slam_toolbox 재구동
+    - 측정 지표: 루프클로저 발생 횟수(로그의 "loop closure"류 문자열 또는
+      pose graph 노드 point 급변으로 검출), 최종 `map→odom` yaw 크기(작을수록
+      좋음), 가능하면 `our_home` 정답 지도와의 직교성/정렬도
+    - killpg 버그(위 섹션들 참고 — reap 이후 getpgid 호출 금지, `proc.pid`를
+      pgid로 직접 사용) 반드시 처음부터 반영해서 짤 것. 배치 시작 전 좀비
+      확인 습관도 동일 적용
+
+    **11-b. rf2o vs EKF/휠 요(yaw) 비교 분석 스크립트**:
+    - Remi가 Pi에서 `rf2o_laser_odometry`를 빌드해 `/odom_rf2o`가 살아있는 것까지
+      확인함(패치: `robot/patches/rf2o_laser_odometry_jazzy_build_fix.patch`,
+      `publish_tf:=False` 필수 — EKF의 TF와 충돌 방지). 아직 주행 비교 로그는 없음
+    - `/odom_rf2o`, `/odometry/filtered`, `/odom`(휠 전용) 세 소스의 누적 yaw를
+      시간 축으로 정렬해서 비교하는 스크립트 — 세 값이 갈라지는 시점/구간을
+      찾아내는 게 목적(자이로 드리프트 구간 vs rf2o가 다르게 보는 구간 식별)
+    - `loop_gyro_diag.py`가 이미 이 세 프레임 유사값을 CSV로 남기는 구조라
+      (`docs/calibration/manual_mapping*.csv` 컬럼 참고, git엔 원시 CSV가
+      큰 파일이라 안 올라가 있음 — 컬럼 스키마는 `tools/loop_gyro_diag.py`
+      코드에서 확인) 이 스크립트가 완성되면 거기에 `/odom_rf2o` 컬럼만
+      추가해서 재사용할 것
+
+    둘 다 **Pi 실물 데이터 없이도 배관/로직 검증까지는 지금 바로 시작 가능**함
+    (합성 데이터 또는 PC의 stage_ros2 세션으로). Remi가 Pi bag을 올리면
+    바로 이어서 실행.
+
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #3](https://github.com/carrotion/smart-trash-bin/issues/3)
 코멘트로 (Issue #1은 Track A′ 완료로 종결).
 
