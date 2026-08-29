@@ -714,17 +714,38 @@ function drawSpark() {
   }
   const pad = Math.max((hi - lo) * 0.1, 0.02);
   const y0 = lo - pad, y1 = hi + pad;
-  const W = 300, H = 100;
-  const x = i => (i / (hist.length - 1)) * W;
+  const W = 300, H = 100, MARGIN_L = 30;  // 왼쪽 여백 = Y축 눈금 숫자 자리
+  const x = i => MARGIN_L + (i / (hist.length - 1)) * (W - MARGIN_L);
   const y = v => H - ((v - y0) / (y1 - y0)) * H;
   const ns = 'http://www.w3.org/2000/svg';
+
+  // Y축 눈금 4개 — 지금까지는 임계선 라벨 말고는 스케일을 알 방법이 없었다
+  // (2026-08-29, 사용자 지적: "그래프가 무슨 스케일인지 모호해 보인다").
+  const TICKS = 4;
+  for (let i = 0; i <= TICKS; i++) {
+    const v = y0 + (y1 - y0) * (i / TICKS);
+    const ly = y(v);
+    const grid = document.createElementNS(ns, 'line');
+    grid.setAttribute('x1', MARGIN_L); grid.setAttribute('x2', W);
+    grid.setAttribute('y1', ly); grid.setAttribute('y2', ly);
+    grid.setAttribute('stroke', 'var(--border)');
+    grid.setAttribute('stroke-width', '1');
+    svg.appendChild(grid);
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', MARGIN_L - 4); label.setAttribute('y', ly + 3);
+    label.setAttribute('text-anchor', 'end');
+    label.setAttribute('font-size', '8');
+    label.setAttribute('fill', 'var(--text-muted)');
+    label.textContent = v.toFixed(2);
+    svg.appendChild(label);
+  }
 
   if (thresholds) {
     const threshLine = (v, color, label) => {
       if (v < y0 || v > y1) return;  // 화면 범위 밖이면 안 그림
       const ly = y(v);
       const line = document.createElementNS(ns, 'line');
-      line.setAttribute('x1', 0); line.setAttribute('x2', W);
+      line.setAttribute('x1', MARGIN_L); line.setAttribute('x2', W);
       line.setAttribute('y1', ly); line.setAttribute('y2', ly);
       line.setAttribute('stroke', color);
       line.setAttribute('stroke-width', '1');
