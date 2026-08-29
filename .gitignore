@@ -26,6 +26,18 @@ robot/src/Stage/
 robot/src/stage_ros2/
 pc_results/
 
+# loop_gyro_diag.py(및 phaseE/postfix/floor 등 그 위로 돌리는 임시 구동
+# 스크립트) 원시 로그 — 50Hz 원시 시계열이라 몇 분만 돌려도 수십MB가 나오고,
+# 특정 세션·특정 기체 배선 상태에 종속적이라 재사용 가치가 없다(2026-08-29,
+# phaseE3 35MB 사례). 결론은 분석 즉시 docs/*.md에 요약해서 남기고, 원본은
+# 로컬 보관만 한다. straight_check_/sweep_/waypoint_A_/rotation_pwm 등
+# 기존 캘리브레이션 JSON·소용량 CSV는 이 규칙과 무관 — 계속 커밋 대상이다.
+docs/calibration/loop_gyro_diag_*.csv
+docs/calibration/gyro_diag_*.csv
+docs/calibration/phaseE*.csv
+docs/calibration/postfix_*.csv
+docs/calibration/floor_*.csv
+
 # frontier_exploration_ros2 (mertgulerx) — explore_lite 대체 후보 비교용으로
 # 2026-08-23 클론. 위와 같은 이유로 아직 서브모듈화 안 함(비교 진행 중).
 #   git clone https://github.com/mertgulerx/frontier_exploration_ros2.git robot/src/frontier_exploration_ros2
