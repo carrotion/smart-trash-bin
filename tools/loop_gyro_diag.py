@@ -19,6 +19,14 @@ Ctrl+C로 멈추면 그때까지 기록을 저장한다.
 원자적이라(시리얼 포트 공유와 다름) 충돌 위험은 없음, 다만 버스 부하를 아끼려
 5Hz로 제한한다(50Hz인 /imu/data 콜백마다 읽지 않음).
 
+2026-08-29 추가: `/wheel_encoders`(4채널 원시 누적 카운트)도 같이 기록한다.
+이전 시험에서 odom_yaw가 몇십~백여 초씩 동결되는 동안 EKF/자이로는 계속
+실제로 움직이는 패턴을 발견했는데, 이게 diff_drive_node의 "엔코더 응답
+자체가 안 옴" 경고로는 하나도 안 잡혔다 — 즉 응답은 매번 정상으로 왔지만
+그 안의 **특정 채널 값만 안 바뀌는(고착)** 조용한 실패로 보인다. d_left =
+(M1+M2)/2, d_right=(M3+M4)/2로 계산되므로(diff_drive_node.py 참고), 어느
+채널이 고착됐는지 원시값을 직접 봐야 확정할 수 있다.
+
 사용법:
     python3 tools/loop_gyro_diag.py --out docs/calibration/loop_gyro_diag.csv
 """
@@ -31,6 +39,7 @@ import time
 import rclpy
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
+from std_msgs.msg import Int32MultiArray
 
 try:
     import smbus2
@@ -63,16 +72,18 @@ def main():
     n = rclpy.create_node('loop_gyro_diag')
     state = {'gyro_z': None, 'ekf_yaw': None, 'odom_yaw': None,
              'ekf_x': None, 'ekf_y': None, 'odom_x': None, 'odom_y': None,
-             'battery_v': None}
+             'battery_v': None, 'enc': [None, None, None, None]}
 
     f = open(args.out, 'w', newline='')
     writer = csv.DictWriter(f, fieldnames=[
         't', 'gyro_z', 'ekf_x', 'ekf_y', 'ekf_yaw_deg',
-        'odom_x', 'odom_y', 'odom_yaw_deg', 'battery_v'])
+        'odom_x', 'odom_y', 'odom_yaw_deg', 'battery_v',
+        'enc_m1', 'enc_m2', 'enc_m3', 'enc_m4'])
     writer.writeheader()
 
     def on_imu(msg):
         state['gyro_z'] = msg.angular_velocity.z
+        e = state['enc']
         writer.writerow({
             't': time.time(),
             'gyro_z': state['gyro_z'],
@@ -81,6 +92,7 @@ def main():
             'odom_x': state['odom_x'], 'odom_y': state['odom_y'],
             'odom_yaw_deg': math.degrees(state['odom_yaw']) if state['odom_yaw'] is not None else '',
             'battery_v': state['battery_v'],
+            'enc_m1': e[0], 'enc_m2': e[1], 'enc_m3': e[2], 'enc_m4': e[3],
         })
 
     def on_ekf(msg):
@@ -93,9 +105,13 @@ def main():
         state['odom_x'], state['odom_y'] = p.position.x, p.position.y
         state['odom_yaw'] = yaw_from_quat(p.orientation)
 
+    def on_enc(msg):
+        state['enc'] = list(msg.data)
+
     n.create_subscription(Imu, '/imu/data', on_imu, 50)
     n.create_subscription(Odometry, '/odometry/filtered', on_ekf, 20)
     n.create_subscription(Odometry, '/odom', on_odom, 20)
+    n.create_subscription(Int32MultiArray, '/wheel_encoders', on_enc, 20)
 
     bus_holder = {'bus': None}
     if smbus2 is not None:
