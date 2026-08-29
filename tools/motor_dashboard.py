@@ -83,6 +83,13 @@ BATTERY_POLL_S = 2.0        # 배터리는 급변하지 않음 — 이 페이지
 BATTERY_HISTORY_APPEND_S = 10.0
 BATTERY_HISTORY_LEN = 200   # 10초 간격 * 200 = 33분(30분 요청에 여유)
 
+# 예상 자동정지 시점 예측 (2026-08-29, 사용자 요청). 최근 추세(선형회귀 기울기)로
+# critical 임계값까지 남은 시간을 추정한다. 1분에 한 번만 갱신 — 그보다 자주
+# 해봐야 회귀 window(아래)가 몇 분 단위라 숫자가 거의 안 바뀌고, 화면에서
+# 계속 깜빡이면 오히려 신뢰도가 떨어진다(사용자 의견 동의).
+BATTERY_PREDICT_INTERVAL_S = 60.0
+BATTERY_PREDICT_WINDOW_S = 300.0  # 최근 5분 추세로 계산 — 순간 부하 노이즈 배제
+
 # 3단계 전압 경보 (2026-08-29). 3S Li-ion 기준.
 # ⚠️ **이 값은 지금 장착된 알리 SUYIJIA 팩 전용이다.** 이 팩은 셀 불균형 불량품
 # (docs/hardware_inventory.md 참고) — 만충이 정상(12.6V)이 아니라 11.9V까지만
@@ -126,6 +133,30 @@ def _read_battery_voltage(bus):
     return (val >> 3) * 0.004
 
 
+def _predict_seconds_to_critical(history, now):
+    """최근 BATTERY_PREDICT_WINDOW_S초 기록을 최소자승 직선으로 근사해서
+    critical 임계값까지 남은 시간(초)을 추정한다. 추세가 평평하거나 오히려
+    오르는 중(예: 충전)이면 None(예측 불가/불필요)을 반환한다."""
+    pts = [(h["ts"], h["v"]) for h in history if now - h["ts"] <= BATTERY_PREDICT_WINDOW_S]
+    if len(pts) < 5:
+        return None  # 표본 너무 적음 — 세션 시작 직후 등
+    n = len(pts)
+    t_mean = sum(p[0] for p in pts) / n
+    v_mean = sum(p[1] for p in pts) / n
+    num = sum((t - t_mean) * (v - v_mean) for t, v in pts)
+    den = sum((t - t_mean) ** 2 for t, v in pts)
+    if den == 0:
+        return None
+    slope = num / den  # V/s
+    if slope >= -1e-5:  # 평평하거나 상승(충전) — 예측 무의미
+        return None
+    current_v = pts[-1][1]
+    remaining = current_v - BATTERY_CRITICAL_V
+    if remaining <= 0:
+        return 0.0
+    return remaining / (-slope)
+
+
 def _battery_tier(v):
     """이동평균 전압 -> ('ok'|'warn1'|'warn2'|'critical', 임계값 딕셔너리)."""
     if v <= BATTERY_CRITICAL_V:
@@ -149,6 +180,8 @@ def battery_poll_loop():
     # 근처에서 값이 오르내릴 때마다 매 폴링 주기(2초)마다 반복 발동한다.
     armed = True
     last_hist_append = 0.0
+    last_predict = 0.0
+    predicted_s = None
     while True:
         try:
             if bus is None:
@@ -190,6 +223,10 @@ def battery_poll_loop():
                 if now - last_hist_append >= BATTERY_HISTORY_APPEND_S:
                     last_hist_append = now
                     battery_history.append({"ts": now, "v": v})
+                if now - last_predict >= BATTERY_PREDICT_INTERVAL_S:
+                    last_predict = now
+                    predicted_s = _predict_seconds_to_critical(list(battery_history), now)
+                battery_state["predicted_s_to_critical"] = predicted_s
         except Exception as e:
             with battery_lock:
                 battery_state["connected"] = False
@@ -697,6 +734,7 @@ __FAVICON__
 <h1>🔋 배터리 상세</h1>
 <div class="card">
   <div class="big"><span id="voltNow">— V</span><span class="tier-badge" id="tierBadge"></span></div>
+  <div class="sub" id="voltPredict" style="margin-top:2px"></div>
   <svg id="sparkSvg" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
   <table id="statTable"></table>
   <div class="sub" id="updated"></div>
@@ -707,6 +745,19 @@ let hist = [];
 let thresholds = null;  // {warn1, warn2, critical} — 첫 /api/battery 응답에서 채움
 
 const TIER_COLOR = {ok: '#2fa84f', warn1: '#e0820a', warn2: '#e05a3c', critical: '#d63a3a'};
+
+// predicted_s_to_critical(초) -> {short, long, color} — 큰 숫자 옆 괄호용(short)과
+// 표 항목용(long) 둘 다 여기서 만든다(2026-08-29, 사용자 요청 — 홈 카드에도
+// 같은 문구를 쓸 수 있게 형식을 통일).
+function formatPredict(ps) {
+  if (ps == null) {
+    return {short: '', long: '안정적 (하강 추세 없음)', color: TIER_COLOR.ok};
+  }
+  const mins = Math.round(ps / 60);
+  const shortTxt = mins < 1 ? '1분 이내 종료 예상' : `${mins}분후 종료 예상`;
+  const eta = new Date(Date.now() + ps * 1000).toLocaleTimeString();
+  return {short: shortTxt, long: `약 ${mins}분 후 (${eta}경)`, color: TIER_COLOR.warn2};
+}
 
 function drawSpark() {
   const svg = document.getElementById('sparkSvg');
@@ -793,9 +844,12 @@ async function poll() {
     return;
   }
   thresholds = b.thresholds || thresholds;
+  const pred = formatPredict(b.predicted_s_to_critical);
   const voltEl = document.getElementById('voltNow');
   voltEl.textContent = b.voltage.toFixed(3) + ' V';
   voltEl.style.color = TIER_COLOR[b.tier] || '';
+  document.getElementById('voltPredict').textContent = pred.short ? `(${pred.short})` : '';
+  document.getElementById('voltPredict').style.color = pred.color;
   const badge = document.getElementById('tierBadge');
   const tierLabel = {ok: '정상', warn1: '1차 경고', warn2: '2차 경고', critical: '자동정지'}[b.tier] || '';
   badge.textContent = tierLabel;
@@ -805,6 +859,7 @@ async function poll() {
   document.getElementById('statTable').innerHTML = `
     <tr><th>항목</th><th>값</th></tr>
     <tr><td>10초 이동평균 (판정 기준)</td><td>${(b.recent_avg ?? b.voltage).toFixed(3)} V</td></tr>
+    <tr><td>예상 자동정지 시점 (5분 추세 기반)</td><td style="color:${pred.color}">${pred.long}</td></tr>
     <tr><td>세션 평균</td><td>${b.avg.toFixed(3)} V</td></tr>
     <tr><td>세션 최저</td><td>${b.min.toFixed(3)} V</td></tr>
     <tr><td>세션 최고</td><td>${b.max.toFixed(3)} V</td></tr>
@@ -879,7 +934,8 @@ class Handler(BaseHTTPRequestHandler):
                 out = dict(state)
                 out["battery"] = {"connected": battery_state.get("connected", False),
                                    "voltage": battery_state.get("voltage"),
-                                   "tier": battery_state.get("tier")}
+                                   "tier": battery_state.get("tier"),
+                                   "predicted_s_to_critical": battery_state.get("predicted_s_to_critical")}
                 self._send(200, json.dumps(out).encode("utf-8"), "application/json")
         elif self.path == "/battery":
             body = BATTERY_PAGE.encode("utf-8")
