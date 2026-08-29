@@ -15,12 +15,16 @@ WorkingDirectory=/home/carrotian/catkin_ws
 #       (원 반지름이 지구 자기장과 일치하는 것이 그 증거).
 #    ⚠️ 레이아웃을 바꾸면 반드시 재측정할 것: tools/hand_rotation_check.py
 #
-# 자이로 Z 바이어스: 1호기 2026-08-21 실측(IMU 전방 재장착 직후, 정지 상태
-#    90초/3066샘플 평균) -0.00782 rad/s. 표준오차 0.0011로 값 대비 충분히 작아
-#    상수 바이어스로 판정. 직진시험에서 "전진/후진이 같은 부호로 휨"의 원인 중
-#    하나로 지목됨(순수 toe 정렬이면 전진/후진 부호가 반대여야 함).
-#    ⚠️ 이것도 기체/장착위치 전용값이다 — IMU 위치를 또 옮기면 재측정할 것.
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node --ros-args -p mag_hard_iron_x:=-88.68 -p mag_hard_iron_y:=12.81 -p gyro_bias_z:=-0.00782'
+# 자이로 Z 바이어스: 2026-08-21엔 1회 실측(-0.00782, 90초/3066샘플) 상수를
+#    고정으로 썼는데, 2026-08-29에 이게 EKF(=SLAM이 쓰는 요 추정)로 직접
+#    들어가는 유일한 경로임에도 재부팅해도 안 바뀌는 일주일 넘은 값이었다는
+#    걸 발견함 — diff_drive_node는 매 시작마다 재보정하는데 그 결과가 EKF엔
+#    전혀 안 갔음. 오늘 관측된 맵 왜곡(62.8°/-30.3°)의 유력 원인.
+#    → gyro_bias_auto_calibrate(기본 true)로 이 노드도 매 시작 100샘플
+#    자동 재보정하도록 변경(imu_publisher_node.py). gyro_bias_z=-0.00782는
+#    이제 auto_calibrate를 끌 때만 쓰이는 비교/폴백용으로 남겨둠 — 상세는
+#    docs/midterm_review_20260829.md, docs/audit/2026-08-29_gyro_thermal_*.md
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec ros2 run smart_trash_sensors imu_publisher_node --ros-args -p mag_hard_iron_x:=-88.68 -p mag_hard_iron_y:=12.81 -p gyro_bias_z:=-0.00782 -p gyro_bias_auto_calibrate:=true'
 Restart=on-failure
 RestartSec=3
 
