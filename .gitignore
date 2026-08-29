@@ -37,6 +37,7 @@ docs/calibration/gyro_diag_*.csv
 docs/calibration/phaseE*.csv
 docs/calibration/postfix_*.csv
 docs/calibration/floor_*.csv
+docs/calibration/manual_mapping*.csv
 
 # frontier_exploration_ros2 (mertgulerx) — explore_lite 대체 후보 비교용으로
 # 2026-08-23 클론. 위와 같은 이유로 아직 서브모듈화 안 함(비교 진행 중).
