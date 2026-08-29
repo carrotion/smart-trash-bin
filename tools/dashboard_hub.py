@@ -303,9 +303,17 @@ async function tick() {
       const movingWheels = rate.filter(r => Math.abs(r) > 30).length;
       const moving = movingWheels > 0;
       const batt = d.battery || {};
+      // 예상 자동정지 시점 — motor_dashboard.py 배터리 상세 페이지의
+      // formatPredict()와 같은 형식(2026-08-29, 사용자 요청: 홈 카드에도
+      // "11.55V (N분후 종료 예상)" 식으로).
+      let predictTxt = '';
+      const ps = batt.predicted_s_to_critical;
+      if (ps != null) {
+        const mins = Math.round(ps / 60);
+        predictTxt = ` (${mins < 1 ? '1분 이내 종료 예상' : mins + '분후 종료 예상'})`;
+      }
       const battLabel = batt.connected && batt.voltage != null
-        ? f(batt.voltage, 2, 'V') + (batt.tier && batt.tier !== 'ok'
-            ? ` (${({warn1:'1차 경고', warn2:'2차 경고', critical:'자동정지'})[batt.tier] || ''})` : '')
+        ? f(batt.voltage, 2, 'V') + predictTxt
         : '읽기 실패';
       const battColor = {ok:'var(--good)', warn1:'#e0820a', warn2:'var(--critical)', critical:'var(--critical)'}[batt.tier];
       return card(mod, rows([
