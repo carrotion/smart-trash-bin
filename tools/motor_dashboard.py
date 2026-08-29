@@ -678,7 +678,7 @@ __FAVICON__
   .tier-badge { display: inline-block; padding: 3px 10px; border-radius: 999px;
     font-size: 0.85rem; font-weight: 600; margin-left: 10px; vertical-align: middle; }
   .tier-ok { background: color-mix(in srgb, #2fa84f 20%, transparent); color: #2fa84f; }
-  .tier-warn1 { background: color-mix(in srgb, #d6a300 20%, transparent); color: #b58500; }
+  .tier-warn1 { background: color-mix(in srgb, #e0820a 20%, transparent); color: #c46e00; }
   .tier-warn2 { background: color-mix(in srgb, #e05a3c 22%, transparent); color: #e05a3c; }
   .tier-critical { background: color-mix(in srgb, #d63a3a 25%, transparent); color: #d63a3a; }
 </style>
@@ -697,7 +697,7 @@ let lastTs = 0;
 let hist = [];
 let thresholds = null;  // {warn1, warn2, critical} — 첫 /api/battery 응답에서 채움
 
-const TIER_COLOR = {ok: '#2fa84f', warn1: '#d6a300', warn2: '#e05a3c', critical: '#d63a3a'};
+const TIER_COLOR = {ok: '#2fa84f', warn1: '#e0820a', warn2: '#e05a3c', critical: '#d63a3a'};
 
 function drawSpark() {
   const svg = document.getElementById('sparkSvg');
@@ -705,10 +705,14 @@ function drawSpark() {
   if (hist.length < 2) return;
   const vs = hist.map(h => h.v);
   let lo = Math.min(...vs), hi = Math.max(...vs);
-  // 임계선이 최근 데이터 범위 밖에 있어도(배터리가 넉넉해서 한참 위인 경우 등)
-  // 스케일에 강제로 끼워 넣지 않는다 — 그러면 실제 전압 변화가 눌려서 안 보인다.
-  // 대신 임계선은 화면 범위 안에 들 때만 그린다(아래 threshLine).
-  const pad = Math.max((hi - lo) * 0.15, 0.02);
+  // 임계선은 항상 그래프 범위 안에 들어오게 — 배터리가 넉넉해서 실제 전압이
+  // 한참 위에 있어도 "지금이 위험선에서 얼마나 여유 있는지"가 한눈에 보이는
+  // 게 데이터 변화를 확대해서 보는 것보다 유용하다(2026-08-29, 사용자 요청).
+  if (thresholds) {
+    lo = Math.min(lo, thresholds.critical);
+    hi = Math.max(hi, thresholds.warn1);
+  }
+  const pad = Math.max((hi - lo) * 0.1, 0.02);
   const y0 = lo - pad, y1 = hi + pad;
   const W = 300, H = 100;
   const x = i => (i / (hist.length - 1)) * W;
@@ -842,7 +846,8 @@ class Handler(BaseHTTPRequestHandler):
             with state_lock, battery_lock:
                 out = dict(state)
                 out["battery"] = {"connected": battery_state.get("connected", False),
-                                   "voltage": battery_state.get("voltage")}
+                                   "voltage": battery_state.get("voltage"),
+                                   "tier": battery_state.get("tier")}
                 self._send(200, json.dumps(out).encode("utf-8"), "application/json")
         elif self.path == "/battery":
             body = BATTERY_PAGE.encode("utf-8")
