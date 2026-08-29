@@ -27,6 +27,13 @@ Ctrl+C로 멈추면 그때까지 기록을 저장한다.
 (M1+M2)/2, d_right=(M3+M4)/2로 계산되므로(diff_drive_node.py 참고), 어느
 채널이 고착됐는지 원시값을 직접 봐야 확정할 수 있다.
 
+2026-08-29 밤 추가(pc_tasks.md 11-b/Track 0 후속, Resie): `/odom_rf2o`(rf2o_laser_odometry,
+스캔 기반 오도메트리 — 휠/자이로와 무관한 3번째 소스)도 같이 기록한다.
+`rf2o_laser_odometry`가 안 떠 있어도(구독만 하므로) 스크립트는 그대로 동작하고
+그 컬럼만 빈 값으로 남는다 — 노드 실행 순서에 의존하지 않음. 목적은
+`tools/yaw_source_compare.py`로 세 소스(rf2o/EKF/휠)의 누적 yaw가 어느 구간에서
+갈라지는지 짚어내는 것 — `docs/midterm_review_20260829.md` "재수립된 계획" 2번.
+
 사용법:
     python3 tools/loop_gyro_diag.py --out docs/calibration/loop_gyro_diag.csv
 """
@@ -72,12 +79,14 @@ def main():
     n = rclpy.create_node('loop_gyro_diag')
     state = {'gyro_z': None, 'ekf_yaw': None, 'odom_yaw': None,
              'ekf_x': None, 'ekf_y': None, 'odom_x': None, 'odom_y': None,
+             'rf2o_x': None, 'rf2o_y': None, 'rf2o_yaw': None,
              'battery_v': None, 'enc': [None, None, None, None]}
 
     f = open(args.out, 'w', newline='')
     writer = csv.DictWriter(f, fieldnames=[
         't', 'gyro_z', 'ekf_x', 'ekf_y', 'ekf_yaw_deg',
-        'odom_x', 'odom_y', 'odom_yaw_deg', 'battery_v',
+        'odom_x', 'odom_y', 'odom_yaw_deg',
+        'rf2o_x', 'rf2o_y', 'rf2o_yaw_deg', 'battery_v',
         'enc_m1', 'enc_m2', 'enc_m3', 'enc_m4'])
     writer.writeheader()
 
@@ -91,6 +100,8 @@ def main():
             'ekf_yaw_deg': math.degrees(state['ekf_yaw']) if state['ekf_yaw'] is not None else '',
             'odom_x': state['odom_x'], 'odom_y': state['odom_y'],
             'odom_yaw_deg': math.degrees(state['odom_yaw']) if state['odom_yaw'] is not None else '',
+            'rf2o_x': state['rf2o_x'], 'rf2o_y': state['rf2o_y'],
+            'rf2o_yaw_deg': math.degrees(state['rf2o_yaw']) if state['rf2o_yaw'] is not None else '',
             'battery_v': state['battery_v'],
             'enc_m1': e[0], 'enc_m2': e[1], 'enc_m3': e[2], 'enc_m4': e[3],
         })
@@ -105,12 +116,20 @@ def main():
         state['odom_x'], state['odom_y'] = p.position.x, p.position.y
         state['odom_yaw'] = yaw_from_quat(p.orientation)
 
+    def on_rf2o(msg):
+        p = msg.pose.pose
+        state['rf2o_x'], state['rf2o_y'] = p.position.x, p.position.y
+        state['rf2o_yaw'] = yaw_from_quat(p.orientation)
+
     def on_enc(msg):
         state['enc'] = list(msg.data)
 
     n.create_subscription(Imu, '/imu/data', on_imu, 50)
     n.create_subscription(Odometry, '/odometry/filtered', on_ekf, 20)
     n.create_subscription(Odometry, '/odom', on_odom, 20)
+    # rf2o_laser_odometry가 아직 안 떠 있어도(또는 이 시험에서 안 쓰더라도)
+    # 구독만 걸어두면 안전 — 메시지가 안 오면 해당 컬럼만 빈 값으로 남는다.
+    n.create_subscription(Odometry, '/odom_rf2o', on_rf2o, 20)
     n.create_subscription(Int32MultiArray, '/wheel_encoders', on_enc, 20)
 
     bus_holder = {'bus': None}
