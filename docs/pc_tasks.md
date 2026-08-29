@@ -450,6 +450,43 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
     (합성 데이터 또는 PC의 stage_ros2 세션으로). Remi가 Pi bag을 올리면
     바로 이어서 실행.
 
+12. **[긴급 추가, 2026-08-29 저녁] EKF vyaw 융합 손실 — 원시 자이로의 1/3도
+    못 잡음 (task 11보다 우선순위 높음)**:
+
+    배경 전부 `docs/midterm_review_20260829.md` 7절에 있음 — 요약하면 10바퀴
+    (3600°) 정밀 회전 시험(사용자 육안으로 정확히 10바퀴 확인)에서 **원시
+    자이로 적분은 99.29% 정확한데, `/odometry/filtered`의 융합 각속도는
+    22~37%만 잡음.** SLAM 끄고 재시험해도 37%로 여전히 심각(CPU 경쟁은
+    악화 요인일 뿐 근본원인 아님). 실시간 관찰하면 `/imu/data`의 gyro_z는
+    ±0.7~1.2 rad/s로 정상 요동하는데 `/odometry/filtered`의
+    `twist.twist.angular.z`는 +0.33 근처에 거의 고정돼 새 측정을 거의
+    반영 안 하는 것처럼 보임.
+
+    **이미 시도해서 실패한 것 — 반복하지 말 것**: `process_noise_covariance`의
+    vyaw(0-index 11)를 기본 0.02에서 1.5로 올려봤는데 **오히려 악화**됨
+    (+0.333 → -0.045~-0.048, 부호까지 반대인 더 나쁜 고정값). `ekf.yaml`은
+    원래 커밋 상태로 되돌려둠 — Resie도 이 파라미터만 만지는 시도는 하지 말 것.
+
+    **미검증 의심 후보** (`docs/midterm_review_20260829.md` 7.5절에 상세):
+    - `two_d_mode: true`와 vyaw 처리의 예상 밖 상호작용
+    - `imu0_config`(15원소, `[x,y,z,roll,pitch,yaw,vx,vy,vz,vroll,vpitch,vyaw,
+      ax,ay,az]`) 인덱스 규약을 우리가 잘못 이해하고 있을 가능성 — yaw(5)와
+      vyaw(11) 혼동 여부를 `robot_localization` 소스/문서로 직접 재확인
+    - `initial_estimate_covariance` 미설정(기본값) 영향
+    - 최소 구성(odom0 빼고 imu0만, 나머지 전부 기본값)으로 격리 재현
+    - `robot_localization` jazzy 버전 자체의 알려진 이슈(GitHub) 검색
+
+    **재현 데이터**: `docs/calibration/gyro_scale_test.csv`(SLAM 켠 채),
+    `docs/calibration/gyro_scale_test_noslam.csv`(SLAM 끈 채) — 둘 다 로컬에만
+    있음(git 미포함, 필요하면 Remi에게 요청). 재현 스크립트 자체는 이 세션의
+    scratchpad에만 있어 커밋 안 됨 — 필요하면 구조는 간단함(cmd_vel로
+    각속도 고정 명령 + `/imu/data`·`/odometry/filtered` 동시 기록 +
+    `wrap()` 기반 언랩 누적).
+
+    이 문제가 오늘 발견된 매핑 왜곡(62.8°/-30.3°/73.4°)의 진짜 지배 원인으로
+    보임 — M1 동결·자이로 바이어스 이중관리(둘 다 오늘 해결)보다 훨씬 큼.
+    task 11(스윕 하네스/rf2o 비교)보다 이걸 먼저 봐줄 것.
+
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #3](https://github.com/carrotion/smart-trash-bin/issues/3)
 코멘트로 (Issue #1은 Track A′ 완료로 종결).
 
