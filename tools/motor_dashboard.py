@@ -687,7 +687,7 @@ __FAVICON__
 <a class="back" href="/">← 모터 대시보드</a>
 <h1>🔋 배터리 상세</h1>
 <div class="card">
-  <div class="big" id="voltNow">— V<span class="tier-badge" id="tierBadge"></span></div>
+  <div class="big"><span id="voltNow">— V</span><span class="tier-badge" id="tierBadge"></span></div>
   <svg id="sparkSvg" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
   <table id="statTable"></table>
   <div class="sub" id="updated"></div>
@@ -759,7 +759,9 @@ async function poll() {
     return;
   }
   thresholds = b.thresholds || thresholds;
-  document.getElementById('voltNow').textContent = b.voltage.toFixed(3) + ' V';
+  const voltEl = document.getElementById('voltNow');
+  voltEl.textContent = b.voltage.toFixed(3) + ' V';
+  voltEl.style.color = TIER_COLOR[b.tier] || '';
   const badge = document.getElementById('tierBadge');
   const tierLabel = {ok: '정상', warn1: '1차 경고', warn2: '2차 경고', critical: '자동정지'}[b.tier] || '';
   badge.textContent = tierLabel;
