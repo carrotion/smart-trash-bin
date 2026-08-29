@@ -43,3 +43,9 @@ docs/calibration/manual_mapping*.csv
 # 2026-08-23 클론. 위와 같은 이유로 아직 서브모듈화 안 함(비교 진행 중).
 #   git clone https://github.com/mertgulerx/frontier_exploration_ros2.git robot/src/frontier_exploration_ros2
 robot/src/frontier_exploration_ros2/
+
+# rf2o 라이다 오도메트리 (jazzy 포크) — 2026-08-29 midterm_review 계획 2번으로
+# 도입 시작. 비교 로깅 단계라 아직 서브모듈화 안 함(채택 확정 시 등록).
+#   git clone https://github.com/linuxsen/rf2o_laser_odometry_ros2.git robot/src/rf2o_laser_odometry
+# ⚠️ 실행 시 반드시 publish_tf:=False — 기본값 True면 EKF의 odom→base_link TF와 충돌
+robot/src/rf2o_laser_odometry/

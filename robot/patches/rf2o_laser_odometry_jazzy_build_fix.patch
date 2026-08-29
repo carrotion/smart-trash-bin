@@ -1,0 +1,30 @@
+diff --git a/include/rf2o_laser_odometry/CLaserOdometry2DNode.h b/include/rf2o_laser_odometry/CLaserOdometry2DNode.h
+index 848a159..85bd6bf 100644
+--- a/include/rf2o_laser_odometry/CLaserOdometry2DNode.h
++++ b/include/rf2o_laser_odometry/CLaserOdometry2DNode.h
+@@ -6,7 +6,7 @@
+ #include <tf2_ros/transform_listener.h>
+ #include <tf2_ros/buffer.h>
+ #include <tf2/impl/utils.h>
+-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
++#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+ #include <tf2/utils.h>
+ 
+ namespace rf2o {
+diff --git a/src/CLaserOdometry2D.cpp b/src/CLaserOdometry2D.cpp
+index e0d68fa..1b99fa9 100644
+--- a/src/CLaserOdometry2D.cpp
++++ b/src/CLaserOdometry2D.cpp
+@@ -768,8 +768,10 @@ void CLaserOdometry2D::performWarping()
+         //Very close pixel
+         if (std::abs(std::round(uwarp) - uwarp) < 0.05f)
+         {
+-          range_warped[image_level](round(uwarp)) += range_w;
+-          wacu(std::round(uwarp)) += 1.f;
++          // 최신 Eigen: float 인덱스는 IndexedView로 해석돼 컴파일 실패 — int 캐스팅 필요
++          const int uwarp_n = static_cast<int>(std::round(uwarp));
++          range_warped[image_level](uwarp_n) += range_w;
++          wacu(uwarp_n) += 1.f;
+         }
+         else
+         {
