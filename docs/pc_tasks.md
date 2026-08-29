@@ -450,7 +450,14 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
     (합성 데이터 또는 PC의 stage_ros2 세션으로). Remi가 Pi bag을 올리면
     바로 이어서 실행.
 
-12. **[긴급 추가, 2026-08-29 저녁] EKF vyaw 융합 손실 — 원시 자이로의 1/3도
+12. ~~EKF vyaw 융합 손실~~ **완료(2026-08-29 저녁, Remi) — Resie는 착수 불필요**.
+    원인: `base_link→imu_link` 정적 TF 부재로 EKF가 IMU 메시지를 통째로
+    버리고 있었음(`debug:=true`로 확인, `Could not transform measurement
+    into base_link. Ignoring...`). `smart-trash-imu-tf.service` 신설로 해결,
+    실시간 재검증 완료(gyro_z와 ekf_angular_z가 이제 서로 따라감). 상세:
+    `docs/midterm_review_20260829.md` 7.7절. 아래는 조사 과정 기록(참고용).
+
+12-old. **[긴급 추가, 2026-08-29 저녁] EKF vyaw 융합 손실 — 원시 자이로의 1/3도
     못 잡음 (task 11보다 우선순위 높음)**:
 
     배경 전부 `docs/midterm_review_20260829.md` 7절에 있음 — 요약하면 10바퀴

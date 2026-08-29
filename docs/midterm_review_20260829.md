@@ -158,7 +158,7 @@
 코드: `robot/src/smart_trash_sensors/smart_trash_sensors/imu_publisher_node.py`,
 `tools/systemd/smart-trash-imu.service`.
 
-## 7. 재매핑 재현 + 정밀 회전 시험 → 진짜 병목은 EKF 융합 (2026-08-29 저녁, 🔴 미해결)
+## 7. 재매핑 재현 + 정밀 회전 시험 → 진짜 병목은 EKF 융합 (2026-08-29 저녁, ✅ 원인 확정·수정 완료 — 7.7절)
 
 ### 7.1 6절 수정 배포 후 재매핑 — 여전히 왜곡, 오히려 최악
 
@@ -252,3 +252,42 @@ vyaw만 올리는 시도는 이미 해봤고 악화됐다. 같은 걸 반복하�
   이중관리(해결)보다 훨씬 큰 영향력(22~37% 미만 캡처)을 가진, 오늘 밝혀진
   진짜 지배 오차 원인. `docs/pc_tasks.md`에도 Resie용 후속 조사 항목으로
   올릴 것(로그: `docs/calibration/gyro_scale_test*.csv`).
+
+### 7.7 근본원인 확정 + 수정 완료 — `base_link→imu_link` TF가 아예 없었다
+
+7.5절의 되돌린 시도(process_noise_covariance) 이후, `robot_localization`의
+`debug: true` 옵션으로 실제 내부 처리 로그를 직접 열어봄(`ekf_node`를
+`-p debug:=true -p debug_out_file:=...`로 수동 실행, 5초 회전 캡처).
+
+**결정적 증거**: `processMeasurement (odom0_pose)`와 `(odom0_twist)`는
+5초간 각 1302회 호출됐는데, **imu0 관련 `processMeasurement`는 0회.**
+대신 반복되는 문구를 발견: `Could not transform measurement into
+base_link. Ignoring...`
+
+**원인**: `imu_publisher_node`가 `frame_id: imu_link`로 `/imu/data`를
+발행하는데, **`base_link → imu_link` 정적 TF가 시스템 어디에도 없었다**
+(`ros2 run tf2_ros tf2_echo base_link imu_link` → "frame does not exist").
+`hardware_inventory.md`엔 "vyaw만 쓰니까 장착 위치 무관 → TF 불필요"라고
+**잘못 기록**돼 있었음 — 물리적으로는 맞는 추론이지만, `robot_localization`은
+어떤 필드를 쓰든 **메시지 프레임→타깃 프레임 변환을 먼저 시도**하고 TF가
+없으면 **메시지 전체를 버린다.** 그 결과 diff_drive_node의 채널별
+캘리브레이션도, 오늘 고친 자동 바이어스 재보정도, M1 케이블 고정도 —
+전부 옳은 조치였지만 **EKF엔 애초에 IMU 데이터가 한 번도 안 들어가고
+있었으니** 지도 왜곡에 영향을 줄 수가 없었다.
+
+**수정**: `smart-trash-imu-tf.service` 신설 — `base_link→imu_link` 정적 TF
+상시 발행 (x=+0.105 y=0 z=0.090, `hardware_inventory.md` IMU 장착 기하와
+일치). 재시작 후 즉시 실시간 대조로 확인:
+
+```
+gyro_z:        +0.82 ~ +1.05 rad/s
+ekf_angular_z: +0.90 ~ +1.08 rad/s   (수정 전: 고정 +0.33, 실패한 시도 후엔 -0.045)
+```
+
+**두 값이 이제 실제로 서로 따라간다.** `hardware_inventory.md`도 정정하고
+교훈("필드가 위치 무관이어도 미들웨어는 메시지 단위로 먼저 거를 수 있다 —
+추론만으로 TF 생략을 단정하지 말 것")을 남겨둠.
+
+**아직 안 한 것**: 이 수정으로 실제 매핑 세션의 map→odom 왜곡이 실제로
+줄어드는지 검증 — 다음 매핑 시험에서 확인. 판정 기준: 62.8°/-30.3°/73.4°
+대비 유의한 감소(루프클로저 없이도 몇 도 이내로 좁혀지길 기대).
