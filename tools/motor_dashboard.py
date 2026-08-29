@@ -77,6 +77,33 @@ BATTERY_I2C_ADDR = 0x40
 BATTERY_POLL_S = 2.0        # 배터리는 급변하지 않음 — 이 페이지도 부하를 아낀다
 BATTERY_HISTORY_LEN = 1800  # 2초 간격 * 1800 = 1시간
 
+# 3단계 전압 경보 (2026-08-29). 3S Li-ion 기준.
+# ⚠️ **이 값은 지금 장착된 알리 SUYIJIA 팩 전용이다.** 이 팩은 셀 불균형 불량품
+# (docs/hardware_inventory.md 참고) — 만충이 정상(12.6V)이 아니라 11.9V까지만
+# 올라가고, 실제 전원차단 사고 때 **팩 전압 10.5V(셀 불균형으로 최약 셀은 이미
+# 2.8V)에서 BMS가 강제 차단**하는 게 실측 확인됐다. 그래서 "건강한 3S팩" 기준
+# 표준값(과방전 한계 3.0V/cell=9.0V)을 쓰면 이 팩은 그 문턱에 도달하기 한참
+# 전에 이미 하드웨어 BMS가 먼저 끊어버려 소프트웨어 경보가 무의미해진다.
+# 대신 **이 팩의 실측 위험 지점(10.5V)보다 여유를 두고** 잡았다:
+#   1차(주의) 11.3V, 2차(위험/적색) 10.9V, 3차(자동정지) 10.6V
+#   — 10.6V는 실측 차단점(10.5V) 바로 위라, 소프트웨어가 하드웨어 BMS보다
+#     먼저 개입해서 "갑작스런 전원차단" 대신 "제어된 정지"를 만드는 게 목적.
+# **새 배터리(루나볼트 3S2P 등, 미주문)로 교체하면 이 값 전부 재검토할 것** —
+# 건강한 팩이면 표준값(1차 11.1V/2차 10.5V/3차 9.9V, 3.7/3.5/3.3V per cell)
+# 으로 다시 잡아야 한다.
+BATTERY_WARN1_V = 11.3
+BATTERY_WARN2_V = 10.9
+BATTERY_CRITICAL_V = 10.6
+# 순간 전압은 모터 기동/정지 때 수백mV~1V 이상 출렁인다(제자리 회전이 특히
+# 심함 — CLAUDE.md 회전 캘리브레이션 이력 참고). 원시값을 그대로 임계 판정에
+# 쓰면 순간 부하 때마다 오탐(false trip)한다. 그래서 **경보/자동정지 판정에는
+# 이동평균**을 쓴다 — 정지 상태 실측 잡음이 6초에 48mV뿐이라(2026-08-29
+# 확인) 노이즈 자체는 작지만, 부하 중 실제 처짐은 훨씬 크므로 몇 초는
+# 걸러야 진짜 하강 추세와 순간 처짐을 구분할 수 있다. 그래프/기록용
+# 원시값은 그대로 남긴다(오도메트리 진단에 순간 처짐 자체가 필요할 수 있어서
+# — tools/loop_gyro_diag.py 참고).
+BATTERY_AVG_WINDOW = 5      # BATTERY_POLL_S=2.0 기준 10초 이동평균
+
 battery_lock = threading.Lock()
 battery_state = {"connected": False}
 battery_history = collections.deque(maxlen=BATTERY_HISTORY_LEN)
@@ -93,12 +120,28 @@ def _read_battery_voltage(bus):
     return (val >> 3) * 0.004
 
 
+def _battery_tier(v):
+    """이동평균 전압 -> ('ok'|'warn1'|'warn2'|'critical', 임계값 딕셔너리)."""
+    if v <= BATTERY_CRITICAL_V:
+        return "critical"
+    if v <= BATTERY_WARN2_V:
+        return "warn2"
+    if v <= BATTERY_WARN1_V:
+        return "warn1"
+    return "ok"
+
+
 def battery_poll_loop():
     if smbus2 is None:
         return
     bus = None
     n, total, vmin, vmax = 0, 0.0, None, None
     session_started = time.time()
+    recent = collections.deque(maxlen=BATTERY_AVG_WINDOW)
+    # 히스테리시스: critical에 "진입"하는 순간 딱 한 번만 자동정지를 걸고,
+    # warn2 이상으로 회복하기 전까지는 다시 안 건다 — 안 그러면 임계값
+    # 근처에서 값이 오르내릴 때마다 매 폴링 주기(2초)마다 반복 발동한다.
+    armed = True
     while True:
         try:
             if bus is None:
@@ -109,11 +152,33 @@ def battery_poll_loop():
             vmin = v if vmin is None else min(vmin, v)
             vmax = v if vmax is None else max(vmax, v)
             now = time.time()
+            recent.append(v)
+            recent_avg = sum(recent) / len(recent)
+            tier = _battery_tier(recent_avg)
+
+            if tier == "critical" and armed:
+                armed = False
+                try:
+                    killed = kill_autonomous_processes()
+                except Exception:
+                    killed = []
+                try:
+                    Handler.node.send_cmd(0.0, 0.0)
+                except Exception:
+                    pass
+                print(f'[battery] 🔴 자동정지 발동 — 이동평균 {recent_avg:.2f}V '
+                      f'<= {BATTERY_CRITICAL_V}V (프로세스 {killed})', flush=True)
+            elif tier in ("ok", "warn1"):
+                armed = True  # warn2 문턱 위로 회복해야 재무장(둘 다 정의상 >warn2) — critical 바로 밑에서 진동 방지
+
             with battery_lock:
                 battery_state.update({
                     "connected": True, "voltage": v, "ts": now,
                     "avg": total / n, "min": vmin, "max": vmax,
                     "session_started": session_started, "samples": n,
+                    "recent_avg": recent_avg, "tier": tier, "auto_stop_armed": armed,
+                    "thresholds": {"warn1": BATTERY_WARN1_V, "warn2": BATTERY_WARN2_V,
+                                    "critical": BATTERY_CRITICAL_V},
                 })
                 battery_history.append({"ts": now, "v": v})
         except Exception as e:
@@ -608,36 +673,73 @@ __FAVICON__
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 8px;
     font-variant-numeric: tabular-nums; }
   td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
-  #sparkSvg { display: block; width: 100%; height: 80px; margin-top: 8px; }
+  #sparkSvg { display: block; width: 100%; height: 100px; margin-top: 8px; }
   .sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 8px; }
+  .tier-badge { display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.85rem; font-weight: 600; margin-left: 10px; vertical-align: middle; }
+  .tier-ok { background: color-mix(in srgb, #2fa84f 20%, transparent); color: #2fa84f; }
+  .tier-warn1 { background: color-mix(in srgb, #d6a300 20%, transparent); color: #b58500; }
+  .tier-warn2 { background: color-mix(in srgb, #e05a3c 22%, transparent); color: #e05a3c; }
+  .tier-critical { background: color-mix(in srgb, #d63a3a 25%, transparent); color: #d63a3a; }
 </style>
 </head>
 <body>
 <a class="back" href="/">← 모터 대시보드</a>
 <h1>🔋 배터리 상세</h1>
 <div class="card">
-  <div class="big" id="voltNow">— V</div>
-  <svg id="sparkSvg" viewBox="0 0 300 80" preserveAspectRatio="none"></svg>
+  <div class="big" id="voltNow">— V<span class="tier-badge" id="tierBadge"></span></div>
+  <svg id="sparkSvg" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
   <table id="statTable"></table>
   <div class="sub" id="updated"></div>
 </div>
 <script>
 let lastTs = 0;
 let hist = [];
+let thresholds = null;  // {warn1, warn2, critical} — 첫 /api/battery 응답에서 채움
+
+const TIER_COLOR = {ok: '#2fa84f', warn1: '#d6a300', warn2: '#e05a3c', critical: '#d63a3a'};
 
 function drawSpark() {
   const svg = document.getElementById('sparkSvg');
   svg.innerHTML = '';
   if (hist.length < 2) return;
   const vs = hist.map(h => h.v);
-  const lo = Math.min(...vs), hi = Math.max(...vs);
+  let lo = Math.min(...vs), hi = Math.max(...vs);
+  // 임계선이 최근 데이터 범위 밖에 있어도(배터리가 넉넉해서 한참 위인 경우 등)
+  // 스케일에 강제로 끼워 넣지 않는다 — 그러면 실제 전압 변화가 눌려서 안 보인다.
+  // 대신 임계선은 화면 범위 안에 들 때만 그린다(아래 threshLine).
   const pad = Math.max((hi - lo) * 0.15, 0.02);
   const y0 = lo - pad, y1 = hi + pad;
-  const W = 300, H = 80;
+  const W = 300, H = 100;
   const x = i => (i / (hist.length - 1)) * W;
   const y = v => H - ((v - y0) / (y1 - y0)) * H;
-  const pts = hist.map((h, i) => `${x(i).toFixed(1)},${y(h.v).toFixed(1)}`).join(' ');
   const ns = 'http://www.w3.org/2000/svg';
+
+  if (thresholds) {
+    const threshLine = (v, color, label) => {
+      if (v < y0 || v > y1) return;  // 화면 범위 밖이면 안 그림
+      const ly = y(v);
+      const line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', 0); line.setAttribute('x2', W);
+      line.setAttribute('y1', ly); line.setAttribute('y2', ly);
+      line.setAttribute('stroke', color);
+      line.setAttribute('stroke-width', '1');
+      line.setAttribute('stroke-dasharray', '4,3');
+      svg.appendChild(line);
+      const text = document.createElementNS(ns, 'text');
+      text.setAttribute('x', W - 2); text.setAttribute('y', ly - 2);
+      text.setAttribute('text-anchor', 'end');
+      text.setAttribute('font-size', '8');
+      text.setAttribute('fill', color);
+      text.textContent = label + ' ' + v.toFixed(1) + 'V';
+      svg.appendChild(text);
+    };
+    threshLine(thresholds.warn1, TIER_COLOR.warn1, '1차');
+    threshLine(thresholds.warn2, TIER_COLOR.warn2, '2차');
+    threshLine(thresholds.critical, TIER_COLOR.critical, '정지');
+  }
+
+  const pts = hist.map((h, i) => `${x(i).toFixed(1)},${y(h.v).toFixed(1)}`).join(' ');
   const poly = document.createElementNS(ns, 'polyline');
   poly.setAttribute('points', pts);
   poly.setAttribute('fill', 'none');
@@ -652,16 +754,28 @@ async function poll() {
   try { b = await (await fetch('/api/battery')).json(); } catch (e) { return; }
   if (!b.connected) {
     document.getElementById('voltNow').textContent = '연결 안 됨';
+    document.getElementById('tierBadge').textContent = '';
     document.getElementById('updated').textContent = b.error ? ('오류: ' + b.error) : '';
     return;
   }
+  thresholds = b.thresholds || thresholds;
   document.getElementById('voltNow').textContent = b.voltage.toFixed(3) + ' V';
+  const badge = document.getElementById('tierBadge');
+  const tierLabel = {ok: '정상', warn1: '1차 경고', warn2: '2차 경고', critical: '자동정지'}[b.tier] || '';
+  badge.textContent = tierLabel;
+  badge.className = 'tier-badge tier-' + (b.tier || 'ok');
   const started = new Date(b.session_started * 1000).toLocaleTimeString();
+  const th = b.thresholds || {};
   document.getElementById('statTable').innerHTML = `
     <tr><th>항목</th><th>값</th></tr>
-    <tr><td>평균</td><td>${b.avg.toFixed(3)} V</td></tr>
-    <tr><td>최저</td><td>${b.min.toFixed(3)} V</td></tr>
-    <tr><td>최고</td><td>${b.max.toFixed(3)} V</td></tr>
+    <tr><td>10초 이동평균 (판정 기준)</td><td>${(b.recent_avg ?? b.voltage).toFixed(3)} V</td></tr>
+    <tr><td>세션 평균</td><td>${b.avg.toFixed(3)} V</td></tr>
+    <tr><td>세션 최저</td><td>${b.min.toFixed(3)} V</td></tr>
+    <tr><td>세션 최고</td><td>${b.max.toFixed(3)} V</td></tr>
+    <tr><td>1차 경고 임계값</td><td style="color:${TIER_COLOR.warn1}">${(th.warn1 ?? 0).toFixed(2)} V</td></tr>
+    <tr><td>2차 경고(적색) 임계값</td><td style="color:${TIER_COLOR.warn2}">${(th.warn2 ?? 0).toFixed(2)} V</td></tr>
+    <tr><td>자동정지 임계값</td><td style="color:${TIER_COLOR.critical}">${(th.critical ?? 0).toFixed(2)} V</td></tr>
+    <tr><td>자동정지 재무장 상태</td><td>${b.auto_stop_armed === false ? '발동됨(회복 대기 중)' : '정상'}</td></tr>
     <tr><td>샘플 수</td><td>${b.samples}</td></tr>
     <tr><td>세션 시작</td><td>${started}</td></tr>`;
   document.getElementById('updated').textContent =

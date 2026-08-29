@@ -304,10 +304,13 @@ async function tick() {
       const moving = movingWheels > 0;
       const batt = d.battery || {};
       const battLabel = batt.connected && batt.voltage != null
-        ? f(batt.voltage, 2, 'V') : '읽기 실패';
+        ? f(batt.voltage, 2, 'V') + (batt.tier && batt.tier !== 'ok'
+            ? ` (${({warn1:'1차 경고', warn2:'2차 경고', critical:'자동정지'})[batt.tier] || ''})` : '')
+        : '읽기 실패';
+      const battColor = {warn1:'#d6a300', warn2:'var(--critical)', critical:'var(--critical)'}[batt.tier];
       return card(mod, rows([
         ['상태', moving ? '주행 중' : '정지'],
-        ['배터리', battLabel, batt.connected === false],
+        ['배터리', battLabel, batt.connected === false ? true : (battColor || false)],
         ['회전 중 바퀴', `${movingWheels} / 4`],
         ['명령 속도', `${f(cmd[0], 2, ' m/s')} / ${f(cmd[1], 2, ' rad/s')}`],
       ]), !connected ? 'var(--critical)' : (moving ? 'var(--accent)' : 'var(--good)'), false);
