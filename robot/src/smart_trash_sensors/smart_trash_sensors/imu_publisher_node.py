@@ -50,10 +50,35 @@ class ImuPublisherNode(Node):
         self._pub = self.create_publisher(Imu, 'imu/data', 10)
         self._mag_pub = self.create_publisher(MagneticField, 'imu/mag', 10)
 
+        # 2026-08-29: 기존엔 이 노드가 gyro_bias_z(고정 상수)만 썼는데, 그게
+        # 08-21에 한 번 잰 값(-0.00782)이 09-29까지 그대로 하드코딩돼 있었다.
+        # diff_drive_node.py는 매 시작마다 100샘플로 자이로 바이어스를 새로
+        # 재는 로직이 이미 있는데, 그 결과는 diff_drive_node 내부(폐루프 제어,
+        # 휠전용 /odom)에만 쓰이고 **EKF는 이 노드가 발행하는 /imu/data를
+        # 직접 구독하므로(ekf.yaml imu0: imu/data) 그 신선한 재보정 혜택을
+        # 전혀 못 받고 있었다.** 오늘 수동 매핑 세션들의 diff_drive_node
+        # 재보정값(-0.00113~+0.00618 rad/s로 매번 다름)과 이 노드의 고정값
+        # (-0.00782) 사이 잔차가 최대 0.006 rad/s대 — 11분 세션에 그대로
+        # 적분하면 이론상 수백 도까지 쌓일 수 있는 크기라, 오늘 관측된 맵
+        # 왜곡(62.8°/-30.3°)의 주된 원인일 가능성이 높다.
+        #
+        # 그래서 diff_drive_node와 같은 방식(시작 직후 정지 가정, N샘플 평균)의
+        # 자동 재보정을 이 노드에도 추가한다. gyro_bias_z는 auto_calibrate를
+        # 끌 때(비교 시험용)의 폴백/오버라이드로 남겨둔다.
         self.declare_parameter('gyro_bias_z', 0.0)
+        self.declare_parameter('gyro_bias_auto_calibrate', True)
+        self.declare_parameter('gyro_bias_calib_samples', 100)
+        self._gyro_bias_auto = self.get_parameter('gyro_bias_auto_calibrate').value
         self._gyro_bias_z = self.get_parameter('gyro_bias_z').value
-        if self._gyro_bias_z:
-            self.get_logger().info(f'자이로 Z 바이어스 보정 적용: {self._gyro_bias_z:+.5f} rad/s')
+        self._gyro_calib_samples_target = self.get_parameter('gyro_bias_calib_samples').value
+        self._gyro_calib_acc = 0.0
+        self._gyro_calib_count = 0
+        self._gyro_bias_calibrated = not self._gyro_bias_auto
+        if self._gyro_bias_auto:
+            self.get_logger().info(
+                f'자이로 Z 자동 재보정 시작 — 정지 상태로 {self._gyro_calib_samples_target}샘플 대기')
+        elif self._gyro_bias_z:
+            self.get_logger().info(f'자이로 Z 바이어스 보정 적용(고정값): {self._gyro_bias_z:+.5f} rad/s')
         self.declare_parameter('mag_hard_iron_x', 0.0)
         self.declare_parameter('mag_hard_iron_y', 0.0)
         self.declare_parameter('mag_hard_iron_z', 0.0)
@@ -139,8 +164,23 @@ class ImuPublisherNode(Node):
 
         msg.angular_velocity.x = self._imu.gxRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
         msg.angular_velocity.y = self._imu.gyRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
-        msg.angular_velocity.z = (self._imu.gzRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
-                                   - self._gyro_bias_z)
+
+        gz_raw_radps = self._imu.gzRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
+        if self._gyro_bias_auto and not self._gyro_bias_calibrated:
+            # 시작 직후 정지 상태를 가정(diff_drive_node의 자이로 바이어스
+            # 보정과 동일한 전제) — 보정 끝나기 전엔 회전 0으로 보고, EKF가
+            # 이 구간을 덜 믿도록 covariance도 같이 부풀린다(아래).
+            self._gyro_calib_acc += gz_raw_radps
+            self._gyro_calib_count += 1
+            if self._gyro_calib_count >= self._gyro_calib_samples_target:
+                self._gyro_bias_z = self._gyro_calib_acc / self._gyro_calib_count
+                self._gyro_bias_calibrated = True
+                self.get_logger().info(
+                    f'자이로 Z 자동 재보정 완료: {self._gyro_bias_z:+.5f} rad/s '
+                    f'({self._gyro_calib_count}샘플)')
+            msg.angular_velocity.z = 0.0
+        else:
+            msg.angular_velocity.z = gz_raw_radps - self._gyro_bias_z
 
         # This node doesn't fuse orientation — robot_localization EKF (Week 4) does
         # that downstream. Mark orientation unknown per REP-145.
@@ -157,6 +197,11 @@ class ImuPublisherNode(Node):
         # (진단 데이터가 z만 다뤘고, 평지 주행에선 x/y 자이로가 요 추정에 안 쓰임).
         since_cmd = time.monotonic() - self._last_cmd_change_t
         if since_cmd < self._gyro_settle_sec:
+            msg.angular_velocity_covariance[8] = self._gyro_unsettled_cov
+
+        # 자동 재보정 대기 중엔 z를 0으로 채워 넣는 임시값이므로 EKF가 안 믿게
+        # 같은 방식으로 공분산을 부풀린다(위 settle 구간과 동일 메커니즘).
+        if self._gyro_bias_auto and not self._gyro_bias_calibrated:
             msg.angular_velocity_covariance[8] = self._gyro_unsettled_cov
 
         self._pub.publish(msg)
