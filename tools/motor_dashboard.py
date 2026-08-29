@@ -75,7 +75,13 @@ state = {
 # — docs/hardware_inventory.md 변경 이력 참고).
 BATTERY_I2C_ADDR = 0x40
 BATTERY_POLL_S = 2.0        # 배터리는 급변하지 않음 — 이 페이지도 부하를 아낀다
-BATTERY_HISTORY_LEN = 1800  # 2초 간격 * 1800 = 1시간
+# 2026-08-29: 그래프에 기록하는 주기는 안전판정용 폴링(BATTERY_POLL_S)과
+# **일부러 분리**한다. 그래프 창(30분)을 늘리려고 BATTERY_POLL_S를 그대로
+# 늦추면 BATTERY_AVG_WINDOW(샘플 개수 기준)가 덮는 실제 시간이 같이
+# 늘어나서 자동정지 반응이 느려지는 부작용이 생긴다 — 안전판정은 계속
+# 2초 주기로 돌리고, 기록만 10초에 한 번 솎아서 남긴다.
+BATTERY_HISTORY_APPEND_S = 10.0
+BATTERY_HISTORY_LEN = 200   # 10초 간격 * 200 = 33분(30분 요청에 여유)
 
 # 3단계 전압 경보 (2026-08-29). 3S Li-ion 기준.
 # ⚠️ **이 값은 지금 장착된 알리 SUYIJIA 팩 전용이다.** 이 팩은 셀 불균형 불량품
@@ -142,6 +148,7 @@ def battery_poll_loop():
     # warn2 이상으로 회복하기 전까지는 다시 안 건다 — 안 그러면 임계값
     # 근처에서 값이 오르내릴 때마다 매 폴링 주기(2초)마다 반복 발동한다.
     armed = True
+    last_hist_append = 0.0
     while True:
         try:
             if bus is None:
@@ -180,7 +187,9 @@ def battery_poll_loop():
                     "thresholds": {"warn1": BATTERY_WARN1_V, "warn2": BATTERY_WARN2_V,
                                     "critical": BATTERY_CRITICAL_V},
                 })
-                battery_history.append({"ts": now, "v": v})
+                if now - last_hist_append >= BATTERY_HISTORY_APPEND_S:
+                    last_hist_append = now
+                    battery_history.append({"ts": now, "v": v})
         except Exception as e:
             with battery_lock:
                 battery_state["connected"] = False
@@ -812,13 +821,15 @@ async function poll() {
   try { h = await (await fetch('/api/battery/history?since=' + lastTs)).json(); }
   catch (e) { return; }
   if (h.rows && h.rows.length) {
-    hist = hist.concat(h.rows).slice(-300);
+    hist = hist.concat(h.rows).slice(-200);  // 서버 기록 주기(10초)*200 = 33분
     lastTs = h.last_ts;
     drawSpark();
   }
 }
 poll();
-setInterval(poll, 2000);
+// 2026-08-29: 배터리는 안전판정과 별개로 사람이 보는 화면은 그렇게 자주
+// 안 바뀌어도 된다(사용자 지적) — 서버 기록 주기(10초)에 맞춤.
+setInterval(poll, 10000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 </script>
 </body>
