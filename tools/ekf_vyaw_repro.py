@@ -11,8 +11,8 @@ vyaw를 1.5로 올리는 시도는 이미 해봤고 **오히려 악화**됐음 �
 angular_z 수렴 여부를 관찰한다 — robot_localization의 EKF 융합 메커니즘
 자체에 문제가 있는지, 아니면 실물 환경 특유의 요인인지 격리하기 위함.
 
-⚠️⚠️ **결론(2026-08-29 밤 조사 완료)**: 아래 7개 시나리오 전부 PC에서는
-**문제가 재현되지 않았다**(전부 명령값 근처로 정확히 수렴, ±15% 이내) —
+⚠️⚠️ **1차 조사 결론(2026-08-29 밤)**: 아래 7개 시나리오 전부 PC에서는
+**문제가 재현되지 않았다**(전부 명령값 근처로 정확히 수렴, 91.2~101.7%) —
   1. minimal_imu_only  (odom0 없이 imu0만, 최소 구성)
   2. full_with_odom    (실제 ekf.yaml과 동일, odom0+imu0)
   3. noisy             (자이로에 노이즈 주입, 실측 요동 폭 흉내)
@@ -24,22 +24,22 @@ angular_z 수렴 여부를 관찰한다 — robot_localization의 EKF 융합 메
                          covariance[8]을 50.0으로 강제 고정해도 여전히 정확히 수렴)
   7. two_d_mode_false  (two_d_mode를 명시적으로 꺼도 동일)
 
-**이게 의미하는 것**: robot_localization의 표준 EKF 융합 메커니즘 자체와
-우리 ekf.yaml 설정(imu0_config 인덱스 포함)은 정상이다. 문제는 파라미터가
-아니라 **PC 재현으로는 못 잡는 실물 특유의 요인**일 가능성이 높다. 다음
-후보(미검증, 실물에서만 확인 가능):
-  - diff_drive_node가 시작 시 자체적으로 자이로 바이어스를 재보정하는데
-    (imu_publisher_node와 별개 경로로 IMU에 접근하는 것으로 보임), 회전
-    폐루프가 활발히 도는 동안 두 프로세스가 I2C를 동시에 건드리며
-    imu_publisher_node의 자이로 발행 타이밍/값이 실제로 왜곡될 가능성.
-  - `gyro_scale_test.py`(회전 시험 스크립트, 이 세션엔 없어 리뷰 못 함)의
-    /cmd_vel 발행 패턴이 imu_publisher_node의 `_on_cmd_vel` eps(1e-3) 전환
-    판정을 예상 밖으로 자주 트리거하고 있을 가능성 — 실측 필요.
-  - 실물(ARM, 실제 DDS/QoS 타이밍)과 PC(x86) 사이의 메시지 드롭/지연 차이.
-  → **다음 최선의 진단**: 실물에서 회전 시험 중
-    `ros2 topic echo /imu/data --field angular_velocity_covariance`로
-    covariance[8]이 실제로 0.0004에 머무는지 자주 50.0으로 튀는지 직접
-    관찰(5분이면 됨, PC 재현보다 훨씬 저비용 확증 수단).
+⚠️⚠️⚠️ **진짜 근본원인 확정(Remi, 실물 debug 로그로 발견) + 이 도구로
+독립 재검증 완료**: `base_link->imu_link` 정적 TF가 시스템에 아예 없었다
+(`hardware_inventory.md`의 "vyaw만 쓰니까 위치 무관 → TF 불필요"는 물리적
+추론은 맞지만 틀렸다 — `robot_localization`은 어떤 필드를 쓰든 메시지
+프레임→타깃 프레임 변환을 항상 먼저 시도하고 실패하면 **메시지 전체를
+버린다**, `Could not transform measurement into base_link. Ignoring...`).
+위 7개 시나리오가 전부 `frame_id=base_link`로 가짜 IMU를 발행해서 애초에
+TF 변환이 필요 없었던 게 재현 실패의 진짜 이유였다:
+  8. missing_imu_tf    (frame_id=imu_link, TF 미발행) → **재현 성공**
+                        (융합 실패, imu0 processMeasurement 사실상 무효)
+  9. imu_tf_fixed      (frame_id=imu_link, base_link->imu_link 정적 TF 발행)
+                        → 정상 융합으로 회복
+
+**교훈**: 필드가 물리적으로 위치 무관이어도, 미들웨어(robot_localization)는
+메시지 단위로 먼저 걸러낼 수 있다 — "이 값은 장착 위치와 무관하니 TF가
+필요 없다"는 추론만으로 TF 생략을 단정하면 안 된다.
 
 사용법:
     python3 tools/ekf_vyaw_repro.py --list-scenarios
@@ -109,15 +109,33 @@ WITH_ODOM_YAML = '''ekf_filter_node:
 '''
 
 # (yaml_template, two_d_mode, wz, imu_noise_std, use_odom, odom_vx, odom_noise,
-#  force_unsettled_cov, duration)
+#  force_unsettled_cov, duration, imu_frame_id, publish_static_tf)
 SCENARIOS = {
-    'minimal_imu_only': (IMU0_ONLY_YAML, True, 1.0, 0.0, False, 0.0, 0.0, 0.0, 15),
-    'full_with_odom': (WITH_ODOM_YAML, True, 1.0, 0.0, True, 0.0, 0.0, 0.0, 15),
-    'noisy': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.0, 0.0, 0.0, 15),
-    'vx_injected': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.03, 0.02, 0.0, 15),
-    'long_duration': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.03, 0.02, 0.0, 65),
-    'forced_unsettled': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.0, 0.0, 50.0, 20),
-    'two_d_mode_false': (WITH_ODOM_YAML, False, 1.0, 0.25, True, 0.03, 0.02, 0.0, 15),
+    'minimal_imu_only': (IMU0_ONLY_YAML, True, 1.0, 0.0, False, 0.0, 0.0, 0.0, 15,
+                          'base_link', False),
+    'full_with_odom': (WITH_ODOM_YAML, True, 1.0, 0.0, True, 0.0, 0.0, 0.0, 15,
+                        'base_link', False),
+    'noisy': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.0, 0.0, 0.0, 15,
+              'base_link', False),
+    'vx_injected': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.03, 0.02, 0.0, 15,
+                     'base_link', False),
+    'long_duration': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.03, 0.02, 0.0, 65,
+                       'base_link', False),
+    'forced_unsettled': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.0, 0.0, 50.0, 20,
+                          'base_link', False),
+    'two_d_mode_false': (WITH_ODOM_YAML, False, 1.0, 0.25, True, 0.03, 0.02, 0.0, 15,
+                          'base_link', False),
+    # 2026-08-29 밤 추가 — Remi가 실물에서 확정한 진짜 근본원인 재현/검증.
+    # base_link->imu_link 정적 TF가 없으면 robot_localization이 "Could not
+    # transform measurement into base_link. Ignoring..."로 IMU 메시지를
+    # 전부 버린다(imu0 관련 processMeasurement 호출 자체가 0회였음, debug
+    # 로그로 확인됨). 위 7개 시나리오가 전부 frame_id=base_link로 발행해서
+    # TF 변환이 애초에 필요 없었던 게 재현 실패의 진짜 이유였다 — 이 두
+    # 시나리오로 그 사실을 독립적으로 재확인한다.
+    'missing_imu_tf': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.03, 0.02, 0.0, 15,
+                        'imu_link', False),  # TF 없음 -> 재현 기대(융합 실패)
+    'imu_tf_fixed': (WITH_ODOM_YAML, True, 1.0, 0.25, True, 0.03, 0.02, 0.0, 15,
+                      'imu_link', True),  # 정적 TF 발행 -> 정상 융합 기대
 }
 
 
@@ -128,7 +146,8 @@ def make_yaml(template, two_d_mode, tag):
     return path
 
 
-def publish_fake_imu(stop_flag, wz, noise_std, force_unsettled_cov, rate=50.0):
+def publish_fake_imu(stop_flag, wz, noise_std, force_unsettled_cov, rate=50.0,
+                      frame_id='base_link'):
     import rclpy
     from sensor_msgs.msg import Imu
     rclpy.init(args=[])
@@ -140,7 +159,7 @@ def publish_fake_imu(stop_flag, wz, noise_std, force_unsettled_cov, rate=50.0):
             return
         msg = Imu()
         msg.header.stamp = n.get_clock().now().to_msg()
-        msg.header.frame_id = 'base_link'
+        msg.header.frame_id = frame_id
         msg.orientation.w = 1.0
         msg.orientation_covariance[0] = -1.0
         wz_noisy = wz + (random.gauss(0.0, noise_std) if noise_std > 0 else 0.0)
@@ -205,7 +224,7 @@ def run_scenario(name, duration_override=None):
         print(f'알 수 없는 시나리오: {name}. --list-scenarios로 확인.')
         return 1
     (template, two_d_mode, wz, imu_noise, use_odom, odom_vx, odom_noise,
-     force_unsettled, default_duration) = SCENARIOS[name]
+     force_unsettled, default_duration, imu_frame_id, publish_static_tf) = SCENARIOS[name]
     duration = duration_override or default_duration
     yaml_path = make_yaml(template, two_d_mode, name)
 
@@ -217,17 +236,24 @@ def run_scenario(name, duration_override=None):
                             f'--ros-args --params-file {yaml_path}'],
             stdout=logf, stderr=subprocess.STDOUT, preexec_fn=os.setsid)
 
+    tf_proc = None
+    if publish_static_tf:
+        # Remi가 실물에서 확정한 실제 장착 기하(hardware_inventory.md)와 동일—
+        # x=+0.105 y=0 z=0.090, 회전 없음.
+        tf_proc = subprocess.Popen(
+            ['bash', '-c', f'{setup}exec ros2 run tf2_ros static_transform_publisher '
+                            f'0.105 0 0.090 0 0 0 base_link {imu_frame_id}'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+
     # 자식 프로세스로 publisher들을 fork해서 부모 인터프리터의 rclpy 컨텍스트와
     # 절대 안 섞이게 한다(한 프로세스 안에 rclpy.init()을 여러 번/여러 노드로
     # 걸면 컨텍스트 충돌 위험 — optuna_search.py 등 다른 도구도 항상 서브프로세스로
     # 격리하는 패턴을 따름).
     import multiprocessing as mp
-    stop_imu = mp.Value('b', False)
-    stop_odom = mp.Value('b', False)
 
     def imu_worker():
         flag = {'v': False}
-        publish_fake_imu(flag, wz, imu_noise, force_unsettled)
+        publish_fake_imu(flag, wz, imu_noise, force_unsettled, frame_id=imu_frame_id)
 
     def odom_worker():
         flag = {'v': False}
@@ -271,6 +297,12 @@ def run_scenario(name, duration_override=None):
     except ProcessLookupError:
         pass
     ekf_proc.wait(timeout=10)
+    if tf_proc is not None:
+        try:
+            os.killpg(os.getpgid(tf_proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        tf_proc.wait(timeout=10)
 
     if not samples:
         print(f'[{name}] 샘플 없음 — ekf_node가 안 떴을 수 있음, 로그 확인: {ekf_log}')
@@ -305,7 +337,8 @@ def main():
     if args.list_scenarios:
         for name, cfg in SCENARIOS.items():
             print(f'  {name:20s} two_d_mode={cfg[1]} wz={cfg[2]} imu_noise={cfg[3]} '
-                  f'odom={cfg[4]} duration={cfg[8]}s')
+                  f'odom={cfg[4]} duration={cfg[8]}s imu_frame={cfg[9]} '
+                  f'static_tf={cfg[10]}')
         return 0
 
     if args.all:
