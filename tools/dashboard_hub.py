@@ -306,9 +306,11 @@ async function tick() {
       // 예상 자동정지 시점 — motor_dashboard.py 배터리 상세 페이지의
       // formatPredict()와 같은 형식(2026-08-29, 사용자 요청: 홈 카드에도
       // "11.55V (N분후 종료 예상)" 식으로).
-      let predictTxt = '';
       const ps = batt.predicted_s_to_critical;
-      if (ps != null) {
+      let predictTxt;
+      if (ps == null) {
+        predictTxt = ' (안정적)';
+      } else {
         const mins = Math.round(ps / 60);
         predictTxt = ` (${mins < 1 ? '1분 이내 종료 예상' : mins + '분후 종료 예상'})`;
       }
