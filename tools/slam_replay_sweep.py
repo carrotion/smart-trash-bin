@@ -192,16 +192,23 @@ def suggest_params(trial):
 
 
 def score(result):
-    """루프클로저는 많을수록, 최종 yaw 보정 크기는 작을수록 좋다고 가정한
-    잠정 지표 — 배관 검증 단계라 실물 bag이 오면 재조정할 것(현재 테스트
-    bag은 시뮬레이션 완벽 오도메트리라 yaw가 원래 작아서 이 스코어의
-    변별력이 크지 않다). yaw=None(TF 못 잡음)은 큰 페널티."""
-    loop_bonus = result['loop_count'] * 10.0
+    """루프클로저 횟수만 스코어에 반영한다.
+
+    ⚠️ 2026-08-29 밤 수정 — 처음엔 `abs(final_yaw_deg)`를 페널티로 뺐었는데,
+    같은 날 실물 검증(docs/midterm_review_20260829.md 7.8절)에서 이게
+    **잘못된 지표였음이 확정**됐다: map→odom yaw는 "odom 프레임의 세션 시작
+    방향"과 "map 프레임의 절대 방향" 차이일 뿐이라 애초에 임의값이고, 작을
+    이유가 없다(실전에서 맵이 "거의 완벽"했던 세션도 yaw는 -157.99°로 컸음).
+    62.8°/-30.3°/73.4°를 "왜곡의 크기"로 해석한 것 자체가 부정확했던 것 —
+    진짜 신호는 이 절대값이 아니라 **맵 내부 일관성**(방이 서로 직각을
+    이루는지, 벽이 겹치는지, 루프클로저 성공 여부)이다. 방 직각도까지
+    자동 측정하는 건 아직 이 하네스 범위 밖이라(이미지 분석 필요), 우선
+    루프클로저 횟수만 남기고 yaw는 참고 정보로만 결과에 남긴다(스코어에서
+    제외). yaw=None(TF 자체를 못 잡음)은 slam_toolbox가 아예 안 뜬 것 같은
+    구조적 실패 신호라 페널티 유지."""
     if result['final_yaw_deg'] is None:
-        yaw_penalty = 1000.0
-    else:
-        yaw_penalty = abs(result['final_yaw_deg'])
-    return loop_bonus - yaw_penalty
+        return result['loop_count'] * 10.0 - 1000.0
+    return result['loop_count'] * 10.0
 
 
 def objective(trial, bag_path, play_rate, probe_duration):
