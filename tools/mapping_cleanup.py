@@ -81,6 +81,14 @@ def find_session_processes():
         if not args:
             continue  # 커널 스레드
         exe = process_name(args)
+        if exe == 'static_transform_publisher' and 'imu_link' in args:
+            # 2026-08-29: smart-trash-imu-tf.service(base_link->imu_link,
+            # EKF의 IMU 융합에 필수, 상시 구동)가 이 이름으로 잡혀서 매번
+            # 정리 때마다 같이 죽었다 — systemd 재시작 버스트 한도에 걸려
+            # 자율주행 중간에 안 살아나는 사고로 이어짐(실측). 매핑 세션이
+            # 쓰는 건 base_laser용 static_transform_publisher뿐이라 인자로
+            # 구분해서 제외한다.
+            continue
         if exe in SESSION_EXECUTABLES:
             found.append((pid, exe))
         elif any(a.endswith(lf) for a in args for lf in SESSION_LAUNCH_FILES):
