@@ -214,12 +214,20 @@ global_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 12.0
           obstacle_max_range: 12.0
-          # ⚠️ 로봇 자기 구조물(라이다 마운트/상판)이 360° 전방향 0.06~0.10m에
-          # 찍힌다 — 안 걸러내면 코스트맵에 로봇을 감싼 장애물 링이 생겨서
-          # 어떤 경로도 못 낸다. 실측상 0.10~0.30m가 빈 구간이라 0.15m로 컷.
-          # (SLAM 쪽 min_laser_range와 같은 값으로 맞춰둘 것)
-          obstacle_min_range: 0.11
-          raytrace_min_range: 0.11
+          # ⚠️⚠️ 2026-09-04 정정 — 0.11은 라이다 기준이라 로봇 앞면(0.11m)보다도
+          # 넓은 사각지대를 만들고 있었다. nav2_costmap_2d obstacle_layer.cpp
+          # (world_dist_sq 계산, 460~503행)의 근접 컷오프는 **base_link가 아니라
+          # 센서 원점(obs.origin_) 기준**이다 — 그런데 라이다는 base_link보다
+          # 5.4cm 앞에 있다(실측 확정 x=0.054m). 그래서 이 값 0.11은 실제로는
+          # base_link 기준 0.11+0.054=**0.164m**까지 장애물 마킹을 막고 있었다
+          # — 로봇 몸통 앞끝(0.11m)에 물체가 닿기 직전까지도 코스트맵엔 안 보였다는
+          # 뜻. `scan_self_filter`(±0.105m, base_link 기준 정사각형 폴리곤,
+          # 2026-09-04 실측 검증 완료 — 오탐/누락 0건)가 이미 자기 구조물 제거를
+          # 기하학적으로 정확히 처리하므로, 여기서 또 거리로 자르는 건 이제
+          # 불필요할 뿐 아니라 위 사각지대를 만드는 원인이었다. nav2 기본값(0.0)
+          # 으로 되돌림 — self-filter가 이미 뒤를 받쳐준다.
+          obstacle_min_range: 0.0
+          raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # 2026-08-21: 3.0 -> 2.0. inflation_radius(0.20)는 그대로 두고
@@ -264,12 +272,17 @@ local_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 12.0
           obstacle_max_range: 12.0
-          # ⚠️ 로봇 자기 구조물(라이다 마운트/상판)이 360° 전방향 0.06~0.10m에
-          # 찍힌다 — 안 걸러내면 코스트맵에 로봇을 감싼 장애물 링이 생겨서
-          # 어떤 경로도 못 낸다. 실측상 0.10~0.30m가 빈 구간이라 0.15m로 컷.
-          # (SLAM 쪽 min_laser_range와 같은 값으로 맞춰둘 것)
-          obstacle_min_range: 0.11
-          raytrace_min_range: 0.11
+          # ⚠️⚠️ 2026-09-04 정정 — global_costmap과 동일한 이유로 0.0으로 변경.
+          # 이 값(라이다 기준 0.11m)이 base_link 기준으로는 0.164m(라이다가
+          # base_link보다 5.4cm 앞이라 0.11+0.054)까지 장애물 마킹을 막고
+          # 있었다 — 로봇 몸통 앞끝(0.11m)에 닿기 직전까지도 코스트맵엔 안
+          # 보인 것. 상세 근거는 위 global_costmap 절 주석 참고
+          # (nav2_costmap_2d obstacle_layer.cpp의 world_dist_sq가 센서 원점
+          # obs.origin_ 기준임을 소스로 확인). scan_self_filter가 이미 자기
+          # 구조물을 base_link 기준 정사각형 폴리곤으로 정확히 걸러낸다
+          # (2026-09-04 검증 완료) — 여기서 또 거리로 자를 필요 없음.
+          obstacle_min_range: 0.0
+          raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # 2026-08-21: 3.0 -> 2.0. inflation_radius(0.20)는 그대로 두고
