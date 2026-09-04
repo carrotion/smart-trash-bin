@@ -685,3 +685,63 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
   0개인지 확인할 것 — 프로세스가 남아있으면 `kill -9 -<pgid>`(음수 pgid,
   즉 killpg)로 그룹째 정리. (아래 "Phase 1.5 완화책 (b) 적용" 항목에 이어짐 —
   같은 내용이 중복 기록됐던 것을 여기서 정리함, 2026-08-24)
+
+- **task 13 리뷰 완료 (2026-09-04, Resie)** — 배터리 안전 재설계(`45ea8b1`)
+  코드 리뷰, 물리 실행 없이 코드/로직만(`tools/motor_dashboard.py`,
+  `diff_drive_node.py`):
+
+  **🔴 확정 버그(순서) — `_graceful_poweroff()`가 `_stop_peripherals()` 뒤에
+  순차 실행돼 최악 64초 지연될 수 있음.** `battery_poll_loop`의 critical 분기가
+  `_stop_peripherals()`(8개 서비스를 `subprocess.run(timeout=8)`로 **순차**
+  stop)를 전부 끝낸 뒤에야 `_graceful_poweroff()`를 부른다. `_graceful_poweroff()`
+  자신은 이미 `Popen`으로 비동기 발사라 기다릴 이유가 없는데, 그 앞의 정지
+  루프가 동기적으로 블로킹해서 실제 `poweroff` 커맨드 발사 자체가 **최대
+  64초(8개×8초 타임아웃)** 늦어질 수 있다. `/battery_tier` 하드게이트
+  (diff_drive_node 쪽)는 이 지연과 무관하게 즉시 PWM을 끊으므로 **모터 안전은
+  영향 없지만**, 이 재설계의 진짜 목적("BMS 강제컷오프 전에 파일시스템을 정상
+  언마운트")은 이 지연 동안 배터리가 hard cutoff(10.5V)까지 추가로 떨어질
+  위험을 그대로 남긴다 — 오늘 넓힌 여유(0.2V)를 사실상 갉아먹는 구조.
+  **권장**: critical 분기에서 `_graceful_poweroff()`를 먼저(또는 최소한
+  `_stop_peripherals()`와 동시에) 호출할 것 — poweroff 자체가 systemd 표준
+  종료 시퀀스로 모든 유닛을 정지시키므로, 8개 순차 stop 루프는 critical
+  경로에서는 사실상 중복 작업이다(warn2 경로에서는 여전히 필요 — 거긴 파이를
+  안 끄니까).
+
+  **🟠 확정 갭(항목 b, fail-open) — `/battery_tier`에 신선도(staleness)
+  체크가 없고, I2C 읽기 실패 시 발행이 조용히 멈춘다.** `battery_poll_loop`은
+  `smbus2 is None`이면 통째로 `return`(루프 시작도 안 함)하고,
+  `_read_battery_voltage`가 예외를 던지면 그 주기의 `tier` 계산·발행을
+  스킵하고 `except`로 빠진다 — 즉 I2C가 불안정해지면(`CLAUDE.md`에 이미
+  기록된 반복 이슈: `/dev/i2c-1` 소유 그룹이 재부팅마다 바뀌는 문제)
+  `/battery_tier` 발행 자체가 조용히 멈추고, `diff_drive_node`는 마지막으로
+  받은 값(또는 한 번도 못 받았으면 기본값 `'ok'`)에 fail-open으로 영원히
+  머문다 — **정확히 8/29 사고와 같은 계열의 "안전장치가 조용히 무력화" 실패
+  모드**를 새 설계가 그대로 재도입할 수 있다. fail-open 선택 자체
+  (모터드라이버 서비스가 없어도 기존 동작 유지)는 합리적이지만, 최소한
+  `motor_dashboard`의 `/api/battery`에 `connected: false`가 뜨는 것 이상으로
+  — 예: diff_drive_node 쪽에서도 "N초 이상 battery_tier 미수신"을 로그로
+  드러내는 게 있으면 좋겠음(자동 하드게이트까지는 논쟁 여지 있어 판단 보류,
+  최소 가시성 확보는 이 저장소 관례상 필요 — CLAUDE.md의 "보이지 않게 틀려
+  있던 값" 교훈과 같은 계열).
+
+  **✅ 항목 a(히스테리시스 경계조건) — 버그 없음.** `armed_warn2`/
+  `armed_critical` 로직을 3가지 시나리오로 추적: (1) warn2를 건너뛰고
+  critical로 직행 — critical 분기가 `armed_warn2`도 같이 내려서 중복 발동
+  없이 처리됨, (2) 임계값 근처 진동(예: warn1↔warn2 반복) — 매번 재무장/
+  재발동하지만 `_stop_peripherals()`가 멱등이라 안전, (3) poweroff 실패 후
+  전압 회복 — `ok`/`warn1` 복귀 시 두 플래그 모두 재무장돼 다음 critical에
+  정상 재발동. 세 경우 다 의도한 대로 동작.
+
+  **임계값 재산정(항목 3) — 순서 버그(위 🔴)를 고치기 전까지는 0.2V 여유가
+  설계 의도만큼 못 지켜질 수 있음.** 숫자 자체(11.3/11.0/10.7V) 재산정 추론은
+  타당해 보이나, "2차가 먼저 모터를 끊어 3차까지 완만해질 것"이라는 가정은
+  🔴 항목이 고쳐진 뒤에야 실측 검증 의미가 있음 — 지금 상태로 실측하면 순서
+  버그의 영향이 섞여 나올 것.
+
+  **`_graceful_poweroff()` 코드 자체(항목 4)는 리뷰상 문제 없음.** `Popen`
+  비동기 호출, 예외처리 있음 — 유일한 의존성(NOPASSWD sudo)은 이미 확인됐다고
+  기록됨. 실제 발동 여부는 여전히 실측 필요(Remi가 이미 인지).
+
+  **결론**: Resie가 임의로 코드를 안 건드리고 리뷰만 남김 — 순서 버그(🔴)는
+  두 줄 스왑 수준의 작은 변경이라 원하면 바로 패치 가능, Remi가 다음 세션에서
+  처리하거나 요청하면 Resie가 이어서 처리하겠음.
