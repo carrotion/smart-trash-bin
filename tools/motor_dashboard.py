@@ -29,6 +29,7 @@ import gzip
 import json
 import math
 import signal
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -43,7 +44,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Int32MultiArray, String
 
 try:
     import smbus2
@@ -90,23 +91,35 @@ BATTERY_HISTORY_LEN = 200   # 10초 간격 * 200 = 33분(30분 요청에 여유)
 BATTERY_PREDICT_INTERVAL_S = 60.0
 BATTERY_PREDICT_WINDOW_S = 300.0  # 최근 5분 추세로 계산 — 순간 부하 노이즈 배제
 
-# 3단계 전압 경보 (2026-08-29). 3S Li-ion 기준.
+# 3단계 전압 경보 (2026-08-29 신설, 2026-09-04 트리거 재정의로 여유 재조정).
 # ⚠️ **이 값은 지금 장착된 알리 SUYIJIA 팩 전용이다.** 이 팩은 셀 불균형 불량품
 # (docs/hardware_inventory.md 참고) — 만충이 정상(12.6V)이 아니라 11.9V까지만
 # 올라가고, 실제 전원차단 사고 때 **팩 전압 10.5V(셀 불균형으로 최약 셀은 이미
 # 2.8V)에서 BMS가 강제 차단**하는 게 실측 확인됐다. 그래서 "건강한 3S팩" 기준
 # 표준값(과방전 한계 3.0V/cell=9.0V)을 쓰면 이 팩은 그 문턱에 도달하기 한참
 # 전에 이미 하드웨어 BMS가 먼저 끊어버려 소프트웨어 경보가 무의미해진다.
-# 대신 **이 팩의 실측 위험 지점(10.5V)보다 여유를 두고** 잡았다:
-#   1차(주의) 11.3V, 2차(위험/적색) 10.9V, 3차(자동정지) 10.6V
-#   — 10.6V는 실측 차단점(10.5V) 바로 위라, 소프트웨어가 하드웨어 BMS보다
-#     먼저 개입해서 "갑작스런 전원차단" 대신 "제어된 정지"를 만드는 게 목적.
 # **새 배터리(루나볼트 3S2P 등, 미주문)로 교체하면 이 값 전부 재검토할 것** —
 # 건강한 팩이면 표준값(1차 11.1V/2차 10.5V/3차 9.9V, 3.7/3.5/3.3V per cell)
 # 으로 다시 잡아야 한다.
+#
+# 2026-09-04: 2차/3차의 "역할"이 바뀌면서 여유를 다시 잡았다(사용자 요청 —
+# "10.6V가 최종 저지선이 아니라면 더 내려도 된다, 1/2차도 재조정 고려").
+# 원래 설계는 "PWM을 0으로 보낸다"(수십ms)만 상정해서 하드 컷오프(10.5V)
+# 바로 위 0.1V 여유로도 충분했다. 지금은:
+#   - 2차(warn2): 모터+센서 등 주변장치 8개를 systemctl stop으로 순서대로
+#     내림 — 수 초 걸림. 10.9V -> **11.0V**로 조금 당김.
+#   - 3차(critical): 위 2차 조치를 다시 확인 후 **파이 자체를 정상 poweroff**
+#     — systemd가 남은 서비스를 마저 내리고 파일시스템을 언마운트하는 데까지
+#     수 초~수십 초 걸릴 수 있다. 하드 컷오프까지 여유를 0.1V -> **0.2V**로
+#     넓혀 10.6V -> **10.7V**.
+#   여유를 넓힐 수 있는 근거: 2차가 먼저 모터(수 A급 부하)를 끊으므로, 3차
+#   문턱에 도달할 때쯤엔 파이 자체 소비전류(대략 1A대, 완만하고 안정적)만
+#   남아 하락 속도가 크게 느려질 것으로 예상됨 — 다만 이건 아직 실측 검증
+#   전의 추정이라, 아래 _predict_seconds_to_critical()의 실제 추세로 계속
+#   지켜보고 필요하면 재조정할 것.
 BATTERY_WARN1_V = 11.3
-BATTERY_WARN2_V = 10.9
-BATTERY_CRITICAL_V = 10.6
+BATTERY_WARN2_V = 11.0
+BATTERY_CRITICAL_V = 10.7
 # 순간 전압은 모터 기동/정지 때 수백mV~1V 이상 출렁인다(제자리 회전이 특히
 # 심함 — CLAUDE.md 회전 캘리브레이션 이력 참고). 원시값을 그대로 임계 판정에
 # 쓰면 순간 부하 때마다 오탐(false trip)한다. 그래서 **경보/자동정지 판정에는
@@ -168,6 +181,67 @@ def _battery_tier(v):
     return "ok"
 
 
+# 2차/3차에서 파이 자신을 뺀 나머지를 순서대로 내린다. 모터드라이버가 최우선
+# (전류 최대 소비원), 그다음 센서, 그다음 대시보드류. **파이 자신(motor-
+# dashboard, 이 프로세스)과 blackbox/disk-watchdog/power-monitor/map-autosave는
+# 남긴다** — 계속 기록해야 하고 전류 소비도 미미하다.
+# systemctl stop을 쓰는 이유: 각 노드의 정상 종료 경로를 태운다(예:
+# diff_drive_node.stop_and_close()가 PWM을 0으로 3회 보내고 나서야 시리얼
+# 포트를 닫는다) — kill -9로 죽이면 이 마무리 없이 바로 끊긴다.
+PERIPHERAL_STOP_SERVICES = [
+    "smart-trash-diff-drive.service",       # 모터드라이버 — 최우선
+    "smart-trash-ekf.service",
+    "smart-trash-imu.service",
+    "smart-trash-imu-tf.service",
+    "smart-trash-lidar.service",
+    "smart-trash-sensor-dashboard.service",
+    "smart-trash-map-dashboard.service",
+    "smart-trash-dashboard-hub.service",
+]
+
+
+def _stop_peripherals():
+    """2차/3차 공통 동작. 자율주행 프로세스 킬 + cmd_vel 0 발행(기존 자동정지
+    로직 그대로) + 위 서비스 목록을 순서대로 systemctl stop. 이미 멈춰있는
+    서비스에 stop을 또 불러도 안전(멱등)하므로 3차가 2차를 못 거치고 바로
+    떨어져도(전압이 그만큼 빠르게 하강해도) 문제 없다."""
+    try:
+        killed = kill_autonomous_processes()
+    except Exception:
+        killed = []
+    try:
+        Handler.node.send_cmd(0.0, 0.0)
+    except Exception:
+        pass
+    stopped = []
+    for svc in PERIPHERAL_STOP_SERVICES:
+        try:
+            r = subprocess.run(["sudo", "systemctl", "stop", svc],
+                                capture_output=True, text=True, timeout=8)
+            if r.returncode == 0:
+                stopped.append(svc)
+            else:
+                print(f'[battery] {svc} 정지 실패: {r.stderr.strip()}', flush=True)
+        except Exception as e:
+            print(f'[battery] {svc} 정지 중 예외: {e}', flush=True)
+    return killed, stopped
+
+
+def _graceful_poweroff():
+    """3차 최종 저지선. 하드웨어 BMS가 먼저 강제로 끊으면(실측 확인된 컷오프
+    10.5V) 파일시스템이 쓰기 도중에 전원을 잃는다 — 실제 사고 이력: ext4
+    저널 abort, 파일시스템 read-only 강제전환, map_autosave 도입 전 지도
+    세션 통째 유실(CLAUDE.md 참고). 소프트웨어가 먼저 정상 종료를 걸면
+    systemd가 남은 서비스를 정리하고 파일시스템을 언마운트한 뒤에 전원을
+    내려서 이 손상을 피한다. Popen으로 던지고 기다리지 않는다 — 이 프로세스
+    (motor-dashboard) 자신도 종료 절차에 포함되므로 여기서 블록될 이유가 없다."""
+    print('[battery] 🔴🔴 3차(critical) — 파이 정상 종료(poweroff) 요청', flush=True)
+    try:
+        subprocess.Popen(["sudo", "systemctl", "poweroff"])
+    except Exception as e:
+        print(f'[battery] poweroff 명령 실패: {e}', flush=True)
+
+
 def battery_poll_loop():
     if smbus2 is None:
         return
@@ -175,10 +249,13 @@ def battery_poll_loop():
     n, total, vmin, vmax = 0, 0.0, None, None
     session_started = time.time()
     recent = collections.deque(maxlen=BATTERY_AVG_WINDOW)
-    # 히스테리시스: critical에 "진입"하는 순간 딱 한 번만 자동정지를 걸고,
-    # warn2 이상으로 회복하기 전까지는 다시 안 건다 — 안 그러면 임계값
-    # 근처에서 값이 오르내릴 때마다 매 폴링 주기(2초)마다 반복 발동한다.
-    armed = True
+    # 히스테리시스: 각 단계에 "진입"하는 순간 딱 한 번만 동작을 걸고, warn1/ok로
+    # 회복하기 전까지는 다시 안 건다 — 안 그러면 임계값 근처에서 값이 오르내릴
+    # 때마다 매 폴링 주기(2초)마다 반복 발동한다. critical은 성공하면 파이가
+    # 꺼지므로 사실상 재발동할 일이 없지만(프로세스 자체가 사라짐), poweroff
+    # 요청이 실패하거나 지연되는 경우를 대비해 형식은 warn2와 동일하게 둔다.
+    armed_warn2 = True
+    armed_critical = True
     last_hist_append = 0.0
     last_predict = 0.0
     predicted_s = None
@@ -196,27 +273,42 @@ def battery_poll_loop():
             recent_avg = sum(recent) / len(recent)
             tier = _battery_tier(recent_avg)
 
-            if tier == "critical" and armed:
-                armed = False
-                try:
-                    killed = kill_autonomous_processes()
-                except Exception:
-                    killed = []
-                try:
-                    Handler.node.send_cmd(0.0, 0.0)
-                except Exception:
-                    pass
-                print(f'[battery] 🔴 자동정지 발동 — 이동평균 {recent_avg:.2f}V '
-                      f'<= {BATTERY_CRITICAL_V}V (프로세스 {killed})', flush=True)
+            # diff_drive_node가 이걸로 하드 게이트를 건다(발행자 무관하게
+            # 모터단에서 직접 차단) — 매 폴링 주기(2초)마다 계속 보낸다.
+            # 한 번만 보내면 그 사이 새 cmd_vel 구독 노드가 늦게 뜨거나
+            # 재시작됐을 때 tier를 영영 못 받는 경우가 생긴다.
+            try:
+                msg = String()
+                msg.data = tier
+                Handler.node.battery_pub.publish(msg)
+            except Exception:
+                pass
+
+            if tier == "critical" and armed_critical:
+                armed_critical = False
+                armed_warn2 = False  # 2차를 못 거치고 바로 떨어졌어도 아래서 같은 조치를 포함해서 한다
+                killed, stopped = _stop_peripherals()
+                print(f'[battery] 🔴🔴 3차(critical) 발동 — 이동평균 {recent_avg:.2f}V '
+                      f'<= {BATTERY_CRITICAL_V}V (자율프로세스 {killed}, 정지서비스 {stopped})',
+                      flush=True)
+                _graceful_poweroff()
+            elif tier == "warn2" and armed_warn2:
+                armed_warn2 = False
+                killed, stopped = _stop_peripherals()
+                print(f'[battery] 🟠 2차(warn2) 발동 — 이동평균 {recent_avg:.2f}V '
+                      f'<= {BATTERY_WARN2_V}V (자율프로세스 {killed}, 정지서비스 {stopped}) '
+                      f'— 파이는 유지, 기록 계속', flush=True)
             elif tier in ("ok", "warn1"):
-                armed = True  # warn2 문턱 위로 회복해야 재무장(둘 다 정의상 >warn2) — critical 바로 밑에서 진동 방지
+                armed_warn2 = True
+                armed_critical = True
 
             with battery_lock:
                 battery_state.update({
                     "connected": True, "voltage": v, "ts": now,
                     "avg": total / n, "min": vmin, "max": vmax,
                     "session_started": session_started, "samples": n,
-                    "recent_avg": recent_avg, "tier": tier, "auto_stop_armed": armed,
+                    "recent_avg": recent_avg, "tier": tier,
+                    "auto_stop_armed": armed_critical, "warn2_armed": armed_warn2,
                     "thresholds": {"warn1": BATTERY_WARN1_V, "warn2": BATTERY_WARN2_V,
                                     "critical": BATTERY_CRITICAL_V},
                 })
@@ -240,6 +332,11 @@ class TeleopNode(Node):
         super().__init__('motor_dashboard')
         # 발행 큐도 1 — 오래된 조종 명령이 쌓여서 뒤늦게 전달되지 않도록
         self.pub = self.create_publisher(Twist, 'cmd_vel', 1)
+        # 2026-09-04: diff_drive_node가 critical 게이트로 구독한다(발행자가
+        # 누구든 상관없이 모터단에서 직접 막기 위함) — estop_common의 프로세스
+        # kill 목록이 Nav2/explore만 대상이라 그 외(캘리브레이션 스크립트 등)가
+        # cmd_vel을 쏘고 있을 땐 안 먹혔던 사고(2026-08-29 13:11) 재발 방지.
+        self.battery_pub = self.create_publisher(String, 'battery_tier', 1)
         self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
         self.create_subscription(Int32MultiArray, 'wheel_encoders', self._on_enc, 10)
         self._prev_enc = None
