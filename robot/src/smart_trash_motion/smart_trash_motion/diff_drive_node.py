@@ -29,7 +29,7 @@ from geometry_msgs.msg import Quaternion, Twist, TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Int32MultiArray, String
 from tf2_ros import TransformBroadcaster
 
 _MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
@@ -330,6 +330,19 @@ class DiffDriveNode(Node):
         self._target_left_pwm = 0
         self._target_right_pwm = 0
 
+        # 배터리 critical 게이트 (2026-08-29 사고 재현 → 2026-09-04 수정):
+        # motor_dashboard.py의 INA219 감시가 critical(10.6V)을 감지하면 그동안
+        # Nav2/explore 프로세스만 죽였는데, 그날 오후는 캘리브레이션 스크립트
+        # (precise_move.py 등)가 cmd_vel을 직접 쏘고 있어 죽일 대상이 없었고
+        # 자동정지 로그(`killed=[]`)만 남은 채 실제로는 안 멈췄다. "누가 cmd_vel을
+        # 보내는지"를 추적하는 대신, 실제 PWM이 나가는 이 노드 자체가 tier를 알고
+        # critical이면 어떤 명령이 와도 거부하도록 함 — 발행자를 안 가린다.
+        # 기본값 'ok': motor_dashboard가 아예 안 떠 있어도(현재도 흔한 상황) 기존
+        # 동작을 막지 않는다 — 이 게이트는 critical을 "적극적으로 알게 됐을 때"만
+        # 개입하고, 모르는 상태를 critical로 취급하지 않는다(기존 동작 보존).
+        self._battery_tier = 'ok'
+        self.create_subscription(String, 'battery_tier', self._on_battery_tier, 1)
+
         # IMU 자이로 상태 (use_imu_for_yaw일 때만 사용)
         self._use_imu = p('use_imu_for_yaw').value
         self._gyro_bias_samples_target = p('gyro_bias_samples').value
@@ -534,9 +547,31 @@ class DiffDriveNode(Node):
         self._cmd_w = msg.angular.z
         self._last_cmd_time = time.time()
 
+    def _on_battery_tier(self, msg: String):
+        prev = self._battery_tier
+        self._battery_tier = msg.data
+        if msg.data == 'critical' and prev != 'critical':
+            self.get_logger().warn(
+                '배터리 critical 수신 — cmd_vel 발행자와 무관하게 구동 거부')
+
     def _on_control_timer(self):
         """50Hz 제어 루프 — 직진은 개루프, 회전은 자이로 피드백 폐루프."""
         now = time.time()
+
+        # 안전: 배터리 critical이면 누가 뭘 명령하든 무조건 거부한다. 이게
+        # cmd_vel_timeout보다 먼저 와야 한다 — 명령이 계속 들어오고 있어도
+        # (예: 캘리브레이션 스크립트가 살아서 계속 발행 중) 여기서 막아야
+        # 한다. motor_dashboard 미실행 등으로 tier를 아예 모르면(기본값 'ok')
+        # 이 분기는 타지 않는다 — 위 __init__ 주석 참고.
+        if self._battery_tier == 'critical':
+            if self._target_left_pwm or self._target_right_pwm:
+                self._target_left_pwm = 0
+                self._target_right_pwm = 0
+                self._apply_pwm(0, 0)
+            self._turn_i = 0.0
+            self._ramped_v = 0.0
+            self._prev_control_time = now
+            return
 
         # 안전: 명령이 끊기면 즉시 정지하고 적분항도 비운다.
         if now - self._last_cmd_time > self._cmd_vel_timeout:

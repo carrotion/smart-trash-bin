@@ -2,6 +2,95 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
+## 🔋 배터리 3단계 대응 전면 재설계 — "자동꺼짐이 안 먹었다" 사고 원인 규명 (2026-09-04)
+
+### 사고: 2026-08-29 13:11, critical 발동했는데 아무것도 안 멈췄다
+
+사용자 보고("전압이 자동꺼짐으로 내려가도 안꺼졌었어")를 로그로 직접 추적함.
+`motor_dashboard.py`의 `battery_poll_loop`가 그 시각 정확히 발동한 기록이 있었다:
+
+    [battery] 🔴 자동정지 발동 — 이동평균 10.60V <= 10.6V (프로세스 [])
+
+**트리거는 정상 발동했다.** 문제는 대응 범위 — 그때까지의 "자동정지"는
+`estop_common.kill_autonomous_processes()`(Nav2/explore_lite 전용)로 프로세스를
+죽이고 `cmd_vel` 0을 **한 번** 보내는 게 전부였다. 그날 오후는 자율주행이 아니라
+M3/PWM 캘리브레이션 중이라 `precise_move.py` 같은 스크립트가 cmd_vel을 직접
+쏘고 있었고, 죽일 자율주행 프로세스가 없어(`프로세스 []`) 남은 대응은 "0속도 1회
+발행"뿐이었다 — 그 스크립트가 다음 주기에 바로 덮어썼을 것이다. **버그가 아니라
+설계 범위가 좁았던 것**: 안전장치가 자율주행만 상정했는데, 실제 이 프로젝트
+시간의 대부분은 캘리브레이션 스크립트가 차지한다.
+
+⚠️ 이 조사 중 "last reboot가 전부 8/17로 찍힌다 → RTC 배터리 없어서 fake-hwclock이
+망가진 것"이라는 가설을 세웠다가 **틀렸다** — 확인해보니 이 파이는 진짜 RTC가
+있고(`/dev/rtc0`, `timedatectl`상 정상 동기화), `fake-hwclock`은 아예 설치도
+안 돼 있다. 근거 없이 이야기를 지어낸 사례로 기록만 남김(배터리 원인 규명과는
+무관 — 별개 조사였음).
+
+### 재설계: "누가 cmd_vel을 보내는지" 추적 대신 모터단에서 직접 차단
+
+`diff_drive_node`가 실제 PWM이 나가는 유일한 지점이므로, 여기서 배터리 tier를
+직접 알고 게이트를 걸도록 함 — 발행자가 무엇이든 상관없다.
+- `motor_dashboard.py`가 2초마다 계산한 tier를 `/battery_tier`(`std_msgs/String`)
+  토픽으로 발행 (`battery_poll_loop` 안, 매 주기 발행 — 한 번만 보내면 이후 뜬
+  구독자가 못 받는 문제가 생김).
+- `diff_drive_node.py`가 이를 구독, `_on_control_timer`(50Hz 제어 루프) 맨
+  앞에서 `tier == 'critical'`이면 무조건 PWM 0 — `cmd_vel_timeout` 체크보다도
+  먼저 온다. 기본값은 `'ok'`(motor_dashboard가 안 떠 있어도 기존 동작 유지 —
+  "모르는 상태"를 critical로 취급하지 않음).
+
+### 3단계 대응 (사용자 설계) — 1차 경고만 / 2차 파이 빼고 전부 정지 / 3차 파이 정상 종료
+
+기존에 있던 3단계 전압 자체(`_battery_tier`)를 그대로 쓰되 대응을 재정의:
+
+| 단계 | 전압(이동평균) | 동작 |
+|---|---|---|
+| 1차 warn1 | 11.3V | 경고 표시만 (기존과 동일) |
+| **2차 warn2** | **11.0V** (기존 10.9) | `_stop_peripherals()`: 자율프로세스 kill + cmd_vel 0 + **8개 서비스 순서대로 systemctl stop**(모터드라이버 최우선). **파이 자신은 유지**, 계속 기록 |
+| **3차 critical** | **10.7V** (기존 10.6) | 2차와 동일 조치(멱등이라 2차를 못 거치고 바로 떨어져도 안전) + `sudo systemctl poweroff`(파이 정상 종료) |
+
+**정지 대상 8개**(`PERIPHERAL_STOP_SERVICES`): diff-drive, ekf, imu, imu-tf,
+lidar, sensor-dashboard, map-dashboard, dashboard-hub.
+**남기는 것**: motor-dashboard(이 로직 자신), power-monitor, blackbox,
+disk-watchdog, map-autosave — 계속 기록해야 하고 전류 소비도 미미함.
+
+`systemctl stop`을 쓰는 이유: 각 노드의 정상 종료 경로를 태운다 —
+`diff_drive_node.stop_and_close()`가 PWM을 0으로 3회 보내고 나서야 시리얼
+포트를 닫는 것처럼. `kill -9`면 이 마무리 없이 바로 끊긴다.
+
+**왜 파이까지 꺼야 하나** (사용자 지적, 기존 사고 이력과 직결):
+하드웨어 BMS가 먼저 강제로 끊으면(이 팩의 실측 컷오프 10.5V) 파일시스템이 쓰기
+도중에 전원을 잃는다 — 이 문서 아래쪽의 "SSD read-only 전환 사고"(ext4 저널
+abort)와 "파일 유실"(map_autosave 도입 전 지도 세션 통째 날아간 사고)이 정확히
+이 실패 모드다. 소프트웨어가 먼저 정상 `poweroff`를 걸면 systemd가 남은 서비스를
+정리하고 파일시스템을 언마운트한 뒤에 전원을 내려 이 손상을 피한다.
+
+### 임계값 여유 재산정 (10.6→10.7V)
+
+원래 10.6V(하드 컷오프 10.5V보다 0.1V 위)는 "PWM 0 발행"(수십ms)만 상정한
+여유였다. 지금 critical의 일은 서비스 8개를 내리고 실제 `poweroff`까지 마치는
+것(수 초~수십 초 걸릴 수 있음)이라 여유를 0.1V→**0.2V**로 넓힘. 2차도
+10.9→**11.0V**로 조금 당겨서 무거워진 일(서비스 8개 정지)을 더 일찍 시작하게 함.
+**근거는 아직 추정**: 2차가 먼저 모터(수 A급)를 끊으므로 3차 도달 시점엔 파이
+자체 소비전류(1A대, 완만함)만 남아 하락이 느려질 것으로 예상하지만, 실측
+검증 전이다 — `_predict_seconds_to_critical()`의 실제 추세로 계속 지켜보고
+필요하면 재조정할 것.
+
+### 검증 상태
+
+- ✅ `_stop_peripherals()` **실제로 라이브 테스트 완료**(2026-09-04): 8개 서비스
+  전부 정지 확인(`systemctl is-active` 전부 inactive) → 전부 재기동 후 정상
+  복구 확인. `diff_drive_node` 종료 로그도 강제종료 없이 "Deactivated
+  successfully"로 깨끗하게 끝남.
+- ✅ `/battery_tier` 발행/구독 연결 확인(`ros2 topic info --verbose`로 publisher
+  motor_dashboard 1개, subscriber diff_drive_node 1개 확인).
+- ⚠️ **`_graceful_poweroff()`는 코드 리뷰만 했고 실제로 발동시켜보지는 않았다.**
+  파이가 실제로 꺼지는 걸 의도적으로 트리거하는 건 세션을 끝내는 행위라 실측
+  검증을 뒤로 미룸 — 코드 경로 자체(`sudo systemctl poweroff`, carrotian은
+  `NOPASSWD: ALL` 확인됨)는 확인했지만 다음 실제 저전압 상황이나 신중하게
+  준비된 테스트에서 첫 실증이 이루어질 것.
+- `motor_dashboard.py`의 `/api/battery` 응답 필드가 `auto_stop_armed`(=3차
+  critical 무장 상태, 기존 필드명 유지)와 `warn2_armed`(신규)로 나뉨.
+
 ## 🤝 PC와 협업 중 — 작업 지시/보고는 `docs/pc_tasks.md` (2026-08-23)
 
 파이 세션이 오케스트레이션, PC 세션이 무거운 시뮬레이션 비교 작업 담당. 대화로
