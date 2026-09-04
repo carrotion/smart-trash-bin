@@ -287,11 +287,24 @@ def battery_poll_loop():
             if tier == "critical" and armed_critical:
                 armed_critical = False
                 armed_warn2 = False  # 2차를 못 거치고 바로 떨어졌어도 아래서 같은 조치를 포함해서 한다
+                # 2026-09-04 순서 수정 (Resie 리뷰, docs/pc_tasks.md task 13):
+                # 원래 _stop_peripherals()를 먼저 불렀는데, 그 안의 8개 서비스
+                # systemctl stop 루프가 서비스당 최대 8초 타임아웃으로 **순차**
+                # 실행돼 최악 64초가 걸린다. _graceful_poweroff() 자신은 Popen이라
+                # 안 기다리는데, 그 앞의 블로킹 루프 때문에 실제 poweroff 명령
+                # 발사 자체가 최대 64초 늦어지고 있었다 — 이 재설계의 핵심 목적
+                # (BMS 강제컷오프 전에 파일시스템을 정상 언마운트)이 그 지연
+                # 동안 무력화될 수 있었다(오늘 넓힌 0.2V 여유를 갉아먹는 구조).
+                # poweroff를 먼저 쏘면 systemd 표준 종료 시퀀스가 어차피 이
+                # 8개 서비스를 정리하므로, 아래 _stop_peripherals()는 그 사이
+                # 모터를 최대한 빨리 세우는(kill_autonomous_processes+cmd_vel 0,
+                # 둘 다 비블로킹) 역할만 하면 충분 — 그래도 순서상 뒤에 남겨둔다
+                # (poweroff가 실패하는 예외적 경우에도 정지 시도는 하도록).
+                _graceful_poweroff()
                 killed, stopped = _stop_peripherals()
                 print(f'[battery] 🔴🔴 3차(critical) 발동 — 이동평균 {recent_avg:.2f}V '
                       f'<= {BATTERY_CRITICAL_V}V (자율프로세스 {killed}, 정지서비스 {stopped})',
                       flush=True)
-                _graceful_poweroff()
             elif tier == "warn2" and armed_warn2:
                 armed_warn2 = False
                 killed, stopped = _stop_peripherals()

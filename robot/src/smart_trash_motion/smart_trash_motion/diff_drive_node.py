@@ -341,6 +341,7 @@ class DiffDriveNode(Node):
         # 동작을 막지 않는다 — 이 게이트는 critical을 "적극적으로 알게 됐을 때"만
         # 개입하고, 모르는 상태를 critical로 취급하지 않는다(기존 동작 보존).
         self._battery_tier = 'ok'
+        self._battery_tier_ts = None  # 2026-09-04: staleness 가시성 (Resie 리뷰, task 13)
         self.create_subscription(String, 'battery_tier', self._on_battery_tier, 1)
 
         # IMU 자이로 상태 (use_imu_for_yaw일 때만 사용)
@@ -550,6 +551,7 @@ class DiffDriveNode(Node):
     def _on_battery_tier(self, msg: String):
         prev = self._battery_tier
         self._battery_tier = msg.data
+        self._battery_tier_ts = time.time()
         if msg.data == 'critical' and prev != 'critical':
             self.get_logger().warn(
                 '배터리 critical 수신 — cmd_vel 발행자와 무관하게 구동 거부')
@@ -714,6 +716,21 @@ class DiffDriveNode(Node):
             self._target_right_pwm = 0
             self._apply_pwm(0, 0)
             self.get_logger().warn('cmd_vel 타임아웃 — 정지')
+
+        # 2026-09-04 (Resie 리뷰, task 13): battery_tier가 fail-open이라
+        # (motor_dashboard 미실행 시 기본값 'ok'로 계속 주행 허용) — 이건 의도된
+        # 설계지만, "한 번은 받았는데 그 뒤로 끊긴" 경우(I2C 불안정 등, CLAUDE.md
+        # 기록된 /dev/i2c-1 그룹 권한 재부팅마다 바뀌는 이슈 등)는 조용히
+        # 무력화되면 안 된다 — 8/29 사고와 같은 계열의 실패모드. 한 번도 못
+        # 받은 경우(motor_dashboard가 애초에 안 떠있는 정상 상황)는 경고하지
+        # 않는다 — 그건 fail-open의 정상 범위.
+        if self._battery_tier_ts is not None and \
+                time.time() - self._battery_tier_ts > 15.0:
+            self.get_logger().warn(
+                f'battery_tier {time.time()-self._battery_tier_ts:.0f}초간 미수신 — '
+                f'마지막 값({self._battery_tier})으로 계속 주행 중(fail-open). '
+                f'motor_dashboard/I2C 상태 확인 필요',
+                throttle_duration_sec=30.0)
 
     # --- 오도메트리 ---
 
