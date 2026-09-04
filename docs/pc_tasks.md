@@ -507,6 +507,39 @@ launch|stage_ros2|Xvfb'`가 완전히 비어있는지 반드시 확인할 것.
     보임 — M1 동결·자이로 바이어스 이중관리(둘 다 오늘 해결)보다 훨씬 큼.
     task 11(스윕 하네스/rf2o 비교)보다 이걸 먼저 봐줄 것.
 
+13. **[신규, 2026-09-04] 배터리 안전 재설계(커밋 `45ea8b1`) 독립 리뷰 요청**:
+
+    오늘(2026-09-04) 파이에서 배터리 3단계 자동대응을 새로 짰다 — 배경/설계는
+    `CLAUDE.md` 맨 위 "🔋 배터리 3단계 대응 전면 재설계" 절 전체를 먼저 읽을 것.
+    핵심: `diff_drive_node`가 `/battery_tier`(motor_dashboard.py가 2초마다
+    발행)를 구독해 critical이면 발행자 무관하게 PWM 0으로 하드게이트, 2차(11.0V)
+    에서 주변장치 8개 systemctl stop(파이는 유지), 3차(10.7V)에서 같은 조치 +
+    `sudo systemctl poweroff`.
+
+    **리뷰 요청 사항** (물리 하드웨어 없이도 코드/로직만으로 가능한 것들):
+    - `tools/motor_dashboard.py`의 `battery_poll_loop()`/`_stop_peripherals()`/
+      `_graceful_poweroff()`, `robot/src/smart_trash_motion/smart_trash_motion/
+      diff_drive_node.py`의 `_on_battery_tier`/`_on_control_timer` 게이트 부분
+      코드 리뷰 — 특히: (a) `armed_warn2`/`armed_critical` 히스테리시스 로직에
+      경계조건 버그가 없는지(예: warn2를 거치지 않고 critical로 바로 떨어지는
+      경우, 전압이 임계값 근처에서 빠르게 진동하는 경우), (b) `/battery_tier`
+      구독이 끊기거나(모터드라이버 서비스 재시작 등) 지연될 때 diff_drive_node가
+      안전한 쪽으로 fail하는지(기본값 'ok'로 fail-open인데, 이게 맞는 설계인지
+      재검토 가치 있음 — 위 CLAUDE.md 절에 이유는 적어뒀지만 반박 환영), (c)
+      `_stop_peripherals()`가 `subprocess.run(..., timeout=8)`로 서비스 하나당
+      최대 8초 기다리는데, 8개 전부 순차 실행이라 최악의 경우 64초 걸릴 수
+      있음 — critical 단계에서 이 지연이 안전 문제가 되는지 판단.
+    - 이동평균/문턱값(1차 11.3V/2차 11.0V/3차 10.7V) 재산정 근거가 CLAUDE.md에
+      적혀있는데, 숫자 자체보다 **추론이 타당한지** 봐줄 것 — "2차가 먼저
+      모터를 끊으니 3차까지 하락이 완만해질 것"이라는 가정은 아직 실측
+      검증 전인 추정임을 명시해뒀음.
+    - `_stop_peripherals()`는 실제로 라이브 테스트해서 8개 서비스 정지→복구까지
+      확인함. `_graceful_poweroff()`는 세션을 끝내는 행위라 **코드 리뷰만
+      하고 실제 발동은 안 해봤음** — 이 부분이 리뷰에서 가장 중요.
+
+    **보고**: 이 파일 "## PC 보고"에 추가. 급하지 않음 — 실물 자기필터
+    검증(아래 진행 중)과 병행해도 됨.
+
 **보고 방법**: 이 파일 "## PC 보고" 섹션 + [Issue #3](https://github.com/carrotion/smart-trash-bin/issues/3)
 코멘트로 (Issue #1은 Track A′ 완료로 종결).
 
