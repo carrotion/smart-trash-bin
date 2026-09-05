@@ -18,7 +18,7 @@ import json
 import threading
 import urllib.request
 from collections import deque
-from dashboard_icon import FAVICON_TAG
+from dashboard_icon import FAVICON_TAG, LOGO_IMG_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODULES = {
@@ -133,7 +133,7 @@ __FAVICON__
 </style>
 </head>
 <body>
-<h1>🏠 스마트 쓰레기통 — 시스템 대시보드</h1>
+<h1>__LOGO__스마트 쓰레기통 — 시스템 대시보드</h1>
 <div class="grid" id="grid"></div>
 <div class="chart-tip" id="chartTip"></div>
 <div class="updated" id="updated"></div>
@@ -389,8 +389,8 @@ document.addEventListener('visibilitychange', () => {
 </html>
 """
 
-# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
-PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+# 파비콘 및 헤더 로고 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__LOGO__", LOGO_IMG_TAG)
 
 
 

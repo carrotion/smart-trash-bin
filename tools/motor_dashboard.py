@@ -37,7 +37,7 @@ import urllib.parse
 # 어긋나고, 하필 비상정지에서 그러면 위험하다.
 from estop_common import kill_autonomous_processes
 
-from dashboard_icon import FAVICON_TAG
+from dashboard_icon import FAVICON_TAG, HOME_ICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
@@ -323,7 +323,7 @@ def battery_poll_loop():
                 # 안 기다리는데, 그 앞의 블로킹 루프 때문에 실제 poweroff 명령
                 # 발사 자체가 최대 64초 늦어지고 있었다 — 이 재설계의 핵심 목적
                 # (BMS 강제컷오프 전에 파일시스템을 정상 언마운트)이 그 지연
-                # 동안 무력화될 수 있었다(오늘 넓힌 0.2V 여유를 갉아먹는 구조).
+                # 동안 무력화될 수 있었다(오늘 넓힌 0.2V 여유를 꼵아먹는 구조).
                 # poweroff를 먼저 쏘면 systemd 표준 종료 시퀀스가 어차피 이
                 # 8개 서비스를 정리하므로, 아래 _stop_peripherals()는 그 사이
                 # 모터를 최대한 빨리 세우는(kill_autonomous_processes+cmd_vel 0,
@@ -526,7 +526,7 @@ __FAVICON__
 </style>
 </head>
 <body>
-<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← 🏠 시스템 대시보드 (홈)</a>
+<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← __HOME_ICON__시스템 대시보드 (홈)</a>
 <h1><span class="dot" id="connDot" style="background:var(--critical)"></span> 모터 대시보드</h1>
 <button id="estopBtn">🛑 비상정지 (자율주행 전체 중단)</button>
 
@@ -837,8 +837,8 @@ document.addEventListener('visibilitychange', () => {
 </html>
 """
 
-# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
-PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+# 파비콘 및 홈 아이콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__HOME_ICON__", HOME_ICON_TAG)
 
 BATTERY_PAGE = """<!doctype html>
 <html lang="ko">
@@ -886,7 +886,7 @@ __FAVICON__
 <body>
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
   <a class="back" href="/">← 모터 대시보드</a>
-  <a class="back" href="#" onclick="location.port='8764'; return false;">🏠 시스템 홈</a>
+  <a class="back" href="#" onclick="location.port='8764'; return false;">__HOME_ICON__시스템 홈</a>
 </div>
 <h1>🔋 배터리 상세</h1>
 <div class="card">
@@ -1047,7 +1047,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 </body>
 </html>
 """
-BATTERY_PAGE = BATTERY_PAGE.replace("__FAVICON__", FAVICON_TAG)
+BATTERY_PAGE = BATTERY_PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__HOME_ICON__", HOME_ICON_TAG)
 
 
 class Handler(BaseHTTPRequestHandler):
