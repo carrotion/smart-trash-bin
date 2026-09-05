@@ -120,6 +120,12 @@ BATTERY_PREDICT_WINDOW_S = 300.0  # 최근 5분 추세로 계산 — 순간 부�
 BATTERY_WARN1_V = 11.3
 BATTERY_WARN2_V = 11.0
 BATTERY_CRITICAL_V = 10.7
+# 2026-09-04 (사용자 제안): 2차로 내린 주변장치를 전압 회복 시(충전 등)
+# 자동으로 되살리되, 끄는 기준(11.0V)과 켜는 기준을 다르게 잡아 히스테리시스
+# 간격을 둔다 — 안 그러면 전압이 경계값 근처에서 오르내릴 때마다 서비스가
+# 꺼졌다 켜졌다를 반복(진동)한다. warn1(11.3V)보다도 위로 잡아서, 재시작
+# 시점엔 이미 "정상" 판정 여유가 있는 전압대라는 것도 보장한다.
+BATTERY_RESTART_V = 11.5
 # 순간 전압은 모터 기동/정지 때 수백mV~1V 이상 출렁인다(제자리 회전이 특히
 # 심함 — CLAUDE.md 회전 캘리브레이션 이력 참고). 원시값을 그대로 임계 판정에
 # 쓰면 순간 부하 때마다 오탐(false trip)한다. 그래서 **경보/자동정지 판정에는
@@ -227,6 +233,25 @@ def _stop_peripherals():
     return killed, stopped
 
 
+def _start_peripherals():
+    """2차 이후 전압이 충분히 회복되면(BATTERY_RESTART_V) 정지했던 서비스를
+    되살린다. 정지 순서와 반대로 — 센서/모터드라이버부터 살려서 대시보드가
+    구독할 토픽이 먼저 준비되게 한다(순서가 엄밀히 강제되진 않지만 이 편이
+    자연스럽다)."""
+    started = []
+    for svc in reversed(PERIPHERAL_STOP_SERVICES):
+        try:
+            r = subprocess.run(["sudo", "systemctl", "start", svc],
+                                capture_output=True, text=True, timeout=8)
+            if r.returncode == 0:
+                started.append(svc)
+            else:
+                print(f'[battery] {svc} 재시작 실패: {r.stderr.strip()}', flush=True)
+        except Exception as e:
+            print(f'[battery] {svc} 재시작 중 예외: {e}', flush=True)
+    return started
+
+
 def _graceful_poweroff():
     """3차 최종 저지선. 하드웨어 BMS가 먼저 강제로 끊으면(실측 확인된 컷오프
     10.5V) 파일시스템이 쓰기 도중에 전원을 잃는다 — 실제 사고 이력: ext4
@@ -256,6 +281,10 @@ def battery_poll_loop():
     # 요청이 실패하거나 지연되는 경우를 대비해 형식은 warn2와 동일하게 둔다.
     armed_warn2 = True
     armed_critical = True
+    # 2026-09-04: 2차(또는 3차 poweroff 실패 후 회복)로 정지된 주변장치가
+    # 있는지 추적 — BATTERY_RESTART_V(11.5V, 히스테리시스 간격) 이상으로
+    # 회복되면 자동으로 되살린다.
+    peripherals_stopped = False
     last_hist_append = 0.0
     last_predict = 0.0
     predicted_s = None
@@ -302,18 +331,28 @@ def battery_poll_loop():
                 # (poweroff가 실패하는 예외적 경우에도 정지 시도는 하도록).
                 _graceful_poweroff()
                 killed, stopped = _stop_peripherals()
+                peripherals_stopped = True
                 print(f'[battery] 🔴🔴 3차(critical) 발동 — 이동평균 {recent_avg:.2f}V '
                       f'<= {BATTERY_CRITICAL_V}V (자율프로세스 {killed}, 정지서비스 {stopped})',
                       flush=True)
             elif tier == "warn2" and armed_warn2:
                 armed_warn2 = False
                 killed, stopped = _stop_peripherals()
+                peripherals_stopped = True
                 print(f'[battery] 🟠 2차(warn2) 발동 — 이동평균 {recent_avg:.2f}V '
                       f'<= {BATTERY_WARN2_V}V (자율프로세스 {killed}, 정지서비스 {stopped}) '
                       f'— 파이는 유지, 기록 계속', flush=True)
             elif tier in ("ok", "warn1"):
                 armed_warn2 = True
                 armed_critical = True
+                # 2026-09-04: 히스테리시스 — 끄는 기준(11.0V)보다 0.5V 위인
+                # 11.5V까지 올라와야 되살린다(사용자 제안). 경계값 근처에서
+                # 서비스가 껐다켰다를 반복하는 진동을 막기 위함.
+                if peripherals_stopped and recent_avg >= BATTERY_RESTART_V:
+                    started = _start_peripherals()
+                    peripherals_stopped = False
+                    print(f'[battery] 🟢 전압 회복 — 이동평균 {recent_avg:.2f}V '
+                          f'>= {BATTERY_RESTART_V}V (재시작 {started})', flush=True)
 
             with battery_lock:
                 battery_state.update({
