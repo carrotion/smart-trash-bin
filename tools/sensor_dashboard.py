@@ -16,14 +16,12 @@ import math
 import signal
 import threading
 import time
-import urllib.request
-from dashboard_icon import FAVICON_TAG
+from dashboard_icon import FAVICON_TAG, HOME_ICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, LaserScan, MagneticField
-import math
 
 state_lock = threading.Lock()
 state = {
@@ -344,7 +342,7 @@ __FAVICON__
 </style>
 </head>
 <body>
-<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← 🏠 시스템 대시보드 (홈)</a>
+<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← __HOME_ICON__시스템 대시보드 (홈)</a>
 <h1>센서 대시보드</h1>
 
 <div class="card">
@@ -653,8 +651,8 @@ document.addEventListener('visibilitychange', () => {
 </html>
 """
 
-# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
-PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+# 파비콘 및 홈 아이콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__HOME_ICON__", HOME_ICON_TAG)
 
 
 

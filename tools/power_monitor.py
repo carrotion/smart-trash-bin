@@ -23,7 +23,7 @@ import urllib.parse
 import time
 from collections import deque
 from datetime import datetime
-from dashboard_icon import FAVICON_TAG
+from dashboard_icon import FAVICON_TAG, HOME_ICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 THROTTLED_BITS = {
@@ -303,7 +303,7 @@ __FAVICON__
 </style>
 </head>
 <body>
-<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← 🏠 시스템 대시보드 (홈)</a>
+<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← __HOME_ICON__시스템 대시보드 (홈)</a>
 <h1>Pi5 상태 <span id="updated" style="font-size:0.7rem; font-weight:normal;"></span></h1>
 <div class="layout">
   <div>
@@ -415,7 +415,7 @@ document.addEventListener('visibilitychange', () => {
 """
 
 # 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
-PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__HOME_ICON__", HOME_ICON_TAG)
 
 
 

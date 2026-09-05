@@ -21,7 +21,8 @@ import re
 import signal
 import threading
 import time
-from dashboard_icon import FAVICON_TAG
+import urllib.parse
+from dashboard_icon import FAVICON_TAG, HOME_ICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
@@ -386,7 +387,7 @@ __FAVICON__
 </style>
 </head>
 <body>
-<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← 🏠 시스템 대시보드 (홈)</a>
+<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← __HOME_ICON__시스템 대시보드 (홈)</a>
 <h1><span class="dot" id="connDot" style="background:var(--critical)"></span> 맵 대시보드</h1>
 <button id="estopBtn">🛑 비상정지 (자율주행 전체 중단)</button>
 <div id="estopMsg"></div>
@@ -588,8 +589,8 @@ document.getElementById('estopBtn').addEventListener('click', async () => {
 </html>
 """
 
-# 파비콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
-PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG)
+# 파비콘 및 홈 아이콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
+PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__HOME_ICON__", HOME_ICON_TAG)
 
 
 

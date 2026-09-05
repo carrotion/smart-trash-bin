@@ -21,3 +21,7 @@ FAVICON_DATA_URI = (
 )
 
 FAVICON_TAG = '<link rel="icon" href="' + FAVICON_DATA_URI + '">'
+LOGO_IMG_TAG = '<img src="' + FAVICON_DATA_URI + '" width="24" height="24" style="vertical-align:-4px; margin-right:6px;" alt="">'
+HOME_ICON_TAG = '<img src="' + FAVICON_DATA_URI + '" width="16" height="16" style="vertical-align:-2px; margin-right:4px;" alt="">'
+
+
