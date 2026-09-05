@@ -133,7 +133,7 @@ __FAVICON__
 </style>
 </head>
 <body>
-<h1>🗑️ 스마트 쓰레기통 — 시스템 대시보드</h1>
+<h1>🏠 스마트 쓰레기통 — 시스템 대시보드</h1>
 <div class="grid" id="grid"></div>
 <div class="chart-tip" id="chartTip"></div>
 <div class="updated" id="updated"></div>
