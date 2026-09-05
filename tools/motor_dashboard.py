@@ -519,9 +519,14 @@ __FAVICON__
   .status-row { display: flex; justify-content: space-between; font-size: 0.85rem;
     color: var(--text-secondary); margin-top: 4px; }
   .warn { font-size: 0.8rem; color: var(--text-muted); margin-top: 10px; }
+  a.nav-home { color: var(--accent); text-decoration: none; font-size: 0.88rem; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px;
+    background: var(--surface-1); border: 1px solid var(--border); margin-bottom: 12px; }
+  a.nav-home:hover { opacity: 0.8; }
 </style>
 </head>
 <body>
+<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← 🏠 시스템 대시보드 (홈)</a>
 <h1><span class="dot" id="connDot" style="background:var(--critical)"></span> 모터 대시보드</h1>
 <button id="estopBtn">🛑 비상정지 (자율주행 전체 중단)</button>
 
@@ -879,7 +884,10 @@ __FAVICON__
 </style>
 </head>
 <body>
-<a class="back" href="/">← 모터 대시보드</a>
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+  <a class="back" href="/">← 모터 대시보드</a>
+  <a class="back" href="#" onclick="location.port='8764'; return false;">🏠 시스템 홈</a>
+</div>
 <h1>🔋 배터리 상세</h1>
 <div class="card">
   <div class="big"><span id="voltNow">— V</span><span class="tier-badge" id="tierBadge"></span></div>
