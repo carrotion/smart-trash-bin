@@ -337,9 +337,14 @@ __FAVICON__
     gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 4px; }
   .occ-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
     margin-right: 4px; vertical-align: -1px; }
+  a.nav-home { color: var(--accent); text-decoration: none; font-size: 0.88rem; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px;
+    background: var(--surface-1); border: 1px solid var(--border); margin-bottom: 12px; }
+  a.nav-home:hover { opacity: 0.8; }
 </style>
 </head>
 <body>
+<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← 🏠 시스템 대시보드 (홈)</a>
 <h1>센서 대시보드</h1>
 
 <div class="card">

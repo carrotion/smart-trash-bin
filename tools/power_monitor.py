@@ -296,9 +296,14 @@ __FAVICON__
   #log { font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; max-height: 200px;
          overflow-y: auto; border: 1px solid #8884; border-radius: 8px; padding: 8px; }
   .stale { opacity: 0.4; }
+  a.nav-home { color: #2a78d6; text-decoration: none; font-size: 0.88rem; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px;
+    background: #8881; border: 1px solid #8883; margin-bottom: 12px; }
+  a.nav-home:hover { opacity: 0.8; }
 </style>
 </head>
 <body>
+<a class="nav-home" href="#" onclick="location.port='8764'; return false;">← 🏠 시스템 대시보드 (홈)</a>
 <h1>Pi5 상태 <span id="updated" style="font-size:0.7rem; font-weight:normal;"></span></h1>
 <div class="layout">
   <div>
