@@ -1804,4 +1804,7 @@ EXT4-fs (sda2): Remounting filesystem read-only
 
 ## 작업 방식
 
+- **커밋 전 정적 검사 hook**: `tools/git-hooks/pre-commit`(pyflakes — 정의 안 된 이름/문법 오류 차단).
+  새로 클론하면 `ln -sf ../../tools/git-hooks/pre-commit .git/hooks/pre-commit` (2026-09-24:
+  import 누락이 `except Exception`에 삼켜져 대시보드 버튼이 한 달간 죽어 있었음)
 - 문서 수정 후에는 커밋 메시지를 남기고 `git push origin main`까지 완료할 것 (사용자가 매번 명시적으로 요청하지 않아도 이 저장소에서는 문서 변경 후 커밋/푸시가 관례로 자리잡음).
