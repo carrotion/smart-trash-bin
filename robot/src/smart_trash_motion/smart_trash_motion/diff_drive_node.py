@@ -262,6 +262,46 @@ class DiffDriveNode(Node):
         self.declare_parameter('gyro_stale_sec', 0.3)
         self.declare_parameter('control_rate_hz', 50.0)
 
+        # --- 속도 제어 모드 (2026-09-24 신설, docs/todo.md #1) ---
+        # 'legacy': 위 개루프 PWM 모델(드라이버 deadzone 1900 + PWM 0~1200 단위).
+        #   바닥 실측: 명령 0.04~0.3 → 실제 0.39~0.49 m/s. 드라이버가 deadzone을
+        #   출력 바닥으로 깔아서(출력=deadzone+PWM) 0.4 m/s 밑으로 못 간다.
+        # 'velocity': 드라이버 deadzone 0, 바퀴별 목표 속도(m/s) → 축별 피드포워드
+        #   + 엔코더 속도 PI. 회전 폐루프도 PWM이 아니라 각속도(rad/s)를 보정한다.
+        #   기동 시에만 읽는다(deadzone이 모드와 짝이라 도중 전환 불가).
+        self.declare_parameter('control_mode', 'legacy')
+        self.declare_parameter('velocity_driver_deadzone', 0)
+        # 축별 피드포워드: |pwm| = pwm0 + |v|/slope. 도크 무부하, deadzone 0 스윕
+        # (docs/calibration/axle_speed_sweep_dz0_20260924.csv) 1800~3000 구간 적합:
+        #   앞(370) 0.40/0.795/1.13 m/s → slope 0.000608, pwm0 1142
+        #   뒤(520) 0.23/0.443/0.631 m/s → slope 0.000334, pwm0 1111
+        # 바닥 부하에선 모자란다 — 나머지는 아래 PI가 메운다.
+        # ⚠️ 첫 도크 시험(2026-09-24)에서 축 평균 pwm0로는 안 됐다 — 같은 뒤축이라도
+        #   M3(왼쪽뒤) 800→0.008, 1200→0.003 m/s(걸림), M4(오른쪽뒤) 600→0.058,
+        #   1200→0.163 m/s로 데드존이 2배 가까이 다르다. 그래서 pwm0은 바퀴별.
+        #   실제보다 **낮게** 잡는다 — 모자라면 PI 적분이 올려주지만 넘치면 튄다.
+        #   M1 1100(1200→0.122) / M2 1180(1800→0.376 역산) / M3 1350(1800→0.151 역산)
+        #   / M4 700(1200→0.163 역산)
+        self.declare_parameter('ff_pwm0', [1100.0, 1180.0, 1350.0, 700.0])
+        self.declare_parameter('ff_front_slope', 0.000608)
+        self.declare_parameter('ff_rear_slope', 0.000334)
+        # 이보다 빠른 바퀴 속도는 물리적으로 불가능(앞 무부하 최고 1.13) → 엔코더 오독으로 버린다
+        self.declare_parameter('wheel_speed_sanity', 1.5)
+        # 바퀴 속도 PI — 게인은 "m/s 오차당 m/s 보정" 무차원이고 축별 slope로
+        # 나눠 PWM으로 바꾼다(앞/뒤 플랜트 이득 차이를 자동 반영).
+        self.declare_parameter('wheel_kp', 0.5)
+        self.declare_parameter('wheel_ki', 3.0)          # 1/s
+        self.declare_parameter('wheel_i_limit', 0.5)     # m/s 환산 상한
+        self.declare_parameter('velocity_max_pwm', 3500)
+        # 뒤 520 무부하 최고 0.63 m/s(스펙 178rpm) — 여유를 두고 자른다
+        self.declare_parameter('max_linear_speed', 0.5)
+        self.declare_parameter('encoder_stale_sec', 0.3)
+        # 자이로 각속도 PI (rad/s 오차당 rad/s 보정)
+        self.declare_parameter('yaw_kp', 0.5)
+        self.declare_parameter('yaw_ki', 1.0)
+        self.declare_parameter('yaw_i_limit', 1.0)       # rad/s 환산 상한
+        self.declare_parameter('velocity_debug', False)  # 목표/측정/PWM 로그(0.25초 간격)
+
         # (구) turn_boost — 회전 PWM 모델로 대체되어 더 이상 쓰이지 않는다.
         # 파라미터 자체는 호환을 위해 남겨두되 제어에는 반영 안 함.
         self.declare_parameter('turn_boost', 1.4)
@@ -340,6 +380,36 @@ class DiffDriveNode(Node):
         self._turn_i_limit = p('turn_i_limit').value
         self._gyro_stale_sec = p('gyro_stale_sec').value
         self._publish_tf = p('publish_tf').value
+
+        self._control_mode = p('control_mode').value
+        if self._control_mode == 'velocity' and self._invert_drive:
+            # invert_drive는 엔코더 부호를 뒤집어 odom만 맞추는 방식이라 바퀴 속도
+            # 폐루프에 그대로 쓰면 양의 되먹임(폭주)이 된다.
+            self.get_logger().error('invert_drive_direction과 velocity 모드는 같이 못 쓴다 — legacy로 동작')
+            self._control_mode = 'legacy'
+        if self._control_mode not in ('legacy', 'velocity'):
+            self.get_logger().error(f'알 수 없는 control_mode={self._control_mode} — legacy로 동작')
+            self._control_mode = 'legacy'
+        self._ff_pwm0 = [float(x) for x in p('ff_pwm0').value]
+        self._ff_slope = {'front': p('ff_front_slope').value, 'rear': p('ff_rear_slope').value}
+        self._wheel_speed_sanity = p('wheel_speed_sanity').value
+        self._enc_rejects = 0
+        self._wheel_kp = p('wheel_kp').value
+        self._wheel_ki = p('wheel_ki').value
+        self._wheel_i_limit = p('wheel_i_limit').value
+        self._velocity_max_pwm = p('velocity_max_pwm').value
+        self._max_linear_speed = p('max_linear_speed').value
+        self._encoder_stale_sec = p('encoder_stale_sec').value
+        self._yaw_kp = p('yaw_kp').value
+        self._yaw_ki = p('yaw_ki').value
+        self._yaw_i_limit = p('yaw_i_limit').value
+        self._velocity_debug = p('velocity_debug').value
+        self._wheel_i = [0.0] * 4          # 바퀴별 적분항(m/s·s)
+        self._wheel_speed = [0.0] * 4      # 엔코더로 잰 바퀴별 속도(m/s, 전진 +)
+        self._wheel_target = [0.0] * 4
+        self._vel_prev = None              # (counts, ts) — 속도 계산용 직전 샘플
+        self._reverse_since = [None] * 4   # 목표와 반대로 도는 상태가 시작된 시각
+        self._fault = None                 # 폭주 감지 시 잠금(재시작 전까지 구동 거부)
 
         # 런타임 파라미터 변경 반영 (2026-08-17 추가).
         # 이게 없으면 `ros2 param set`이 파라미터 서버 값만 바꾸고 노드 내부
@@ -456,7 +526,11 @@ class DiffDriveNode(Node):
 
     def _configure_driver(self):
         # CLAUDE.md 실측 확정값. TYPE 3/4(TT)는 절대 금지.
-        dz = int(self.get_parameter('driver_deadzone').value)
+        if self._control_mode == 'velocity':
+            dz = int(self.get_parameter('velocity_driver_deadzone').value)
+        else:
+            dz = int(self.get_parameter('driver_deadzone').value)
+        self.get_logger().info(f'제어 모드 {self._control_mode}, 드라이버 deadzone {dz}')
         for cmd in (b'$mtype:1#', f'$deadzone:{dz}#'.encode(), b'$wdiameter:67.00#'):
             resp = self._send(cmd, wait=0.15)
             self.get_logger().info(f'{cmd.decode()} -> {resp!r}')
@@ -610,12 +684,149 @@ class DiffDriveNode(Node):
             'turn_i_limit': '_turn_i_limit',
             'rear_pwm_affine_slope': '_rear_pwm_affine_slope',
             'rear_pwm_affine_offset': '_rear_pwm_affine_offset',
+            'wheel_kp': '_wheel_kp',
+            'wheel_ki': '_wheel_ki',
+            'wheel_i_limit': '_wheel_i_limit',
+            'velocity_max_pwm': '_velocity_max_pwm',
+            'max_linear_speed': '_max_linear_speed',
+            'yaw_kp': '_yaw_kp',
+            'yaw_ki': '_yaw_ki',
+            'yaw_i_limit': '_yaw_i_limit',
+            'velocity_debug': '_velocity_debug',
         }
         for prm in params:
             attr = live.get(prm.name)
             if attr:
                 setattr(self, attr, prm.value)
+            elif prm.name == 'ff_pwm0':
+                self._ff_pwm0 = [float(x) for x in prm.value]
+            elif prm.name == 'ff_front_slope':
+                self._ff_slope['front'] = prm.value
+            elif prm.name == 'ff_rear_slope':
+                self._ff_slope['rear'] = prm.value
         return SetParametersResult(successful=True)
+
+    # --- 속도 제어 모드 (control_mode='velocity') ---
+
+    def _send_pwm4(self, vals):
+        """바퀴별 PWM(전진 +)을 채널 극성만 반영해 그대로 보낸다 — legacy의
+        뒷바퀴 affine/모터 오프셋을 거치지 않는다."""
+        lim = self._velocity_max_pwm
+        out = [int(max(-lim, min(lim, vals[i] * self._pwm_sign[i]))) for i in range(4)]
+        self._send(f'$pwm:{out[0]},{out[1]},{out[2]},{out[3]}#'.encode())
+
+    def _reset_velocity_state(self):
+        self._wheel_i = [0.0] * 4
+        self._wheel_target = [0.0] * 4
+        self._reverse_since = [None] * 4
+
+    def _update_wheel_speeds(self):
+        """엔코더 새 샘플이 오면 바퀴별 속도를 갱신. 반환: 엔코더가 신선한지."""
+        with self._counts_lock:
+            counts, ts = self._latest_counts, self._latest_counts_ts
+        if counts is None:
+            return False
+        if self._vel_prev is None:
+            self._vel_prev = (list(counts), ts)
+        else:
+            pc, pts = self._vel_prev
+            dt = ts - pts
+            if dt > 1e-3:
+                sp = [(counts[i] - pc[i]) * self._encoder_sign[i] * self._meters_per_count[i] / dt
+                      for i in range(4)]
+                if max(abs(x) for x in sp) > self._wheel_speed_sanity:
+                    # 물리적으로 불가능한 값 — 이 샘플은 버리고 직전 정상 샘플을 기준으로
+                    # 유지한다(한 번 튀었다 돌아오는 오독이면 다음 샘플이 정상으로 이어진다)
+                    self._enc_rejects += 1
+                    self.get_logger().warn(
+                        f'엔코더 속도 비정상 샘플 버림 {[round(x, 2) for x in sp]} m/s '
+                        f'(누적 {self._enc_rejects}회)', throttle_duration_sec=1.0)
+                    if self._enc_rejects % 20 == 0:
+                        self._vel_prev = (list(counts), ts)  # 진짜 점프였다면 기준 재설정
+                else:
+                    for i in range(4):
+                        self._wheel_speed[i] = 0.5 * self._wheel_speed[i] + 0.5 * sp[i]
+                    self._vel_prev = (list(counts), ts)
+        return time.time() - ts < self._encoder_stale_sec
+
+    def _velocity_control(self, v, w, dt, now, gyro_fresh):
+        if self._fault:
+            self._send_pwm4([0, 0, 0, 0])
+            return
+        enc_fresh = self._update_wheel_speeds()
+        v = max(-self._max_linear_speed, min(self._max_linear_speed, v))
+
+        # 회전: 자이로 PI가 각속도(rad/s)를 보정한다. 직진(w=0) 중에도 켜서 휨을 잡는다.
+        moving = abs(v) > 1e-6 or abs(w) > 1e-6
+        w_eff = w
+        if self._turn_closed_loop and moving and gyro_fresh:
+            err = w - self._gyro_z
+            self._turn_i += err * dt
+            if self._yaw_ki > 0:
+                lim = self._yaw_i_limit / self._yaw_ki
+                self._turn_i = max(-lim, min(lim, self._turn_i))
+            w_eff = w + self._yaw_kp * err + self._yaw_ki * self._turn_i
+        else:
+            self._turn_i = 0.0
+
+        if not moving:
+            self._reset_velocity_state()
+            self._target_left_pwm = self._target_right_pwm = 0
+            self._send_pwm4([0, 0, 0, 0])
+            return
+
+        # 스키드-스티어: 실효 트레드(wheel_separation, 물리 폭의 약 2배)로 바퀴 속도 배분
+        half = self._wheel_separation / 2.0
+        side = {'L': v - w_eff * half, 'R': v + w_eff * half}
+        pwm = [0.0] * 4
+        for i in range(4):
+            s = side['L'] if i in self.LEFT else side['R']
+            self._wheel_target[i] = s
+            pwm0 = self._ff_pwm0[i]
+            slope = self._ff_slope['front' if i in (0, 1) else 'rear']
+            if abs(s) < 1e-4:
+                self._wheel_i[i] = 0.0
+                continue
+            ff = math.copysign(pwm0 + abs(s) / slope, s)
+            corr = 0.0
+            if enc_fresh:
+                err = s - self._wheel_speed[i]
+                self._wheel_i[i] += err * dt
+                if self._wheel_ki > 0:
+                    lim = self._wheel_i_limit / self._wheel_ki
+                    self._wheel_i[i] = max(-lim, min(lim, self._wheel_i[i]))
+                corr = (self._wheel_kp * err + self._wheel_ki * self._wheel_i[i]) / slope
+                # 폭주 감지: 목표와 반대 방향으로 빠르게 계속 돌면 부호 오류로 본다
+                if s * self._wheel_speed[i] < 0 and abs(self._wheel_speed[i]) > 0.15:
+                    if self._reverse_since[i] is None:
+                        self._reverse_since[i] = now
+                    elif now - self._reverse_since[i] > 0.5:
+                        self._fault = (f'M{i + 1} 목표 {s:+.2f} m/s인데 {self._wheel_speed[i]:+.2f} m/s로 '
+                                       '0.5초 넘게 반대로 돎 — 부호/배선 확인 전까지 구동 거부')
+                        self.get_logger().error(self._fault)
+                        self._send_pwm4([0, 0, 0, 0])
+                        return
+                else:
+                    self._reverse_since[i] = None
+            else:
+                self._wheel_i[i] = 0.0   # 엔코더가 끊기면 피드포워드만
+            # 보정이 방향을 뒤집지는 못하게(정지마찰 근처 떨림 방지)
+            out = ff + corr
+            if out * s < 0:
+                out = 0.0
+            pwm[i] = out
+        # 안전 경로(타임아웃/critical)가 "구동 중"인지 판단하는 데 쓴다 — 한쪽 축만
+        # 0이어도 놓치지 않게 좌/우 중 큰 값
+        if self._velocity_debug:
+            self.get_logger().warn(
+                f'vel_debug enc_fresh={enc_fresh} w_eff={w_eff:+.2f} '
+                f'목표 {[round(x, 3) for x in self._wheel_target]} '
+                f'측정 {[round(x, 3) for x in self._wheel_speed]} '
+                f'PWM {[int(x) for x in pwm]} I {[round(x, 3) for x in self._wheel_i]}',
+                throttle_duration_sec=0.25)
+        self._target_left_pwm = int(max((pwm[i] for i in self.LEFT), key=abs))
+        self._target_right_pwm = int(max((pwm[i] for i in self.RIGHT), key=abs))
+        self._send_pwm4(pwm)
 
     def _turn_pwm(self, w):
         """회전 명령(rad/s) → 좌우 PWM 차이. **직진 모델과 완전히 분리한다.**
@@ -681,6 +892,7 @@ class DiffDriveNode(Node):
                 self._apply_pwm(0, 0)
             self._turn_i = 0.0
             self._ramped_v = 0.0
+            self._reset_velocity_state()
             self._prev_control_time = now
             return
 
@@ -692,6 +904,7 @@ class DiffDriveNode(Node):
                 self._apply_pwm(0, 0)
             self._turn_i = 0.0
             self._ramped_v = 0.0
+            self._reset_velocity_state()
             self._prev_control_time = now
             return
 
@@ -714,6 +927,12 @@ class DiffDriveNode(Node):
             self._ramped_v = target_v
 
         v, w = self._ramped_v, self._cmd_w
+
+        if self._control_mode == 'velocity':
+            gyro_fresh = (self._gyro_ts is not None
+                          and now - self._gyro_ts < self._gyro_stale_sec)
+            self._velocity_control(v, w, dt, now, gyro_fresh)
+            return
 
         # --- 직진 성분 (개루프) ---
         if self._invert_drive:
