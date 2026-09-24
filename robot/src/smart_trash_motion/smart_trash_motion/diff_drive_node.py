@@ -100,6 +100,11 @@ class DiffDriveNode(Node):
         # 명령과 바퀴 배정이 그대로 유효하다(그래서 min/max_turn_pwm 재측정 불필요).
         self.declare_parameter('invert_drive_direction', False)
         self.declare_parameter('max_pwm', 1200)
+        # 드라이버 내부 데드존($deadzone). Yahboom 예제의 520 기본값 1900을 그대로
+        # 써왔다(310=1600, TT=1000~1250). 의미는 문서에 없다 — 2026-09-24 바닥에서
+        # 명령 0.04~0.15가 전부 약 0.4m/s로 나와(PWM 120 바닥), 드라이버가 이 값을
+        # 출력에 깔아주는지 시험하려고 파라미터로 뺐다(docs/todo.md #1).
+        self.declare_parameter('driver_deadzone', 1900)
         # 모터 스펙 상한(무부하 280RPM × 바퀴원주 0.2105m ≈ 0.98m/s) 기준.
         # PWM 343에서 0.436m/s 실측됨 — 개루프라 명령 속도와 실제가 정확히는 안 맞고,
         # 데드존(min_pwm) 때문에 약 0.3m/s 이하로는 제어가 어려움.
@@ -451,7 +456,8 @@ class DiffDriveNode(Node):
 
     def _configure_driver(self):
         # CLAUDE.md 실측 확정값. TYPE 3/4(TT)는 절대 금지.
-        for cmd in (b'$mtype:1#', b'$deadzone:1900#', b'$wdiameter:67.00#'):
+        dz = int(self.get_parameter('driver_deadzone').value)
+        for cmd in (b'$mtype:1#', f'$deadzone:{dz}#'.encode(), b'$wdiameter:67.00#'):
             resp = self._send(cmd, wait=0.15)
             self.get_logger().info(f'{cmd.decode()} -> {resp!r}')
         self._send(b'$pwm:0,0,0,0#')
