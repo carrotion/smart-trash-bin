@@ -735,12 +735,13 @@ const frontLabel = el('text', {x:130, y:50, 'text-anchor':'middle', class:'wheel
 frontLabel.textContent = '앞';
 svg.appendChild(frontLabel);
 
-// 바퀴 위치: [x,y] 좌상단 기준, 순서 M1(왼쪽뒤) M2(왼쪽앞) M3(오른쪽뒤) M4(오른쪽앞)
+// 바퀴 위치: [x,y] 좌상단 기준, 순서 M1(왼쪽앞) M2(오른쪽앞) M3(왼쪽뒤) M4(오른쪽뒤)
+// 2026-09-24: 뒷바퀴 520 교체 재배선으로 채널 매핑이 좌/우 묶음->앞/뒤 묶음으로 변경됨
 const wheelPos = [
-  {x:30,  y:230, name:'M1 왼쪽뒤'},
-  {x:30,  y:70,  name:'M2 왼쪽앞'},
-  {x:190, y:230, name:'M3 오른쪽뒤'},
-  {x:190, y:70,  name:'M4 오른쪽앞'},
+  {x:30,  y:70,  name:'M1 왼쪽앞'},
+  {x:190, y:70,  name:'M2 오른쪽앞'},
+  {x:30,  y:230, name:'M3 왼쪽뒤'},
+  {x:190, y:230, name:'M4 오른쪽뒤'},
 ];
 const wheelRects = [];
 const wheelArrows = [];
