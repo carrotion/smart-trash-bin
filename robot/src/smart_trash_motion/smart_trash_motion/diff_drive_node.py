@@ -63,6 +63,13 @@ class DiffDriveNode(Node):
         # ⚠️ 370의 857.2처럼 아직 실주행 거리 대비 보정(0.953 같은 계수)을
         # 거치지 않은 **1차 raw 값** — 다음 정밀주행 검증에서 다시 볼 것.
         self.declare_parameter('counts_per_rev_rear', 2475.6)
+        # 뒷바퀴(520) PWM 보정 — 앞바퀴(370)와 같은 PWM에서 같은 실제 속도가
+        # 나오게 하는 affine 변환(rear_pwm = slope*front_pwm + offset).
+        # 도크 무부하 스윕(tools/axle_speed_sweep.py, PWM 200~800) 선형회귀로
+        # 유도 — 상세 근거는 _apply_pwm 주석 참고. ⚠️ PWM 120~200(데드존~
+        # 실측범위) 구간은 외삽이라 저속 재검증 필요.
+        self.declare_parameter('rear_pwm_affine_slope', 1.7692)
+        self.declare_parameter('rear_pwm_affine_offset', 461.82)
         self.declare_parameter('encoder_sign', -1)           # PWM+ 전진 시 카운트 감소
         # ⚠️ 2026-08-17: 로봇의 "앞"을 반대쪽으로 재정의함.
         # 이유: 하판→상판으로 넘어가는 케이블 뭉치가 2개였는데, 앞뒤를 바꾸면
@@ -275,6 +282,8 @@ class DiffDriveNode(Node):
         self._wheel_separation = p('wheel_separation').value
         self._counts_per_rev = p('counts_per_rev').value            # 앞바퀴(370) 전용
         self._counts_per_rev_rear = p('counts_per_rev_rear').value  # 뒷바퀴(520) 전용
+        self._rear_pwm_affine_slope = p('rear_pwm_affine_slope').value
+        self._rear_pwm_affine_offset = p('rear_pwm_affine_offset').value
         _base_sign = p('encoder_sign').value
         self._invert_drive = p('invert_drive_direction').value
         if self._invert_drive:
@@ -502,6 +511,30 @@ class DiffDriveNode(Node):
         # 구조였음) 없이 일관된 극성으로 연결한 것으로 보임. 오른쪽 채널만
         # 부호를 뒤집어서 보정 — 물리적으로 재배선하는 대신 소프트웨어에서 처리.
         vals = [left_pwm, -right_pwm, left_pwm, -right_pwm]
+        # ⚠️ 2026-09-24: 뒷바퀴(M3,M4,520)는 앞바퀴(370)와 감속비가 달라 같은
+        # PWM에서 실제 속도가 다르다 — 도크 위 무부하 스윕 실측(tools/
+        # axle_speed_sweep.py, PWM 200~800 5개 구간)으로 각 축의 PWM->속도
+        # 선형회귀를 각각 구하고(front: speed=0.000689*pwm+0.483, rear:
+        # speed=0.000389*pwm+0.303), 두 식을 연립해 "앞 PWM이 내는 실제
+        # 속도를 뒤 PWM도 내게" 하는 관계를 유도했다:
+        #   rear_pwm = 1.7692*front_pwm + 461.8  (rear_pwm_affine_* 파라미터)
+        # ⚠️ 처음에 단순 배율(1/0.6037≈1.656)만 곱했더니 실측이 어긋났다 —
+        # 두 곡선 다 원점을 안 지나서(데드존/절편) 배율만으론 안 맞고
+        # 기울기+절편을 같이 맞춰야 함. 검증: front_pwm=400 실측 결과 앞
+        # 0.75m/s대 vs 뒤(배율만 적용시) 0.55m/s대로 어긋났었고, affine
+        # 적용 후 재계산상 일치 확인.
+        # ⚠️⚠️ 이 절편(461.8)이 커서 **0 근처까지 그대로 적용하면 위험** —
+        # "정지" 명령인데도 뒤 채널에 462 언저리 PWM을 줘버린다. 그래서
+        # front_pwm==0일 때만 명시적으로 0 처리하고, 그 외에는 부호를 보존한
+        # 채 affine 적용 + max_pwm 클램프. ⚠️ 데드존 부근(PWM 120~200 사이,
+        # 실측 범위 밖)은 여전히 외삽 — 저속 정밀 검증 필요(다음 세션).
+        for i in (2, 3):
+            if vals[i] == 0:
+                continue
+            scaled = math.copysign(
+                self._rear_pwm_affine_slope * abs(vals[i]) + self._rear_pwm_affine_offset,
+                vals[i])
+            vals[i] = max(-self._max_pwm, min(self._max_pwm, scaled))
         out = []
         for i, pv in enumerate(vals):
             if pv != 0 and apply_offset:
@@ -542,6 +575,8 @@ class DiffDriveNode(Node):
             'turn_kp': '_turn_kp',
             'turn_ki': '_turn_ki',
             'turn_i_limit': '_turn_i_limit',
+            'rear_pwm_affine_slope': '_rear_pwm_affine_slope',
+            'rear_pwm_affine_offset': '_rear_pwm_affine_offset',
         }
         for prm in params:
             attr = live.get(prm.name)
