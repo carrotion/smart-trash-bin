@@ -18,7 +18,7 @@ import urllib.request
 
 STATUS_URL = "http://localhost:8766/api/status"
 STATE_PATH = "/tmp/encoder_calib_baseline.json"
-WHEEL_NAMES = ["M1(왼쪽뒤)", "M2(왼쪽앞)", "M3(오른쪽뒤)", "M4(오른쪽앞)"]
+WHEEL_NAMES = ["M1(왼쪽앞)", "M2(오른쪽앞)", "M3(왼쪽뒤)", "M4(오른쪽뒤)"]  # 2026-09-24 갱신
 
 
 def read_encoder():
