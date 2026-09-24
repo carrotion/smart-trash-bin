@@ -18,11 +18,12 @@
 """
 import serial, time, sys, csv, os, math
 
+from wheel_config import WHEEL_RADIUS, COUNTS_PER_REV, PWM_SIGN
+
 PORT = '/dev/motor'
 BAUD = 115200
-WHEEL_RADIUS = 0.0335
-COUNTS_PER_REV_FRONT = 857.2
-COUNTS_PER_REV_REAR = 2475.6
+COUNTS_PER_REV_FRONT = COUNTS_PER_REV[0]
+COUNTS_PER_REV_REAR = COUNTS_PER_REV[2]
 PWMS = [150, 200, 300, 450, 600, 800]
 DRIVE_S = 1.5
 
@@ -104,9 +105,10 @@ def main():
         time.sleep(0.3)
 
         # 앞(M1,M2) — 왼쪽은 정극성, 오른쪽(M2)은 _apply_pwm과 동일하게 반전
-        front_rows = sweep(d, '앞(370, M1+M2)', (0, 1), COUNTS_PER_REV_FRONT, (1, -1))
-        # 뒤(M3,M4) — 왼쪽(M3) 정극성, 오른쪽(M4) 반전
-        rear_rows = sweep(d, '뒤(520, M3+M4)', (2, 3), COUNTS_PER_REV_REAR, (1, -1))
+        front_rows = sweep(d, '앞(370, M1+M2)', (0, 1), COUNTS_PER_REV_FRONT,
+                           (PWM_SIGN[0], PWM_SIGN[1]))
+        rear_rows = sweep(d, '뒤(520, M3+M4)', (2, 3), COUNTS_PER_REV_REAR,
+                          (PWM_SIGN[2], PWM_SIGN[3]))
     finally:
         d.close()
 

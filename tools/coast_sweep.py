@@ -23,18 +23,15 @@ from std_msgs.msg import Int32MultiArray
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 
-WHEEL_RADIUS = 0.0335
-COUNTS_PER_REV = 857.2
-ENCODER_SIGN = -1
-METERS_PER_COUNT = (2 * math.pi * WHEEL_RADIUS) / COUNTS_PER_REV
+from wheel_config import left_right  # 채널 매핑/부호/카운트당거리 단일 출처
 
 SPEED = float(sys.argv[1])
 CRUISE_S = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
 
 
-def lr_dist(a, b):
-    d = [(b[i] - a[i]) * ENCODER_SIGN * METERS_PER_COUNT for i in range(4)]
-    return (d[0] + d[1]) / 2.0, (d[2] + d[3]) / 2.0
+# ⚠️ 2026-09-24: 예전엔 (M1,M2)=왼쪽으로 묶고 부호/카운트를 공통으로 썼다 —
+# 520 교체·재배선 뒤 좌우 묶음과 부호가 전부 틀려 공용 모듈로 교체.
+lr_dist = left_right
 
 
 def min_wide_front(msg):
