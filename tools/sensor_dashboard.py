@@ -16,6 +16,8 @@ import math
 import signal
 import threading
 import time
+import urllib.error
+import urllib.request
 from dashboard_icon import FAVICON_TAG, HOME_ICON_TAG
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -51,10 +53,13 @@ def _motor_status():
     차폐율 판정은 로봇이 정지해 있어야 신뢰할 수 있다(환경도 "안 변하는 것처럼"
     보여서 구조물과 구분이 안 됨) — tools/lidar_occlusion.py의 경고와 같은 이유.
     """
+    # ⚠️ 2026-09-24: 여기가 `except Exception`이었고 urllib import가 빠져 있어서,
+    # NameError가 "모터 대시보드 확인 불가"로 둔갑해 이 버튼은 08-21 추가 이래
+    # 한 번도 동작하지 않았다. 통신 실패만 잡고 코드 오류는 드러나게 둔다.
     try:
-        with urllib.request.urlopen("http://localhost:8766/api/status", timeout=1.5) as r:
+        with urllib.request.urlopen("http://127.0.0.1:8766/api/status", timeout=1.5) as r:
             return json.loads(r.read())
-    except Exception:
+    except (urllib.error.URLError, OSError, ValueError):
         return None
 
 

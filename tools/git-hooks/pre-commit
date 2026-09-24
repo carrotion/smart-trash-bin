@@ -1,0 +1,14 @@
+#!/bin/bash
+# 커밋 전 정적 검사 — 정의 안 된 이름(import 누락 등)만 막는다.
+# 2026-09-24: sensor_dashboard.py가 urllib를 import하지 않은 채 `except Exception`
+# 안에서 써서, 차폐율 스캔 버튼이 08-21 추가 이래 한 번도 동작하지 않았다.
+# 설치: ln -sf ../../tools/git-hooks/pre-commit .git/hooks/pre-commit
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+[ -z "$files" ] && exit 0
+python3 -m pyflakes --version >/dev/null 2>&1 || { echo "pre-commit: pyflakes 없음 — pip3 install --break-system-packages pyflakes"; exit 0; }
+out=$(python3 -m pyflakes $files 2>&1 | grep -E "undefined name|syntax error|invalid syntax")
+if [ -n "$out" ]; then
+    echo "❌ pre-commit: 정의 안 된 이름/문법 오류"
+    echo "$out"
+    exit 1
+fi
