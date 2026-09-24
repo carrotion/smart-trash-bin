@@ -134,10 +134,17 @@ class DiffDriveNode(Node):
         # ⚠️ **기체별 값이다.** 2호기는 재측정할 것(docs/fleet_and_lifecycle.md).
         # ⚠️ 배선/바퀴를 건드리면 다시 잴 것 — 2026-08-20에 커넥터 작업 후
         #    M3가 4382 -> 3335로 바뀌었다.
-        self.declare_parameter('motor_pwm_offset_m1', 75)    # 왼쪽 뒤
-        self.declare_parameter('motor_pwm_offset_m2', 0)     # 왼쪽 앞 (기준)
-        self.declare_parameter('motor_pwm_offset_m3', 240)   # 오른쪽 뒤 (드래그 큼)
-        self.declare_parameter('motor_pwm_offset_m4', 0)     # 오른쪽 앞 (기준)
+        # ⚠️ 2026-09-24 전부 0으로 리셋 — 뒷바퀴 370->520 교체 + 채널 배선을
+        # 좌/우 묶음에서 앞/뒤 묶음으로 다시 함(_apply_pwm 주석 참고). 위 75/240
+        # 값은 옛 매핑의 특정 물리 모터(구 M1=왼쪽뒤, 구 M3=오른쪽뒤 370)를 대상으로
+        # 잰 것이라 지금은 전혀 다른 모터/위치에 적용되는 셈이라 무효. 앞(M1,M2)은
+        # 같은 370이지만 채널이 바뀌었고, 뒤(M3,M4)는 아예 다른 모델(520)이라
+        # 마찰 특성 자체가 다시 측정돼야 함 — straight_check.py/motor_channel_test.py로
+        # 재캘리브레이션 전까지는 0으로 둔다.
+        self.declare_parameter('motor_pwm_offset_m1', 0)    # 왼쪽 앞 (370) — 재측정 필요
+        self.declare_parameter('motor_pwm_offset_m2', 0)     # 오른쪽 앞 (370) — 재측정 필요
+        self.declare_parameter('motor_pwm_offset_m3', 0)   # 왼쪽 뒤 (520, 신규) — 재측정 필요
+        self.declare_parameter('motor_pwm_offset_m4', 0)     # 오른쪽 뒤 (520, 신규) — 재측정 필요
 
         # 🔄 2026-08-19: 0.6 -> 0.0. 직진 폐루프가 이 역할을 대신한다.
         #    트림은 원리적으로 약하다(위 _on_control_timer 주석 참고) — 데드존
@@ -260,10 +267,20 @@ class DiffDriveNode(Node):
         self._wheel_radius = p('wheel_radius').value
         self._wheel_separation = p('wheel_separation').value
         self._counts_per_rev = p('counts_per_rev').value
-        self._encoder_sign = p('encoder_sign').value
+        _base_sign = p('encoder_sign').value
         self._invert_drive = p('invert_drive_direction').value
         if self._invert_drive:
-            self._encoder_sign = -self._encoder_sign
+            _base_sign = -_base_sign
+        # ⚠️ 2026-09-24: 채널별 부호로 변경. 뒷바퀴 520 교체 + 재배선 후 실측
+        # (motor_channel_test.py, 5초씩 개별 구동 + 육안 전후진 확인)한 결과:
+        #   M1(왼쪽앞) 전진시 엔코더 음수 / M2(오른쪽앞) 전진시 양수(추정 —
+        #     M2는 구동 극성이 반대로 배선돼 _apply_pwm에서 부호를 뒤집어
+        #     보정했는데, 물리 회전 방향 기준 엔코더 부호는 대칭성으로 역산함.
+        #     직접 실측 아님 — 다음 오도메트리 검증(손으로 밀기 등)으로 재확인할 것)
+        #   M3(왼쪽뒤,520) 전진시 엔코더 양수(직접 실측) / M4(오른쪽뒤,520) 전진시
+        #     음수(M2와 같은 이유로 역산, 직접 실측 아님)
+        # 패턴이 단순 좌/우나 앞/뒤가 아니라 채널마다 달라 배열로 명시한다.
+        self._encoder_sign = [_base_sign * m for m in (1, -1, -1, 1)]
         self._max_pwm = p('max_pwm').value
         self._max_wheel_speed = p('max_wheel_speed').value
         self._min_pwm = p('min_pwm').value
@@ -458,9 +475,20 @@ class DiffDriveNode(Node):
                 time.sleep(0.02)  # 응답 없을 때 바쁜 대기 방지
 
     def _apply_pwm(self, left_pwm, right_pwm, apply_offset=True):
-        # 채널 순서 M1(왼쪽뒤) M2(왼쪽앞) M3(오른쪽뒤) M4(오른쪽앞) — CLAUDE.md 매핑
-        # 4채널 전부 양수 = 전진 (좌우 부호 반전 불필요, 실측 확인됨)
-        vals = [left_pwm, left_pwm, right_pwm, right_pwm]
+        # ⚠️ 2026-09-24 매핑 전면 변경 — 뒷바퀴 520 모터 교체 배선 작업.
+        # 채널 배선이 "좌/우로 묶임"에서 "앞/뒤로 묶임"으로 바뀌었다:
+        #   M1=왼쪽앞, M2=오른쪽앞(둘 다 기존 370) / M3=왼쪽뒤, M4=오른쪽뒤(둘 다 신규 520)
+        # 예전 매핑(M1=왼쪽뒤,M2=왼쪽앞,M3=오른쪽뒤,M4=오른쪽앞)은 더 이상 유효하지 않음.
+        #
+        # ⚠️⚠️ 채널별 방향 실측 완료(motor_channel_test.py + 육안 확인, 5초씩 개별 구동):
+        #   M1(왼쪽앞) 양수PWM -> 전진 ✅   M2(오른쪽앞) 양수PWM -> **후진** ❌
+        #   M3(왼쪽뒤) 양수PWM -> 전진 ✅   M4(오른쪽뒤) 양수PWM -> **후진** ❌
+        # 패턴이 모터 모델이 아니라 **좌/우로 갈림** — 오른쪽 두 채널(M2,M4) 전부
+        # 반대. 재배선하면서 좌우 미러링(원래는 왼쪽/오른쪽이 물리적으로 거울
+        # 대칭 장착이라 배선 극성도 반대로 맞춰야 "양수=전진"이 양쪽 다 성립하는
+        # 구조였음) 없이 일관된 극성으로 연결한 것으로 보임. 오른쪽 채널만
+        # 부호를 뒤집어서 보정 — 물리적으로 재배선하는 대신 소프트웨어에서 처리.
+        vals = [left_pwm, -right_pwm, left_pwm, -right_pwm]
         out = []
         for i, pv in enumerate(vals):
             if pv != 0 and apply_offset:
@@ -769,11 +797,15 @@ class DiffDriveNode(Node):
         if dt <= 0:
             return
 
-        # 좌/우 각각 앞뒤 바퀴 평균 (M1,M2=왼쪽 / M3,M4=오른쪽)
-        d = [(counts[i] - self._prev_counts[i]) * self._encoder_sign * self._meters_per_count
+        # ⚠️ 2026-09-24: 뒷바퀴 520 교체 재배선으로 채널 매핑이 "좌/우 묶음"에서
+        # "앞/뒤 묶음"으로 바뀌었다(M1=왼쪽앞,M2=오른쪽앞,M3=왼쪽뒤,M4=오른쪽뒤).
+        # 예전 코드는 (M1,M2)를 "왼쪽"으로 묶었는데 그건 옛 매핑 기준이라 지금은
+        # 틀림 — 앞왼쪽+오른쪽앞을 "왼쪽"으로 평균내는 셈이었다. 올바른 묶음은
+        # 왼쪽=(M1,M3), 오른쪽=(M2,M4). encoder_sign도 이제 채널별 리스트.
+        d = [(counts[i] - self._prev_counts[i]) * self._encoder_sign[i] * self._meters_per_count
              for i in range(4)]
-        d_left = (d[0] + d[1]) / 2.0
-        d_right = (d[2] + d[3]) / 2.0
+        d_left = (d[0] + d[2]) / 2.0
+        d_right = (d[1] + d[3]) / 2.0
         self._prev_counts = counts
         self._prev_odom_time = now
 
