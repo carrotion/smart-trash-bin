@@ -36,6 +36,12 @@ _MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
 
 
 class DiffDriveNode(Node):
+    # 채널(인덱스=드라이버 채널-1)의 좌/우 소속. 2026-09-24 재배선 기준
+    # M1=왼쪽앞, M2=오른쪽앞, M3=왼쪽뒤, M4=오른쪽뒤. 구동(_apply_pwm)과
+    # 오도메트리가 둘 다 이 값을 쓴다 — 예전엔 두 곳에 따로 박혀 있어서
+    # 재배선 때 한쪽만 고쳐질 위험이 있었다. tools/wheel_config.py와 일치해야 함.
+    LEFT = (0, 2)
+    RIGHT = (1, 3)
 
     def __init__(self):
         super().__init__('diff_drive_node')
@@ -70,7 +76,12 @@ class DiffDriveNode(Node):
         # 실측범위) 구간은 외삽이라 저속 재검증 필요.
         self.declare_parameter('rear_pwm_affine_slope', 1.7692)
         self.declare_parameter('rear_pwm_affine_offset', 461.82)
-        self.declare_parameter('encoder_sign', -1)           # PWM+ 전진 시 카운트 감소
+        # 채널별 부호 (2026-09-24 실측, docs/hardware_change_procedure.md 1장 3~4번).
+        # encoder_signs: 전진할 때 원시 카운트가 줄면 -1. pwm_signs: 드라이버에 양수를
+        # 주면 후진하는 채널은 -1(오른쪽 두 채널이 반대 극성으로 배선됨).
+        # tools/wheel_config.py의 ENCODER_SIGN/PWM_SIGN과 같아야 함(hw_preflight.py 검사).
+        self.declare_parameter('encoder_signs', [-1, 1, 1, -1])
+        self.declare_parameter('pwm_signs', [1, -1, 1, -1])
         # ⚠️ 2026-08-17: 로봇의 "앞"을 반대쪽으로 재정의함.
         # 이유: 하판→상판으로 넘어가는 케이블 뭉치가 2개였는데, 앞뒤를 바꾸면
         # 1개로 줄일 수 있다(사용자). 상하판을 넘는 케이블은 라이다 차폐의
@@ -265,6 +276,18 @@ class DiffDriveNode(Node):
         # yaw/vyaw를 일부러 크게 잡아 EKF가 이 값을 불신하도록 만들어뒀다.)
         self.declare_parameter('use_imu_for_yaw', False)
         self.declare_parameter('gyro_bias_samples', 100)     # 시작 시 정지 상태 바이어스 측정
+        # 바이어스 측정 창을 "정지 상태"로 인정하는 조건. 2026-09-24 사고: USB-C를
+        # 다시 꽂는 순간 노드가 떴고 사람이 로봇을 만지던 중이라 바이어스가
+        # -0.438 rad/s(정상 -0.005)로 잡혔다. 폐루프가 그걸 "회전 중"으로 믿고
+        # 보정해서 도크에선 오른쪽 바퀴가 1.2초 만에 역전, 바닥 직진은 -51° 이탈.
+        # (당시엔 /cmd_vel 발행자 충돌로 오진했다.) 정지 실측: 평균 -0.005,
+        # 표준편차 0.03 rad/s(100샘플 창). 08-21~09-24 기동 60여 회의 정상 범위는
+        # -0.011~+0.013이고, 비정상은 -0.438(09-24), +0.672(08-22 23:15),
+        # +0.0486(08-29 17:03) — 마지막 것을 잡으려고 0.03으로 둔다(정상 최대의
+        # 2.4배). 조건을 못 넘으면 창을 버리고 다시 잰다
+        # — 그동안 _gyro_ts가 None이라 회전 폐루프는 꺼진 채(개루프)로 동작한다.
+        self.declare_parameter('gyro_bias_max_abs', 0.03)
+        self.declare_parameter('gyro_bias_max_std', 0.08)
 
         # 2026-08-21 파워 스윕 실측: 출발 즉시 목표 PWM으로 점프하면 바퀴 4개의
         # 접지력 차이(특히 후륜/전륜 비대칭, 파워가 클수록 심해짐)가 슬립으로
@@ -284,19 +307,17 @@ class DiffDriveNode(Node):
         self._counts_per_rev_rear = p('counts_per_rev_rear').value  # 뒷바퀴(520) 전용
         self._rear_pwm_affine_slope = p('rear_pwm_affine_slope').value
         self._rear_pwm_affine_offset = p('rear_pwm_affine_offset').value
-        _base_sign = p('encoder_sign').value
         self._invert_drive = p('invert_drive_direction').value
+        # ⚠️ 2026-09-24 재배선 후 실측(motor_channel_test.py + 육안 전후진):
+        #   M1(왼쪽앞) 전진시 엔코더 음수 / M2(오른쪽앞) 양수
+        #   M3(왼쪽뒤,520) 양수 / M4(오른쪽뒤,520) 음수
+        #   ✅ 4채널 전부 실측 확정(바닥 직진 cmd_vel 0.2 전진 중 원시 델타
+        #   M1<0, M2>0, M3>0, M4<0 — 발행자 충돌 제거한 깨끗한 측정).
+        # 패턴이 단순 좌/우나 앞/뒤가 아니라 채널마다 달라 배열 파라미터로 둔다.
+        self._encoder_sign = [int(s) for s in p('encoder_signs').value]
         if self._invert_drive:
-            _base_sign = -_base_sign
-        # ⚠️ 2026-09-24: 채널별 부호로 변경. 뒷바퀴 520 교체 + 재배선 후 실측
-        # (motor_channel_test.py, 5초씩 개별 구동 + 육안 전후진 확인)한 결과:
-        #   M1(왼쪽앞) 전진시 엔코더 음수 / M2(오른쪽앞) 전진시 양수
-        #   M3(왼쪽뒤,520) 전진시 엔코더 양수 / M4(오른쪽뒤,520) 전진시 음수
-        #   ✅ 4채널 전부 실측 확정(2026-09-24, 바닥 직진 cmd_vel 0.2 전진 중
-        #   원시 델타 M1<0, M2>0, M3>0, M4<0 — 발행자 충돌 제거한 깨끗한 측정).
-        #   처음엔 M2/M4를 대칭성으로 역산만 했었음.
-        # 패턴이 단순 좌/우나 앞/뒤가 아니라 채널마다 달라 배열로 명시한다.
-        self._encoder_sign = [_base_sign * m for m in (1, -1, -1, 1)]
+            self._encoder_sign = [-s for s in self._encoder_sign]
+        self._pwm_sign = [int(s) for s in p('pwm_signs').value]
         self._max_pwm = p('max_pwm').value
         self._max_wheel_speed = p('max_wheel_speed').value
         self._min_pwm = p('min_pwm').value
@@ -386,8 +407,10 @@ class DiffDriveNode(Node):
         self._use_imu = p('use_imu_for_yaw').value
         self._gyro_bias_samples_target = p('gyro_bias_samples').value
         self._gyro_bias = 0.0
-        self._gyro_bias_acc = 0.0
-        self._gyro_bias_count = 0
+        self._gyro_bias_max_abs = p('gyro_bias_max_abs').value
+        self._gyro_bias_max_std = p('gyro_bias_max_std').value
+        self._gyro_bias_window = []
+        self._gyro_bias_count = 0   # 채택된 창의 샘플 수(0이면 아직 미보정)
         self._gyro_z = 0.0          # 바이어스 보정된 최신 각속도
         self._imu_seen = False
 
@@ -508,8 +531,13 @@ class DiffDriveNode(Node):
         # 반대. 재배선하면서 좌우 미러링(원래는 왼쪽/오른쪽이 물리적으로 거울
         # 대칭 장착이라 배선 극성도 반대로 맞춰야 "양수=전진"이 양쪽 다 성립하는
         # 구조였음) 없이 일관된 극성으로 연결한 것으로 보임. 오른쪽 채널만
-        # 부호를 뒤집어서 보정 — 물리적으로 재배선하는 대신 소프트웨어에서 처리.
-        vals = [left_pwm, -right_pwm, left_pwm, -right_pwm]
+        # 부호를 뒤집어서 보정 — 물리적으로 재배선하는 대신 소프트웨어에서 처리
+        # (pwm_signs 파라미터).
+        vals = [0, 0, 0, 0]
+        for i in self.LEFT:
+            vals[i] = left_pwm * self._pwm_sign[i]
+        for i in self.RIGHT:
+            vals[i] = right_pwm * self._pwm_sign[i]
         # ⚠️ 2026-09-24: 뒷바퀴(M3,M4,520)는 앞바퀴(370)와 감속비가 달라 같은
         # PWM에서 실제 속도가 다르다 — 도크 위 무부하 스윕 실측(tools/
         # axle_speed_sweep.py, PWM 200~800 5개 구간)으로 각 축의 PWM->속도
@@ -769,14 +797,30 @@ class DiffDriveNode(Node):
 
         # 시작 직후 정지 상태에서 바이어스(정지 시 0이 아닌 오프셋) 측정.
         # 이걸 안 빼면 가만히 있어도 각도가 계속 돈다.
-        if self._gyro_bias_count < self._gyro_bias_samples_target:
-            if self._target_left_pwm == 0 and self._target_right_pwm == 0:
-                self._gyro_bias_acc += wz
-                self._gyro_bias_count += 1
-                if self._gyro_bias_count == self._gyro_bias_samples_target:
-                    self._gyro_bias = self._gyro_bias_acc / self._gyro_bias_count
-                    self.get_logger().info(
-                        f'자이로 바이어스 보정 완료: {self._gyro_bias:+.5f} rad/s')
+        # 모터 명령이 0인 것만으로는 부족하다 — 사람이 들고 있거나 옮기는 중일 수
+        # 있다(2026-09-24). 창 하나를 모아 평균/표준편차로 정지 여부를 판정한다.
+        if self._gyro_bias_count == 0:
+            if self._target_left_pwm or self._target_right_pwm:
+                self._gyro_bias_window = []
+                return
+            self._gyro_bias_window.append(wz)
+            if len(self._gyro_bias_window) < self._gyro_bias_samples_target:
+                return
+            win = self._gyro_bias_window
+            self._gyro_bias_window = []
+            mean = sum(win) / len(win)
+            std = math.sqrt(sum((x - mean) ** 2 for x in win) / len(win))
+            if abs(mean) > self._gyro_bias_max_abs or std > self._gyro_bias_max_std:
+                self.get_logger().warn(
+                    f'자이로 바이어스 측정 거부 — 평균 {mean:+.4f} / 표준편차 {std:.4f} rad/s '
+                    f'(한계 {self._gyro_bias_max_abs} / {self._gyro_bias_max_std}). '
+                    '로봇이 움직이는 중으로 보고 다시 잰다. 그동안 회전 폐루프 꺼짐',
+                    throttle_duration_sec=5.0)
+                return
+            self._gyro_bias = mean
+            self._gyro_bias_count = len(win)
+            self.get_logger().info(
+                f'자이로 바이어스 보정 완료: {mean:+.5f} rad/s (표준편차 {std:.4f})')
             return
 
         self._gyro_z = wz - self._gyro_bias
@@ -852,8 +896,8 @@ class DiffDriveNode(Node):
         # 이제 채널별 리스트(뒷바퀴 520이 감속비가 달라 카운트당 거리도 다름).
         d = [(counts[i] - self._prev_counts[i]) * self._encoder_sign[i] * self._meters_per_count[i]
              for i in range(4)]
-        d_left = (d[0] + d[2]) / 2.0
-        d_right = (d[1] + d[3]) / 2.0
+        d_left = sum(d[i] for i in self.LEFT) / 2.0
+        d_right = sum(d[i] for i in self.RIGHT) / 2.0
         self._prev_counts = counts
         self._prev_odom_time = now
 

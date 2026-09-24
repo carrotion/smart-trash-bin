@@ -36,7 +36,8 @@ PORT = '/dev/motor'
 BAUD = 115200
 # ⚠️ 2026-09-24: 뒷바퀴 520 교체 + 채널 재배선(좌/우 묶음 -> 앞/뒤 묶음)으로 갱신.
 # M1/M2=앞(기존 370), M3/M4=뒤(신규 520). 예전 매핑(M1=왼쪽뒤 등)은 무효.
-NAMES = {1: '왼쪽 앞', 2: '오른쪽 앞', 3: '왼쪽 뒤(520)', 4: '오른쪽 뒤(520)'}
+from wheel_config import NAMES as _NAMES
+NAMES = {i + 1: n.split(' ', 1)[1] for i, n in enumerate(_NAMES)}
 
 
 class Driver:

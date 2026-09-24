@@ -29,20 +29,21 @@ from std_msgs.msg import Int32MultiArray
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 
-WHEEL_RADIUS = 0.0335
-COUNTS_PER_REV = 857.2
-ENCODER_SIGN = -1
-METERS_PER_COUNT = (2 * math.pi * WHEEL_RADIUS) / COUNTS_PER_REV
+from wheel_config import center  # 채널 매핑/부호/카운트당거리 단일 출처
+
 SPEED = 0.2
 COAST_K = 0.53  # coast_dist ≈ COAST_K * v_at_stop, docs/calibration/coast_sweep.csv 13개 실측 피팅
+# ⚠️ 2026-09-24: 이 K는 370 4개 시절 값 — 뒷바퀴 520 교체로 관성/마찰이 바뀌어
+# 무효일 가능성 높음. coast_sweep.py로 재측정 전까지는 거리 정확도를 믿지 말 것.
 
 TARGET_M = float(sys.argv[1]) if len(sys.argv) > 1 else 0.5
 SAFETY_MARGIN_M = 0.10
 
 
-def dist(a, b):
-    d = [(b[i] - a[i]) * ENCODER_SIGN * METERS_PER_COUNT for i in range(4)]
-    return (sum(d[:2]) / 2.0 + sum(d[2:]) / 2.0) / 2.0
+# ⚠️ 2026-09-24: 예전엔 여기서 ENCODER_SIGN=-1, 857.2를 4채널 공통으로 썼다.
+# 뒷바퀴 520 교체·재배선 뒤 그 공식은 전진 거리를 실제의 1/34로 읽어서
+# 목표 미도달로 판단, 타임아웃까지 계속 주행하는 상태였다. 공용 모듈로 교체.
+dist = center
 
 
 def min_front(msg):
