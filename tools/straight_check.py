@@ -23,6 +23,14 @@ from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Int32MultiArray
 
+# ⚠️ 2026-09-24: 뒷바퀴 370->520 교체로 채널별 카운트/회전이 달라짐
+# (M1,M2=앞/370=857.2, M3,M4=뒤/520=2475.6 — diff_drive_node.py와 동일 값).
+# 원시 카운트를 그대로 비교하면 뒤가 앞보다 ~2.9배 많이 나오는 게 정상인데
+# "미끄러짐"으로 오판하게 된다 — 미터로 환산해서 비교해야 함.
+WHEEL_RADIUS = 0.0335
+COUNTS_PER_REV = [857.2, 857.2, 2475.6, 2475.6]
+METERS_PER_COUNT = [(2.0 * math.pi * WHEEL_RADIUS) / c for c in COUNTS_PER_REV]
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--speed', type=float, default=0.2)
@@ -30,6 +38,7 @@ def main():
     ap.add_argument('--trials', type=int, default=4)
     ap.add_argument('--battery-v', type=float)
     ap.add_argument('--json')
+    ap.add_argument('--allow-other-publishers', action='store_true')
     args = ap.parse_args()
 
     rclpy.init()
@@ -66,6 +75,19 @@ def main():
     if len(gyro) < 40:
         print(f'❌ 자이로 수신 부족({len(gyro)})'); return 1
     print(f'  수신 확인 — 자이로 {len(gyro)}, 엔코더 {len(enc)}\n')
+
+    # ⚠️ 2026-09-24: 다른 /cmd_vel 발행자(motor_dashboard, map_dashboard_bridge
+    # 등)가 떠 있으면 명령이 섞여서 측정이 통째로 오염된다 — 이날 이것 때문에
+    # "M4가 26%만 움직임, 이탈 -51°"라는 가짜 결과가 나왔고, 발행자를 끄고
+    # 재측정하니 91~100% / +1.9°로 정상이었다. 시작 전에 반드시 확인한다.
+    others = [i.node_name for i in n.get_publishers_info_by_topic('/cmd_vel')
+              if i.node_name != 'straight_check']
+    if others and not args.allow_other_publishers:
+        print(f'❌ /cmd_vel에 다른 발행자가 있다: {others}')
+        print('   명령이 섞여 측정이 오염된다. 먼저 끌 것:')
+        print('   sudo systemctl stop smart-trash-motor-dashboard smart-trash-map-dashboard')
+        print('   (무시하고 진행하려면 --allow-other-publishers)')
+        n.destroy_node(); rclpy.shutdown(); return 1
 
     flag = {'v': False}
     signal.signal(signal.SIGINT, lambda *a: flag.update(v=True))
@@ -125,10 +147,14 @@ def main():
         encs = [r['enc'] for r in rows if r['enc']]
         if encs:
             avg = [statistics.fmean([e[i] for e in encs]) for i in range(4)]
-            mx = max(avg) if max(avg) > 0 else 1
-            print(f'  채널별 평균 엔코더  ' + ' '.join(f'M{i+1} {avg[i]:.0f}' for i in range(4)))
-            print(f'  최대 대비 비율      ' + ' '.join(f'M{i+1} {100*avg[i]/mx:.0f}%' for i in range(4)))
-            print('  (바닥에서는 4바퀴가 같은 지면 속도로 구속되므로 비슷해야 정상)')
+            # 원시 카운트가 아니라 실제 이동거리(m)로 환산해서 비교 — 앞/뒤가
+            # 카운트/회전이 달라 원시값은 애초에 단위가 다르다(주석 참고).
+            avg_m = [avg[i] * METERS_PER_COUNT[i] for i in range(4)]
+            mx_m = max(avg_m) if max(avg_m) > 0 else 1
+            print(f'  채널별 평균 엔코더(원시)  ' + ' '.join(f'M{i+1} {avg[i]:.0f}' for i in range(4)))
+            print(f'  채널별 평균 이동거리(m)   ' + ' '.join(f'M{i+1} {avg_m[i]:.3f}' for i in range(4)))
+            print(f'  최대 대비 비율            ' + ' '.join(f'M{i+1} {100*avg_m[i]/mx_m:.0f}%' for i in range(4)))
+            print('  (바닥에서는 4바퀴가 같은 지면 거리를 이동하므로 m 기준으로 비슷해야 정상)')
     if args.json:
         json.dump({'date': time.strftime('%Y-%m-%d %H:%M'), 'speed': args.speed,
                    'battery_v': args.battery_v, 'rows': rows},
