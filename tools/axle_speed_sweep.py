@@ -16,7 +16,7 @@
     python3 tools/axle_speed_sweep.py
     sudo systemctl start smart-trash-diff-drive
 """
-import serial, time, sys, csv, os, math
+import argparse, serial, time, sys, csv, os, math
 
 from wheel_config import WHEEL_RADIUS, COUNTS_PER_REV, PWM_SIGN
 
@@ -29,10 +29,17 @@ DRIVE_S = 1.5
 
 
 class Driver:
-    def __init__(self):
+    def __init__(self, deadzone=None):
         self.ser = serial.Serial(PORT, BAUD, timeout=0.3)
         time.sleep(0.3)
         self.ser.reset_input_buffer()
+        # ⚠️ 2026-09-24: 드라이버 deadzone은 출력 바닥으로 깔린다(1900 vs 1000에서
+        # 같은 명령의 바닥 속도 0.40 vs 0.12 m/s). 지정하지 않으면 직전 설정(보통
+        # diff_drive_node의 1900)을 그대로 쓰게 되니 측정 조건으로 반드시 남길 것.
+        if deadzone is not None:
+            self.ser.write(b'$mtype:1#'); time.sleep(0.15)
+            self.ser.write(f'$deadzone:{deadzone}#'.encode()); time.sleep(0.15)
+            print('드라이버 응답:', self.ser.read(self.ser.in_waiting).decode(errors='replace').strip())
 
     def send(self, cmd):
         self.ser.write(cmd.encode())
@@ -64,12 +71,12 @@ class Driver:
             self.ser.close()
 
 
-def sweep(d, axle_name, ch_indices, counts_per_rev, pwm_signs):
+def sweep(d, axle_name, ch_indices, counts_per_rev, pwm_signs, pwms=PWMS):
     """ch_indices: 0-based 채널 인덱스 튜플(예: (0,1)=M1,M2). pwm_signs: 각 채널에
     보낼 때 곱할 부호(오른쪽 채널은 극성반전 보정 -1 — _apply_pwm과 동일 규약)."""
     print(f'\n=== {axle_name} 스윕 ===')
     rows = []
-    for pwm in PWMS:
+    for pwm in pwms:
         vals = [0, 0, 0, 0]
         for idx, sign in zip(ch_indices, pwm_signs):
             vals[idx] = int(pwm * sign)
@@ -99,33 +106,40 @@ def sweep(d, axle_name, ch_indices, counts_per_rev, pwm_signs):
 
 
 def main():
-    d = Driver()
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--deadzone', type=int, default=None,
+                    help='드라이버 $deadzone 설정 후 측정(생략 시 직전 설정 유지)')
+    ap.add_argument('--pwms', default=None, help='쉼표 구분 PWM 목록')
+    ap.add_argument('--out', default='docs/calibration/axle_speed_sweep.csv')
+    args = ap.parse_args()
+    pwms = [int(x) for x in args.pwms.split(',')] if args.pwms else PWMS
+    d = Driver(args.deadzone)
     try:
         d.send('$upload:1#')
         time.sleep(0.3)
 
         # 앞(M1,M2) — 왼쪽은 정극성, 오른쪽(M2)은 _apply_pwm과 동일하게 반전
         front_rows = sweep(d, '앞(370, M1+M2)', (0, 1), COUNTS_PER_REV_FRONT,
-                           (PWM_SIGN[0], PWM_SIGN[1]))
+                           (PWM_SIGN[0], PWM_SIGN[1]), pwms)
         rear_rows = sweep(d, '뒤(520, M3+M4)', (2, 3), COUNTS_PER_REV_REAR,
-                          (PWM_SIGN[2], PWM_SIGN[3]))
+                          (PWM_SIGN[2], PWM_SIGN[3]), pwms)
     finally:
         d.close()
 
-    fpath = 'docs/calibration/axle_speed_sweep.csv'
+    fpath = args.out
     os.makedirs(os.path.dirname(fpath), exist_ok=True)
     with open(fpath, 'w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['axle', 'pwm', 'mps'])
+        w.writerow(['axle', 'pwm', 'mps', 'deadzone'])
         for pwm, mps in front_rows:
-            w.writerow(['front', pwm, f'{mps:.4f}'])
+            w.writerow(['front', pwm, f'{mps:.4f}', args.deadzone])
         for pwm, mps in rear_rows:
-            w.writerow(['rear', pwm, f'{mps:.4f}'])
+            w.writerow(['rear', pwm, f'{mps:.4f}', args.deadzone])
 
     print(f'\n=== 비교 (같은 PWM에서 앞 vs 뒤) ===')
     front_map = dict(front_rows)
     rear_map = dict(rear_rows)
-    for pwm in PWMS:
+    for pwm in pwms:
         if pwm in front_map and pwm in rear_map:
             f_v, r_v = front_map[pwm], rear_map[pwm]
             ratio = r_v / f_v if f_v > 0 else float('nan')
