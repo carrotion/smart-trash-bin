@@ -55,7 +55,14 @@ class DiffDriveNode(Node):
         self.declare_parameter('wheel_separation', 0.3291)
         # 손으로 10회전 돌려 구한 899.1을, 실제 1.16m 주행 대비 odom 1.106m로
         # 나온 비율(0.953)로 보정한 값 — 주행 실측이 더 신뢰도 높음 (2026-08-15)
+        # ⚠️ 이 값은 이제 **앞바퀴(M1,M2,370모터) 전용**이다 — 아래 참고.
         self.declare_parameter('counts_per_rev', 857.2)
+        # 뒷바퀴(M3,M4,520모터, 2026-09-24 교체) 전용 값. 손으로 10회전 돌려
+        # 실측: 24756카운트/10회전 = 2475.6. 검산: 11펄스/회전 x 쿼드러처(x4)
+        # x 감속비56 = 2464 — 실측치와 거의 일치(주문한 감속비 56 확인됨).
+        # ⚠️ 370의 857.2처럼 아직 실주행 거리 대비 보정(0.953 같은 계수)을
+        # 거치지 않은 **1차 raw 값** — 다음 정밀주행 검증에서 다시 볼 것.
+        self.declare_parameter('counts_per_rev_rear', 2475.6)
         self.declare_parameter('encoder_sign', -1)           # PWM+ 전진 시 카운트 감소
         # ⚠️ 2026-08-17: 로봇의 "앞"을 반대쪽으로 재정의함.
         # 이유: 하판→상판으로 넘어가는 케이블 뭉치가 2개였는데, 앞뒤를 바꾸면
@@ -266,7 +273,8 @@ class DiffDriveNode(Node):
         p = self.get_parameter
         self._wheel_radius = p('wheel_radius').value
         self._wheel_separation = p('wheel_separation').value
-        self._counts_per_rev = p('counts_per_rev').value
+        self._counts_per_rev = p('counts_per_rev').value            # 앞바퀴(370) 전용
+        self._counts_per_rev_rear = p('counts_per_rev_rear').value  # 뒷바퀴(520) 전용
         _base_sign = p('encoder_sign').value
         self._invert_drive = p('invert_drive_direction').value
         if self._invert_drive:
@@ -306,8 +314,13 @@ class DiffDriveNode(Node):
         self.add_on_set_parameters_callback(self._on_params)
 
 
-        # 카운트 → 미터
-        self._meters_per_count = (2.0 * math.pi * self._wheel_radius) / self._counts_per_rev
+        # 카운트 → 미터. ⚠️ 2026-09-24: 뒷바퀴 520 교체로 감속비가 앞바퀴(370)와
+        # 달라져 채널별 배열로 변경(바퀴 지름은 앞/뒤 동일, 0.0335m 그대로 —
+        # 사용자 확인). M1,M2=앞(370) / M3,M4=뒤(520).
+        _circumference = 2.0 * math.pi * self._wheel_radius
+        _mpc_front = _circumference / self._counts_per_rev
+        _mpc_rear = _circumference / self._counts_per_rev_rear
+        self._meters_per_count = [_mpc_front, _mpc_front, _mpc_rear, _mpc_rear]
 
         self._serial_lock = threading.Lock()
         self._ser = serial.Serial(p('port').value, p('baudrate').value, timeout=0.2)
@@ -801,8 +814,9 @@ class DiffDriveNode(Node):
         # "앞/뒤 묶음"으로 바뀌었다(M1=왼쪽앞,M2=오른쪽앞,M3=왼쪽뒤,M4=오른쪽뒤).
         # 예전 코드는 (M1,M2)를 "왼쪽"으로 묶었는데 그건 옛 매핑 기준이라 지금은
         # 틀림 — 앞왼쪽+오른쪽앞을 "왼쪽"으로 평균내는 셈이었다. 올바른 묶음은
-        # 왼쪽=(M1,M3), 오른쪽=(M2,M4). encoder_sign도 이제 채널별 리스트.
-        d = [(counts[i] - self._prev_counts[i]) * self._encoder_sign[i] * self._meters_per_count
+        # 왼쪽=(M1,M3), 오른쪽=(M2,M4). encoder_sign/meters_per_count 둘 다
+        # 이제 채널별 리스트(뒷바퀴 520이 감속비가 달라 카운트당 거리도 다름).
+        d = [(counts[i] - self._prev_counts[i]) * self._encoder_sign[i] * self._meters_per_count[i]
              for i in range(4)]
         d_left = (d[0] + d[2]) / 2.0
         d_right = (d[1] + d[3]) / 2.0
