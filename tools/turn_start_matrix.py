@@ -26,7 +26,18 @@ from rcl_interfaces.srv import SetParameters
 from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import Int32MultiArray
 
+import numpy as np
 from rotation_quality_test import scan_points, icp
+
+
+def icp_with_guess(after, before, guess_deg):
+    """90° 회전은 항등 초기값에서 ICP가 엉뚱한 해에 빠진다(09-25 1차 실행 무효) →
+    자이로가 잰 회전각으로 먼저 돌려 놓고 남은 차이만 ICP로 구한다."""
+    g = np.radians(guess_deg)
+    R = np.array([[np.cos(g), -np.sin(g)], [np.sin(g), np.cos(g)]])
+    dx, dy, dth, resid = icp((R @ after.T).T, before)
+    # 전체 변환 = ICP 결과 ∘ 초기 회전
+    return dx, dy, guess_deg + dth, resid
 
 
 def main():
@@ -86,8 +97,7 @@ def main():
                 for sgn in (1, -1):
                     cmd = sgn * w
                     before = scan_points(S['scan'])
-                    S['g'] = []; S['enc'] = S['enc'][-1:]
-                    enc0 = S['enc'][-1][1]
+                    S['g'] = []
                     ts = time.time(); last = ts; yaw = 0.0
                     timeout = math.pi / 2 / w + 6.0
                     while abs(yaw) < math.pi / 2 - w * 0.12 and time.time() - ts < timeout:
@@ -98,31 +108,30 @@ def main():
                             yaw += (st.mean(g) - bias) * (now - last)
                         last = now
                     timed_out = time.time() - ts >= timeout
+                    t_stop = time.time()
                     stop(1.2)
+                    yaw += sum((v - bias) * 0.02 for t, v in S['g'] if t > t_stop)   # 관성분(50Hz)
                     after = scan_points(S['scan'])
-                    dx, dy, dth, resid = icp(after, before)
+                    dx, dy, dth, resid = icp_with_guess(after, before, np.degrees(yaw))
                     rates = [(t - ts, (v - bias) * sgn) for t, v in S['g'] if t >= ts]
                     moving = [t for t, r in rates if r > 0.05]
                     start_delay = moving[0] if moving else None
-                    first_sec = [r for t, r in rates if t <= (start_delay or 0) + 1.0]
-                    starts = []
-                    for i in range(4):
-                        ti = next((t - ts for t, c in S['enc'] if t >= ts and abs(c[i] - enc0[i]) > 3), None)
-                        starts.append(ti)
-                    valid = [x for x in starts if x is not None]
+                    # 과회전: 0.2초(약 10샘플) 이동평균의 최대 — 순간 최대는 저속에서 자이로 잡음에 부풀려졌다
+                    sm = [st.mean(r for _, r in rates[k:k + 10]) for k in range(max(0, len(rates) - 9))]
+                    first_sec = [v for (t, _), v in zip(rates, sm) if t <= (start_delay or 0) + 1.0]
+                    # (바퀴별 출발 시각 차는 엔코더가 약 16Hz라 60ms 미만 차이를 못 봐서 뺐다)
                     row = {'w': w, 'dir': 'CCW' if sgn > 0 else 'CW', 'ramp': ramp,
-                           'err_deg': abs(dth) - 90.0 if abs(abs(dth) - 90) < 45 else None,
+                           'gyro_deg': math.degrees(abs(yaw)),
+                           'err_deg': abs(dth) - 90.0, 'gyro_vs_lidar_deg': abs(dth) - math.degrees(abs(yaw)),
                            'icp_dtheta': dth, 'shift_cm': math.hypot(dx, dy) * 100, 'icp_resid_cm': resid * 100,
                            'start_delay': start_delay,
-                           'wheel_start': starts,
-                           'wheel_start_spread': (max(valid) - min(valid)) if len(valid) >= 2 else None,
                            'overshoot': (max(first_sec) / w) if first_sec else None,
                            'timed_out': timed_out}
                     rows.append(row)
                     f = lambda x, fmt: (fmt % x) if x is not None else '  -  '
-                    print(f'w {w:.2f} 램프 {ramp:4.2f} {row["dir"]:3s} | 90° 오차 {f(row["err_deg"], "%+5.1f")}° | '
-                          f'출발지연 {f(start_delay, "%.2f")}s | 바퀴 출발차 {f(row["wheel_start_spread"], "%.2f")}s | '
-                          f'과회전 {f(row["overshoot"], "%.2f")}배 | 밀림 {row["shift_cm"]:.1f}cm'
+                    print(f'w {w:.2f} 램프 {ramp:4.2f} {row["dir"]:3s} | 90° 오차 {f(row["err_deg"], "%+5.1f")}° '
+                          f'(자이로와 차 {row["gyro_vs_lidar_deg"]:+.1f}°) | 출발지연 {f(start_delay, "%.2f")}s | '
+                          f'과회전 {f(row["overshoot"], "%.2f")}배 | 밀림 {row["shift_cm"]:.1f}cm (잔차 {resid * 100:.1f})'
                           + (' | ⏱ 시간초과' if timed_out else ''), flush=True)
     finally:
         stop(0.3)
