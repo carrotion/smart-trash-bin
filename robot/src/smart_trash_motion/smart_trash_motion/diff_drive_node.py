@@ -283,6 +283,12 @@ class DiffDriveNode(Node):
         #   M1 1100(1200→0.122) / M2 1180(1800→0.376 역산) / M3 1350(1800→0.151 역산)
         #   / M4 700(1200→0.163 역산)
         self.declare_parameter('ff_pwm0', [1100.0, 1180.0, 1350.0, 700.0])
+        # 구르기 시작한 뒤의 pwm0(운동마찰). 2026-09-25 바닥: 0.105 m/s로 구르는 중
+        # PWM 앞 약 860~1000, M3 약 1030, M4 약 500까지 내려도 속도가 유지됐다 —
+        # 위 정지마찰 값(도크 측정)을 계속 주면 출발 뒤 목표의 2배로 튄다. 바퀴 속도가
+        # ff_moving_threshold를 넘으면 이 값으로 바꾼다. 낮게 잡아도 PI가 채운다.
+        self.declare_parameter('ff_pwm0_kinetic', [750.0, 800.0, 800.0, 300.0])
+        self.declare_parameter('ff_moving_threshold', 0.02)   # m/s
         self.declare_parameter('ff_front_slope', 0.000608)
         self.declare_parameter('ff_rear_slope', 0.000334)
         # --- 엔코더 타당성 검사 (2026-09-25, 오도메트리와 velocity 모드 공용) ---
@@ -295,7 +301,8 @@ class DiffDriveNode(Node):
         #      오독 이력 없음, 바닥에선 같은 측 바퀴가 지면으로 묶여 같은 속도여야 함)
         self.declare_parameter('wheel_max_speed_front', 1.3)   # 370 무부하 최고 1.13
         self.declare_parameter('wheel_max_speed_rear', 0.8)    # 520 무부하 최고 0.63
-        self.declare_parameter('side_disagree_abs', 0.15)      # m/s — 이만큼 넘게 다르고
+        # 0.15 → 0.05 (2026-09-25 바닥: M3가 0.022로 오독하는데 앞 0.145와 차이 0.12라 놓침)
+        self.declare_parameter('side_disagree_abs', 0.05)      # m/s — 이만큼 넘게 다르고
         self.declare_parameter('side_disagree_rel', 0.5)       # 큰 쪽의 50% 넘게 다르면 불일치
         # 바퀴 속도 PI — 게인은 "m/s 오차당 m/s 보정" 무차원이고 축별 slope로
         # 나눠 PWM으로 바꾼다(앞/뒤 플랜트 이득 차이를 자동 반영).
@@ -402,6 +409,8 @@ class DiffDriveNode(Node):
             self.get_logger().error(f'알 수 없는 control_mode={self._control_mode} — legacy로 동작')
             self._control_mode = 'legacy'
         self._ff_pwm0 = [float(x) for x in p('ff_pwm0').value]
+        self._ff_pwm0_kinetic = [float(x) for x in p('ff_pwm0_kinetic').value]
+        self._ff_moving_threshold = p('ff_moving_threshold').value
         self._ff_slope = {'front': p('ff_front_slope').value, 'rear': p('ff_rear_slope').value}
         self._wheel_max = [p('wheel_max_speed_front').value] * 2 + [p('wheel_max_speed_rear').value] * 2
         self._side_disagree_abs = p('side_disagree_abs').value
@@ -717,6 +726,10 @@ class DiffDriveNode(Node):
                 setattr(self, attr, prm.value)
             elif prm.name == 'ff_pwm0':
                 self._ff_pwm0 = [float(x) for x in prm.value]
+            elif prm.name == 'ff_pwm0_kinetic':
+                self._ff_pwm0_kinetic = [float(x) for x in prm.value]
+            elif prm.name == 'ff_moving_threshold':
+                self._ff_moving_threshold = prm.value
             elif prm.name == 'ff_front_slope':
                 self._ff_slope['front'] = prm.value
             elif prm.name == 'ff_rear_slope':
@@ -870,7 +883,10 @@ class DiffDriveNode(Node):
                     self._wheel_i[i] = max(-lim, min(lim, self._wheel_i[i]))
                 corr = self._wheel_kp * err + self._wheel_ki * self._wheel_i[i]
             slope = self._ff_slope['front' if i in (0, 1) else 'rear']
-            out = math.copysign(self._ff_pwm0[i] + abs(s) / slope, s) + corr / slope
+            # 정지마찰 보상: 서 있으면 떼어낼 출력, 목표 방향으로 구르고 있으면 운동마찰 출력
+            rolling = s * self._wheel_speed[i] > 0 and abs(self._wheel_speed[i]) > self._ff_moving_threshold
+            pwm0 = self._ff_pwm0_kinetic[i] if rolling else self._ff_pwm0[i]
+            out = math.copysign(pwm0 + abs(s) / slope, s) + corr / slope
             if out * s < 0:   # 보정이 방향을 뒤집지는 못하게(정지마찰 근처 떨림 방지)
                 out = 0.0
             pwm[i] = out
