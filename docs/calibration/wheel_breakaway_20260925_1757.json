@@ -1,0 +1,156 @@
+{
+ "args": {
+  "start": 400,
+  "max": 2600,
+  "step": 40,
+  "dwell": 0.25,
+  "moving_mps": 0.01,
+  "repeats": 2
+ },
+ "rows": [
+  {
+   "wheel": 1,
+   "name": "M1 왼쪽앞(370)",
+   "dir": "fwd",
+   "rep": 1,
+   "start_pwm": 1640,
+   "stop_pwm": 800,
+   "misread": 0
+  },
+  {
+   "wheel": 1,
+   "name": "M1 왼쪽앞(370)",
+   "dir": "fwd",
+   "rep": 2,
+   "start_pwm": 1560,
+   "stop_pwm": 840,
+   "misread": 0
+  },
+  {
+   "wheel": 1,
+   "name": "M1 왼쪽앞(370)",
+   "dir": "rev",
+   "rep": 1,
+   "start_pwm": 1600,
+   "stop_pwm": 800,
+   "misread": 0
+  },
+  {
+   "wheel": 1,
+   "name": "M1 왼쪽앞(370)",
+   "dir": "rev",
+   "rep": 2,
+   "start_pwm": 1600,
+   "stop_pwm": 760,
+   "misread": 0
+  },
+  {
+   "wheel": 2,
+   "name": "M2 오른쪽앞(370)",
+   "dir": "fwd",
+   "rep": 1,
+   "start_pwm": 1560,
+   "stop_pwm": 1120,
+   "misread": 0
+  },
+  {
+   "wheel": 2,
+   "name": "M2 오른쪽앞(370)",
+   "dir": "fwd",
+   "rep": 2,
+   "start_pwm": 1920,
+   "stop_pwm": 1200,
+   "misread": 0
+  },
+  {
+   "wheel": 2,
+   "name": "M2 오른쪽앞(370)",
+   "dir": "rev",
+   "rep": 1,
+   "start_pwm": 1400,
+   "stop_pwm": 1080,
+   "misread": 0
+  },
+  {
+   "wheel": 2,
+   "name": "M2 오른쪽앞(370)",
+   "dir": "rev",
+   "rep": 2,
+   "start_pwm": 1640,
+   "stop_pwm": 1080,
+   "misread": 0
+  },
+  {
+   "wheel": 3,
+   "name": "M3 왼쪽뒤(520)",
+   "dir": "fwd",
+   "rep": 1,
+   "start_pwm": 1120,
+   "stop_pwm": 0,
+   "misread": 0
+  },
+  {
+   "wheel": 3,
+   "name": "M3 왼쪽뒤(520)",
+   "dir": "fwd",
+   "rep": 2,
+   "start_pwm": 440,
+   "stop_pwm": 0,
+   "misread": 0
+  },
+  {
+   "wheel": 3,
+   "name": "M3 왼쪽뒤(520)",
+   "dir": "rev",
+   "rep": 1,
+   "start_pwm": 440,
+   "stop_pwm": 0,
+   "misread": 0
+  },
+  {
+   "wheel": 3,
+   "name": "M3 왼쪽뒤(520)",
+   "dir": "rev",
+   "rep": 2,
+   "start_pwm": 440,
+   "stop_pwm": 0,
+   "misread": 0
+  },
+  {
+   "wheel": 4,
+   "name": "M4 오른쪽뒤(520)",
+   "dir": "fwd",
+   "rep": 1,
+   "start_pwm": 520,
+   "stop_pwm": 0,
+   "misread": 2
+  },
+  {
+   "wheel": 4,
+   "name": "M4 오른쪽뒤(520)",
+   "dir": "fwd",
+   "rep": 2,
+   "start_pwm": 520,
+   "stop_pwm": 0,
+   "misread": 2
+  },
+  {
+   "wheel": 4,
+   "name": "M4 오른쪽뒤(520)",
+   "dir": "rev",
+   "rep": 1,
+   "start_pwm": 440,
+   "stop_pwm": 0,
+   "misread": 0
+  },
+  {
+   "wheel": 4,
+   "name": "M4 오른쪽뒤(520)",
+   "dir": "rev",
+   "rep": 2,
+   "start_pwm": 440,
+   "stop_pwm": 0,
+   "misread": 0
+  }
+ ]
+}
