@@ -310,7 +310,8 @@ class DiffDriveNode(Node):
         self.declare_parameter('yaw_kp', 0.5)
         self.declare_parameter('yaw_ki', 1.0)
         self.declare_parameter('yaw_i_limit', 1.0)       # rad/s 환산 상한
-        self.declare_parameter('velocity_debug', False)  # 목표/측정/PWM 로그(0.25초 간격)
+        self.declare_parameter('velocity_debug', False)
+        self.declare_parameter('velocity_pi_mode', 'wheel')   # 'wheel' | 'side' — 아래 _velocity_control 참고  # 목표/측정/PWM 로그(0.25초 간격)
 
         # (구) turn_boost — 회전 PWM 모델로 대체되어 더 이상 쓰이지 않는다.
         # 파라미터 자체는 호환을 위해 남겨두되 제어에는 반영 안 함.
@@ -407,7 +408,6 @@ class DiffDriveNode(Node):
         self._side_disagree_rel = p('side_disagree_rel').value
         self._enc_rejects = [0] * 4        # 바퀴별로 버린 횟수(진단용)
         self._side_speed = {'L': 0.0, 'R': 0.0}
-        self._side_i = {'L': 0.0, 'R': 0.0}
         self._side_reverse_since = {'L': None, 'R': None}
         self._wheel_kp = p('wheel_kp').value
         self._wheel_ki = p('wheel_ki').value
@@ -419,6 +419,9 @@ class DiffDriveNode(Node):
         self._yaw_ki = p('yaw_ki').value
         self._yaw_i_limit = p('yaw_i_limit').value
         self._velocity_debug = p('velocity_debug').value
+        self._velocity_pi_mode = p('velocity_pi_mode').value
+        self._wheel_i = [0.0] * 4
+        self._wheel_speed_raw = [0.0] * 4
         self._wheel_speed = [0.0] * 4      # 엔코더로 잰 바퀴별 속도(m/s, 전진 +)
         self._wheel_target = [0.0] * 4
         self._vel_prev = None              # (counts, ts) — 속도 계산용 직전 샘플
@@ -706,6 +709,7 @@ class DiffDriveNode(Node):
             'yaw_ki': '_yaw_ki',
             'yaw_i_limit': '_yaw_i_limit',
             'velocity_debug': '_velocity_debug',
+            'velocity_pi_mode': '_velocity_pi_mode',
         }
         for prm in params:
             attr = live.get(prm.name)
@@ -735,6 +739,7 @@ class DiffDriveNode(Node):
         (오도메트리는 거리/dt를 넘기고 결과에 다시 dt를 곱한다).
         """
         out = {}
+        self._wheel_valid = [True] * 4
         for side, (f, r) in (('L', self.LEFT), ('R', self.RIGHT)):
             ok_f = abs(v[f]) <= self._wheel_max[f]
             ok_r = abs(v[r]) <= self._wheel_max[r]
@@ -744,6 +749,7 @@ class DiffDriveNode(Node):
                 if diff > self._side_disagree_abs and diff > self._side_disagree_rel * big:
                     ok_r = False   # 불일치 — 오독 이력 없는 앞바퀴를 믿는다
             for i, ok in ((f, ok_f), (r, ok_r)):
+                self._wheel_valid[i] = ok
                 if not ok:
                     self._enc_rejects[i] += 1
                     self.get_logger().warn(
@@ -762,7 +768,7 @@ class DiffDriveNode(Node):
 
     def _reset_velocity_state(self):
         self._wheel_target = [0.0] * 4
-        self._side_i = {'L': 0.0, 'R': 0.0}
+        self._wheel_i = [0.0] * 4
         self._side_reverse_since = {'L': None, 'R': None}
 
     def _update_wheel_speeds(self):
@@ -779,11 +785,17 @@ class DiffDriveNode(Node):
             if dt > 1e-3:
                 sp = [(counts[i] - pc[i]) * self._encoder_sign[i] * self._meters_per_count[i] / dt
                       for i in range(4)]
-                self._wheel_speed = sp   # 진단용 원시값
+                self._wheel_speed_raw = sp   # 진단용 원시값
                 side = self._side_values(sp)
                 for k in ('L', 'R'):
                     if side[k] is not None:
                         self._side_speed[k] = 0.5 * self._side_speed[k] + 0.5 * side[k]
+                # 바퀴별 측정: 믿을 수 있으면 자기 값, 오독 판정이면 같은 측 값으로 대신
+                for i in range(4):
+                    k = 'L' if i in self.LEFT else 'R'
+                    val = sp[i] if self._wheel_valid[i] else side[k]
+                    if val is not None:
+                        self._wheel_speed[i] = 0.5 * self._wheel_speed[i] + 0.5 * val
                 self._vel_prev = (list(counts), ts)
         return time.time() - ts < self._encoder_stale_sec
 
@@ -816,25 +828,10 @@ class DiffDriveNode(Node):
         # 스키드-스티어: 실효 트레드(wheel_separation, 물리 폭의 약 2배)로 바퀴 속도 배분
         half = self._wheel_separation / 2.0
         side = {'L': v - w_eff * half, 'R': v + w_eff * half}
-        # 측 단위 PI: 측 속도(타당성 검사를 거친 앞/뒤 엔코더)로 오차를 재고, 같은 측
-        # 두 바퀴에 같은 속도 보정을 준다(PWM 환산은 바퀴별 slope). 바닥에선 같은 측
-        # 바퀴가 지면으로 묶여 있어 측 단위가 자연스럽다.
-        corr_v = {}
+        # 폭주 감지: 측 속도(타당성 검사를 거친 값)가 목표와 반대로 빠르게 계속 → 부호 오류
         for k in ('L', 'R'):
-            tgt = side[k]
-            if abs(tgt) < 1e-4 or not enc_fresh:
-                self._side_i[k] = 0.0
-                corr_v[k] = 0.0
-                continue
-            meas = self._side_speed[k]
-            err = tgt - meas
-            self._side_i[k] += err * dt
-            if self._wheel_ki > 0:
-                lim = self._wheel_i_limit / self._wheel_ki
-                self._side_i[k] = max(-lim, min(lim, self._side_i[k]))
-            corr_v[k] = self._wheel_kp * err + self._wheel_ki * self._side_i[k]
-            # 폭주 감지: 측 속도가 목표와 반대로 빠르게 계속 → 부호 오류로 본다
-            if tgt * meas < 0 and abs(meas) > 0.15:
+            tgt, meas = side[k], self._side_speed[k]
+            if enc_fresh and abs(tgt) > 1e-4 and tgt * meas < 0 and abs(meas) > 0.15:
                 if self._side_reverse_since[k] is None:
                     self._side_reverse_since[k] = now
                 elif now - self._side_reverse_since[k] > 0.5:
@@ -845,15 +842,35 @@ class DiffDriveNode(Node):
                     return
             else:
                 self._side_reverse_since[k] = None
+        # PI 단위(velocity_pi_mode):
+        #  'wheel' — 바퀴마다 자기 엔코더로 PI(오독 판정 바퀴만 같은 측 값으로 대신).
+        #            뒷바퀴도 제 목표로 구동돼 끌려가며 브레이크가 되지 않는다
+        #  'side'  — 측 속도 하나로 PI, 같은 측 두 바퀴에 같은 보정. 2026-09-25 바닥
+        #            첫 시험에서 앞축 0.106 / 뒤축 0.054 m/s로 뒷바퀴가 끌려갔다
+        #            (앞뒤가 다르면 앞만 믿어서 뒤 출력이 피드포워드에만 맡겨짐)
         pwm = [0.0] * 4
         for i in range(4):
             k = 'L' if i in self.LEFT else 'R'
             s = side[k]
             self._wheel_target[i] = s
-            if abs(s) < 1e-4:
-                continue
+            if abs(s) < 1e-4 or not enc_fresh:
+                self._wheel_i[i] = 0.0
+                if abs(s) < 1e-4:
+                    continue
+            if self._velocity_pi_mode == 'side':
+                meas = self._side_speed[k]
+            else:
+                meas = self._wheel_speed[i]
+            corr = 0.0
+            if enc_fresh:
+                err = s - meas
+                self._wheel_i[i] += err * dt
+                if self._wheel_ki > 0:
+                    lim = self._wheel_i_limit / self._wheel_ki
+                    self._wheel_i[i] = max(-lim, min(lim, self._wheel_i[i]))
+                corr = self._wheel_kp * err + self._wheel_ki * self._wheel_i[i]
             slope = self._ff_slope['front' if i in (0, 1) else 'rear']
-            out = math.copysign(self._ff_pwm0[i] + abs(s) / slope, s) + corr_v[k] / slope
+            out = math.copysign(self._ff_pwm0[i] + abs(s) / slope, s) + corr / slope
             if out * s < 0:   # 보정이 방향을 뒤집지는 못하게(정지마찰 근처 떨림 방지)
                 out = 0.0
             pwm[i] = out
@@ -865,7 +882,7 @@ class DiffDriveNode(Node):
                 f'목표 {[round(x, 3) for x in self._wheel_target]} '
                 f'측정 {[round(x, 3) for x in self._wheel_speed]} '
                 f'측 {{L: {self._side_speed["L"]:+.3f}, R: {self._side_speed["R"]:+.3f}}} '
-                f'PWM {[int(x) for x in pwm]} I {self._side_i}',
+                f'PWM {[int(x) for x in pwm]} I {[round(x, 3) for x in self._wheel_i]}',
                 throttle_duration_sec=0.25)
         self._target_left_pwm = int(max((pwm[i] for i in self.LEFT), key=abs))
         self._target_right_pwm = int(max((pwm[i] for i in self.RIGHT), key=abs))
