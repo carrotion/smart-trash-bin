@@ -328,6 +328,11 @@ class DiffDriveNode(Node):
         # (M2가 가장 약함, 사용자 관찰과 일치). 그래서 |v|가 작으면 이 방향별 모델 +
         # 자이로 PI(yaw_kp/ki, rad/s 단위를 방향별 기울기로 PWM 환산)로 돌린다.
         self.declare_parameter('turn_in_place_max_v', 0.02)          # m/s — 이하이면 제자리 회전 모드
+        # 제자리 회전 명령 중에는 오도메트리 전진량을 0으로 둔다(legacy/velocity 공통).
+        # 2026-09-25 바닥: 회전 중 바퀴가 좌우 비대칭으로 미끄러져(M2 약함, M4 오독 배제로
+        # 오른쪽은 M2 하나) 오도메트리가 여러 바퀴에 0.5 m 전진했다고 기록 — 라이다 ICP
+        # 기준 실제 밀림은 한 바퀴당 1~3 cm. 0이 수십 cm의 가짜 전진보다 사실에 가깝다.
+        self.declare_parameter('odom_zero_translation_in_place', True)
         # 직선 적합은 우회전 고속에서 틀렸다(2000→0.45, 2200→0.97로 급변) → 측정표 보간.
         # 1차 재시험(직선 적합): 정속 정확도 96~109%, 흔들림 좌 0.04 / 우 고속 0.3~0.68.
         # 보정 이득도 그 지점의 실제 기울기로 PWM 환산한다(기울기 하한 turn_min_slope).
@@ -447,6 +452,7 @@ class DiffDriveNode(Node):
         self._velocity_debug = p('velocity_debug').value
         self._velocity_pi_mode = p('velocity_pi_mode').value
         self._turn_in_place_max_v = p('turn_in_place_max_v').value
+        self._odom_zero_in_place = p('odom_zero_translation_in_place').value
         self._turn_table_pwm = [float(x) for x in p('turn_table_pwm').value]
         self._turn_table_w = [[float(x) for x in p('turn_table_w_ccw').value],
                               [float(x) for x in p('turn_table_w_cw').value]]
@@ -760,6 +766,8 @@ class DiffDriveNode(Node):
                 self._turn_min_slope = prm.value
             elif prm.name == 'turn_in_place_max_v':
                 self._turn_in_place_max_v = prm.value
+            elif prm.name == 'odom_zero_translation_in_place':
+                self._odom_zero_in_place = prm.value
             elif prm.name == 'ff_front_slope':
                 self._ff_slope['front'] = prm.value
             elif prm.name == 'ff_rear_slope':
@@ -1285,6 +1293,11 @@ class DiffDriveNode(Node):
         self._prev_odom_time = now
 
         d_center = (d_left + d_right) / 2.0
+        # 제자리 회전 명령 중: 전진량 0 (파라미터 주석 참고). 명령이 살아 있을 때만.
+        if (self._odom_zero_in_place
+                and abs(self._cmd_v) <= self._turn_in_place_max_v and abs(self._cmd_w) > 1e-3
+                and time.time() - self._last_cmd_time < self._cmd_vel_timeout):
+            d_center = 0.0
 
         # 전진 거리는 휠 엔코더(미끄러짐 적음), 회전각은 IMU 자이로(미끄러짐 무관).
         # 스키드-스티어에서 휠 기반 회전각은 바닥/속도/마모에 따라 매번 달라져서 못 씀.
