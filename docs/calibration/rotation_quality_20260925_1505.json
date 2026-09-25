@@ -1,0 +1,102 @@
+[
+ {
+  "cmd": 0.3,
+  "gyro_deg_abs": 358.1,
+  "overshoot_deg": -1.9,
+  "slip_ratio_front": 1.7,
+  "jitter": 0.041,
+  "shift_cm": 5.7,
+  "icp_dtheta_deg": 3.9,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": -0.3,
+  "gyro_deg_abs": 359.5,
+  "overshoot_deg": -0.5,
+  "slip_ratio_front": 0.96,
+  "jitter": 0.039,
+  "shift_cm": 0.8,
+  "icp_dtheta_deg": -3.2,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": 0.5,
+  "gyro_deg_abs": 357.2,
+  "overshoot_deg": -2.8,
+  "slip_ratio_front": 1.62,
+  "jitter": 0.069,
+  "shift_cm": 2.7,
+  "icp_dtheta_deg": 5.0,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": -0.5,
+  "gyro_deg_abs": 358.6,
+  "overshoot_deg": -1.4,
+  "slip_ratio_front": 0.69,
+  "jitter": 0.04,
+  "shift_cm": 1.2,
+  "icp_dtheta_deg": -4.0,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": 0.7,
+  "gyro_deg_abs": 355.4,
+  "overshoot_deg": -4.6,
+  "slip_ratio_front": 1.55,
+  "jitter": 0.072,
+  "shift_cm": 2.5,
+  "icp_dtheta_deg": 6.0,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": -0.7,
+  "gyro_deg_abs": 355.7,
+  "overshoot_deg": -4.3,
+  "slip_ratio_front": 0.71,
+  "jitter": 0.079,
+  "shift_cm": 0.9,
+  "icp_dtheta_deg": -2.5,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": 0.9,
+  "gyro_deg_abs": 360.2,
+  "overshoot_deg": 0.2,
+  "slip_ratio_front": 1.49,
+  "jitter": 0.082,
+  "shift_cm": 2.6,
+  "icp_dtheta_deg": 11.3,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": -0.9,
+  "gyro_deg_abs": 356.2,
+  "overshoot_deg": -3.8,
+  "slip_ratio_front": 0.71,
+  "jitter": 0.172,
+  "shift_cm": 2.9,
+  "icp_dtheta_deg": -10.5,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": 1.2,
+  "gyro_deg_abs": 353.7,
+  "overshoot_deg": -6.3,
+  "slip_ratio_front": 1.45,
+  "jitter": 0.106,
+  "shift_cm": 1.1,
+  "icp_dtheta_deg": 4.0,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ },
+ {
+  "cmd": -1.2,
+  "gyro_deg_abs": 353.9,
+  "overshoot_deg": -6.1,
+  "slip_ratio_front": 0.71,
+  "jitter": 0.166,
+  "shift_cm": 1.6,
+  "icp_dtheta_deg": -6.7,
+  "note": "2026-09-25 15:05 1바퀴 시험, 저장 경로 버그로 출력에서 옮김"
+ }
+]
