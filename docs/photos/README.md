@@ -29,3 +29,14 @@
 
 사진에서 읽은 내용은 `docs/hardware_inventory.md`의 해당 항목에 글로 옮겨 적는다.
 사진만 두면 다음에 또 눈으로 다시 봐야 한다.
+
+## 참고 사진 (`ref_` 접두사, 2026-09-25 사용자 제공 — 촬영일 미상)
+
+| 파일 | 내용 · 사진에서 읽은 것 |
+|---|---|
+| `ref_driver_yb-esf01_v2_top.png` | 모터 드라이버 **YB-ESF01-V2.0** 윗면. 채널마다 **AT8236**(단일 채널 H-브리지) + 감지저항 **R060** 한 세트씩(4세트). 채널별 6핀 `HxB HxA 3V3 GND Mx- Mx+` + 2핀 `Mx+ Mx-`(모터 전용). **2핀 포트 4개 모두 비어 있음** → 모터 전원이 엔코더 신호와 같은 6핀 케이블로 들어감 |
+| `ref_driver_vendor_at8236.png`, `ref_driver_vendor_driving_principle.png` | 제조사 이미지: STM32 코프로세서, "AT8236 motor drive chip", "Drive chip ×4" |
+| `ref_imu_icm20948_board.png` | ICM-20948 브레이크아웃(STEMMA QT/Qwiic 포트 2개, 축 표시 X→ Y↓) |
+| `ref_buck_xy3606.png` | Pi 전원용 벅 컨버터 XY-3606(1000µF 16V 입출력 콘덴서) |
+| `ref_ina219_vendor.png` | INA219 모듈(션트 R100 = 0.1Ω) |
+| `ref_pi_gpio_diagram_OUTDATED.png` | ⚠️ **낡은 자료** — 라이다를 GPIO UART로 그렸으나 2026-08-19에 USB로 이전. 핀 표기에도 오류(9번은 GND 등). 핀 참고용으로 쓰지 말 것 |
