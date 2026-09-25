@@ -146,8 +146,10 @@ def main():
                    'jitter': st.pstdev(mid) if len(mid) > 2 else None, 'mean_rate': st.mean(mid) if mid else None,
                    'shift_m': math.hypot(dx, dy), 'icp_dtheta_deg': dth, 'icp_resid': resid,
                    'odom_shift_m': odom_shift, 'bias': bias}
-            # ICP의 dθ는 "회전 뒤 스캔을 회전 전으로 맞추는 각" — 실제 회전 = 자이로 회전 + dθ(부호는 회전 방향 기준)
-            actual = abs(math.degrees(yaw)) + math.copysign(1, cmd) * dth
+            # ICP(회전 뒤 → 회전 전)의 dθ = 출발 방향 기준 최종 방향. 실제 총 회전 =
+            # 정확한 바퀴 수×360° + 부호 맞춘 dθ. ⚠️ 2026-09-25 처음엔 "자이로 값 + dθ"로
+            # 잘못 계산해 눈금을 작게 보고했다(1.0071/1.0039 → 바른 값 1.0089/1.0047)
+            actual = 360.0 * args.turns + math.copysign(1, cmd) * dth
             row['actual_deg_lidar'] = actual
             row['gyro_scale_needed'] = actual / abs(math.degrees(yaw))
             results.append(row)

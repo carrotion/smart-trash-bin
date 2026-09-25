@@ -83,9 +83,10 @@ class ImuPublisherNode(Node):
         self.declare_parameter('gyro_bias_max_abs', 0.05)
         self.declare_parameter('gyro_bias_max_std', 0.08)
         # ② 자이로 눈금: 자이로가 실제 회전보다 덜 읽는다 — 08-29 육안 10바퀴(1.0 rad/s)
-        #    99.29% → 1.0071, 09-25 라이다 ICP 5바퀴(0.5 rad/s, 영점 10초) 좌 1.0071 / 우
-        #    1.0039. 평균 1.006. 90°마다 약 0.5°, 매핑 한 세션(총 회전 약 2800°)이면 약 17°.
-        self.declare_parameter('gyro_z_scale', 1.006)
+        #    99.29% → 1.0071, 09-25 라이다 ICP 5바퀴(0.5 rad/s, 영점 10초) 좌 1.0089 / 우
+        #    1.0047(처음 1.0071/1.0039로 잘못 계산 → 정정). 평균 1.0069. 90°마다 약 0.6°,
+        #    매핑 한 세션(총 회전 약 2800°)이면 약 19°.
+        self.declare_parameter('gyro_z_scale', 1.007)
         # ③ 정지 중 영점 추적(zero-rate update): 영점이 기동마다 -0.002~-0.013으로 떠다닌다
         #    (#14 바이어스 랜덤워크). 명령이 0이고 바퀴 엔코더도 멈춘 채 still_sec가 지나면
         #    영점을 천천히 다시 맞춘다. 영점과 zru_max_dev 넘게 다른 샘플(들고 돌리는 중
