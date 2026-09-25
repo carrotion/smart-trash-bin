@@ -21,6 +21,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import Int32MultiArray
+from nav_msgs.msg import Odometry
 
 from wheel_config import wheel_distances
 
@@ -67,12 +68,15 @@ def main():
     # 여러 바퀴: 자이로 눈금 오차가 바퀴 수만큼 커져 라이다로 정밀하게 보인다
     # (2026-09-25: 1바퀴 시험에서 자이로 360° 뒤 라이다 각 차 평균 약 5.8°, 좌/우 부호 대칭)
     ap.add_argument('--turns', type=int, default=1)
+    # 영점: 1초 평균은 불확실성 ±0.0035 rad/s라 5바퀴(약 63초)에 ±13° — 눈금 판정을 가렸다(09-25)
+    ap.add_argument('--bias-sec', type=float, default=10.0)
     args = ap.parse_args()
     speeds = [float(x) for x in args.speeds.split(',')]
 
     rclpy.init()
     n = rclpy.create_node('rotation_quality_test')
-    S = {'g': [], 'scan': None, 'enc': None}
+    S = {'g': [], 'scan': None, 'enc': None, 'odom': None}
+    n.create_subscription(Odometry, '/odom', lambda m: S.update(odom=(m.pose.pose.position.x, m.pose.pose.position.y)), 10)
     n.create_subscription(Imu, '/imu/data', lambda m: S['g'].append((time.time(), m.angular_velocity.z)), 100)
     n.create_subscription(LaserScan, '/scan', lambda m: S.update(scan=m), 5)
     n.create_subscription(Int32MultiArray, '/wheel_encoders', lambda m: S.update(enc=list(m.data)), 20)
@@ -101,14 +105,17 @@ def main():
         spin(0.3)
         return scan_points(S['scan'])
 
-    spin(1.0)
-    bias = st.mean(g for _, g in S['g'][-50:])
+    S['g'] = []
+    spin(args.bias_sec)
+    bias = st.mean(g for _, g in S['g'])
+    print(f'자이로 영점 {bias:+.5f} rad/s ({args.bias_sec:.0f}초 평균, 표준오차 {st.pstdev(g for _, g in S["g"]) / math.sqrt(len(S["g"])):.5f})')
     results = []
     for w in speeds:
         for sgn in (1, -1):
             cmd = sgn * w
             before = still_scan()
             e0 = list(S['enc'])
+            o0 = S['odom']
             S['g'] = []
             yaw = 0.0; last = time.time(); ts = last; rates = []
             while True:
@@ -132,10 +139,13 @@ def main():
             wheel_yaw = (d[1] - d[0]) / TRACK            # 앞바퀴만
             mid = [r for tt, r in rates if 0.3 * rates[-1][0] < tt < 0.8 * rates[-1][0]]
             dx, dy, dth, resid = icp(after, before)
+            o1 = S['odom']
+            odom_shift = math.hypot(o1[0] - o0[0], o1[1] - o0[1]) if o0 and o1 else None
             row = {'cmd': cmd, 'gyro_deg': math.degrees(yaw), 'overshoot_deg': math.degrees(abs(yaw)) - 360 * args.turns, 'turns': args.turns,
                    'slip_ratio': yaw / wheel_yaw if abs(wheel_yaw) > 0.1 else None,
                    'jitter': st.pstdev(mid) if len(mid) > 2 else None, 'mean_rate': st.mean(mid) if mid else None,
-                   'shift_m': math.hypot(dx, dy), 'icp_dtheta_deg': dth, 'icp_resid': resid}
+                   'shift_m': math.hypot(dx, dy), 'icp_dtheta_deg': dth, 'icp_resid': resid,
+                   'odom_shift_m': odom_shift, 'bias': bias}
             # ICP의 dθ는 "회전 뒤 스캔을 회전 전으로 맞추는 각" — 실제 회전 = 자이로 회전 + dθ(부호는 회전 방향 기준)
             actual = abs(math.degrees(yaw)) + math.copysign(1, cmd) * dth
             row['actual_deg_lidar'] = actual
@@ -144,7 +154,7 @@ def main():
             print(f'   → 라이다 기준 실제 {actual:.1f}° / 자이로 {abs(math.degrees(yaw)):.1f}° = 필요 눈금 {row["gyro_scale_needed"]:.4f}', flush=True)
             print(f'{cmd:+.1f} rad/s: 회전 {row["gyro_deg"]:+.0f}° (넘침 {row["overshoot_deg"]:+.1f}°) | '
                   f'자이로/바퀴 {row["slip_ratio"]:.2f} | 흔들림 {row["jitter"]:.3f} (평균 {row["mean_rate"]:+.2f}) | '
-                  f'위치 밀림 {row["shift_m"]*100:.1f} cm, 각 {dth:+.1f}° (ICP 잔차 {resid*100:.1f} cm)', flush=True)
+                  f'위치 밀림 {row["shift_m"]*100:.1f} cm(오도메트리 {odom_shift*100:.1f} cm), 각 {dth:+.1f}° (ICP 잔차 {resid*100:.1f} cm)', flush=True)
             spin(0.5)
     stop()
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
