@@ -340,7 +340,10 @@ class DiffDriveNode(Node):
         # 회전 명령은 가속 방향으로만 각가속도 제한 — 바닥 실측에서 출발 1초 과회전
         # 30~50%(정지마찰이 아니라 출발 순간 최대 오차에 비례 보정이 크게 걸린 것:
         # 회전 시작·정지 PWM이 둘 다 약 1600으로 히스테리시스 없음). 감속·정지는 즉시.
-        self.declare_parameter('angular_accel_limit', 1.5)      # rad/s^2, 0이면 끔
+        # 1.5 → 0.75 (2026-09-25 회전 출발 매트릭스 90°×48회: 출발 과회전 평균 계단 1.95 /
+        # 0.75 → 1.54 / 1.5 → 1.80 / 3.0 → 1.95배. 사용자가 우려한 역효과(바퀴별 문턱 차로
+        # 로봇이 틀어짐)는 위치 밀림이 램프와 무관해 나타나지 않음 — turn_start_matrix_20260925_2007.json)
+        self.declare_parameter('angular_accel_limit', 0.75)     # rad/s^2, 0이면 끔
         self.declare_parameter('motion_dwell_min', 0.15)        # s
         self.declare_parameter('motion_dwell_max', 0.6)         # s
         self.declare_parameter('dwell_settle_gyro', 0.05)       # rad/s
