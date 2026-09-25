@@ -318,6 +318,23 @@ class DiffDriveNode(Node):
         self.declare_parameter('yaw_ki', 1.0)
         self.declare_parameter('yaw_i_limit', 1.0)       # rad/s 환산 상한
         self.declare_parameter('velocity_debug', False)
+        # --- velocity 모드의 제자리 회전 (2026-09-25 바닥 실측) ---
+        # 바퀴별 속도 PI로 제자리 회전을 하면 바퀴 목표가 0.05~0.1 m/s로 너무 낮아
+        # 스크럽 정지마찰에 걸려 한쪽씩 붙었다 튀었다(흔들림 ±0.2~0.5 rad/s, 제자리인데
+        # 0.3 m 밀림). 반면 네 바퀴에 같은 출력을 고정하면 회전이 매끄러웠다(±0.03~0.05):
+        #   좌회전  1620→0.07 1680→0.16 1740→0.28 1800→0.41 1900→0.60 2000→0.89 rad/s
+        #   우회전  1620→0.05 1680→0.14 1740→0.21 1800→0.28 1900→0.38 2000→0.45 rad/s
+        # 직선 적합: 좌 w=0.00224(pwm−1615), 우 w=0.00098(pwm−1525) — **좌우 비대칭이 크다**
+        # (M2가 가장 약함, 사용자 관찰과 일치). 그래서 |v|가 작으면 이 방향별 모델 +
+        # 자이로 PI(yaw_kp/ki, rad/s 단위를 방향별 기울기로 PWM 환산)로 돌린다.
+        self.declare_parameter('turn_in_place_max_v', 0.02)          # m/s — 이하이면 제자리 회전 모드
+        # 직선 적합은 우회전 고속에서 틀렸다(2000→0.45, 2200→0.97로 급변) → 측정표 보간.
+        # 1차 재시험(직선 적합): 정속 정확도 96~109%, 흔들림 좌 0.04 / 우 고속 0.3~0.68.
+        # 보정 이득도 그 지점의 실제 기울기로 PWM 환산한다(기울기 하한 turn_min_slope).
+        self.declare_parameter('turn_table_pwm', [1560.0, 1620.0, 1680.0, 1740.0, 1800.0, 1900.0, 2000.0, 2200.0])
+        self.declare_parameter('turn_table_w_ccw', [0.0, 0.07, 0.16, 0.28, 0.41, 0.60, 0.89, 1.53])
+        self.declare_parameter('turn_table_w_cw', [0.0, 0.05, 0.14, 0.21, 0.28, 0.38, 0.45, 0.97])
+        self.declare_parameter('turn_min_slope', 0.0015)             # rad/s per PWM
         self.declare_parameter('velocity_pi_mode', 'wheel')   # 'wheel' | 'side' — 아래 _velocity_control 참고  # 목표/측정/PWM 로그(0.25초 간격)
 
         # (구) turn_boost — 회전 PWM 모델로 대체되어 더 이상 쓰이지 않는다.
@@ -429,6 +446,11 @@ class DiffDriveNode(Node):
         self._yaw_i_limit = p('yaw_i_limit').value
         self._velocity_debug = p('velocity_debug').value
         self._velocity_pi_mode = p('velocity_pi_mode').value
+        self._turn_in_place_max_v = p('turn_in_place_max_v').value
+        self._turn_table_pwm = [float(x) for x in p('turn_table_pwm').value]
+        self._turn_table_w = [[float(x) for x in p('turn_table_w_ccw').value],
+                              [float(x) for x in p('turn_table_w_cw').value]]
+        self._turn_min_slope = p('turn_min_slope').value
         self._wheel_i = [0.0] * 4
         self._wheel_speed_raw = [0.0] * 4
         self._wheel_speed = [0.0] * 4      # 엔코더로 잰 바퀴별 속도(m/s, 전진 +)
@@ -730,6 +752,14 @@ class DiffDriveNode(Node):
                 self._ff_pwm0_kinetic = [float(x) for x in prm.value]
             elif prm.name == 'ff_moving_threshold':
                 self._ff_moving_threshold = prm.value
+            elif prm.name == 'turn_table_w_ccw':
+                self._turn_table_w[0] = [float(x) for x in prm.value]
+            elif prm.name == 'turn_table_w_cw':
+                self._turn_table_w[1] = [float(x) for x in prm.value]
+            elif prm.name == 'turn_min_slope':
+                self._turn_min_slope = prm.value
+            elif prm.name == 'turn_in_place_max_v':
+                self._turn_in_place_max_v = prm.value
             elif prm.name == 'ff_front_slope':
                 self._ff_slope['front'] = prm.value
             elif prm.name == 'ff_rear_slope':
@@ -779,6 +809,52 @@ class DiffDriveNode(Node):
                 out[side] = None   # 둘 다 못 믿음 — 호출자가 처리
         return out
 
+    def _turn_table_lookup(self, d, w_abs):
+        """측정표에서 |w| → (PWM, 그 구간 기울기 rad/s per PWM). 표 밖은 끝 구간으로 외삽."""
+        P, W = self._turn_table_pwm, self._turn_table_w[d]
+        for k in range(1, len(P)):
+            if w_abs <= W[k] or k == len(P) - 1:
+                dw = W[k] - W[k - 1]
+                slope = dw / (P[k] - P[k - 1]) if dw > 1e-6 else 1e-6
+                return P[k - 1] + (w_abs - W[k - 1]) / slope, slope
+        return P[-1], 1e-6
+
+    def _turn_in_place(self, w, dt, gyro_fresh):
+        """제자리 회전: 방향별 회전 모델(피드포워드) + 자이로 PI, 네 바퀴 같은 크기.
+
+        바퀴 속도 PI는 쓰지 않는다(저속 스크럽 정지마찰로 붙었다 튐 — 파라미터 주석 참고).
+        """
+        self._wheel_i = [0.0] * 4
+        d = 0 if w > 0 else 1                     # 0=좌회전(CCW), 1=우회전(CW)
+        base, slope = self._turn_table_lookup(d, abs(w))
+        slope = max(slope, self._turn_min_slope)
+        corr = 0.0
+        if self._turn_closed_loop and gyro_fresh:
+            err = w - self._gyro_z
+            self._turn_i += err * dt
+            if self._yaw_ki > 0:
+                lim = self._yaw_i_limit / self._yaw_ki
+                self._turn_i = max(-lim, min(lim, self._turn_i))
+            # 오차를 회전 방향 기준 크기로 바꿔 PWM에 더한다(더 돌아야 하면 +)
+            corr = math.copysign(1.0, w) * (self._yaw_kp * err + self._yaw_ki * self._turn_i) / slope
+        else:
+            self._turn_i = 0.0
+        mag = max(0.0, base + corr)               # 보정이 방향을 뒤집지는 못하게
+        sgn = math.copysign(1.0, w)
+        pwm = [0.0] * 4
+        for i in self.LEFT:
+            pwm[i] = -sgn * mag
+        for i in self.RIGHT:
+            pwm[i] = sgn * mag
+        self._update_wheel_speeds()               # 오도메트리/진단용 상태 유지
+        if self._velocity_debug:
+            self.get_logger().warn(
+                f'turn_debug w={w:+.2f} gyro={self._gyro_z:+.3f} base={base:.0f} corr={corr:+.0f} '
+                f'PWM {[int(x) for x in pwm]}', throttle_duration_sec=0.25)
+        self._target_left_pwm = int(pwm[self.LEFT[0]])
+        self._target_right_pwm = int(pwm[self.RIGHT[0]])
+        self._send_pwm4(pwm)
+
     def _reset_velocity_state(self):
         self._wheel_target = [0.0] * 4
         self._wheel_i = [0.0] * 4
@@ -818,6 +894,10 @@ class DiffDriveNode(Node):
             return
         enc_fresh = self._update_wheel_speeds()
         v = max(-self._max_linear_speed, min(self._max_linear_speed, v))
+
+        if abs(v) <= self._turn_in_place_max_v and abs(w) > 1e-3:
+            self._turn_in_place(w, dt, gyro_fresh)
+            return
 
         # 회전: 자이로 PI가 각속도(rad/s)를 보정한다. 직진(w=0) 중에도 켜서 휨을 잡는다.
         moving = abs(v) > 1e-6 or abs(w) > 1e-6
