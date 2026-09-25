@@ -97,6 +97,10 @@ def main():
                 for sgn in (1, -1):
                     cmd = sgn * w
                     before = scan_points(S['scan'])
+                    # 매 회전 전 여유 확인 — 09-25 48회 동안 조금씩 밀려 벽에 닿을 뻔했다
+                    near = min((math.hypot(x, y) for x, y in before), default=9)
+                    if near < 0.35:
+                        print(f'❌ 주변 최근접 {near:.2f} m — 밀려서 여유 부족, 중단'); return 1
                     S['g'] = []
                     ts = time.time(); last = ts; yaw = 0.0
                     timeout = math.pi / 2 / w + 6.0

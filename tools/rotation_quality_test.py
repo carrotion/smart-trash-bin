@@ -27,7 +27,8 @@ from wheel_config import wheel_distances
 
 TRACK = 0.3291        # diff_drive_node wheel_separation(실효)
 LIDAR_X = 0.054
-HALF = 0.13           # 차체 + 부착물 제외 범위
+HALF = 0.13           # 차체 + 부착물 제외 범위(앞·좌우)
+REAR = 0.20           # 뒤쪽은 튀어나온 부착물까지(케이블이라 -0.12~-0.17 m로 움직인다)
 
 
 def scan_points(m):
@@ -37,7 +38,9 @@ def scan_points(m):
             continue
         a = m.angle_min + i * m.angle_increment
         x, y = LIDAR_X + r * math.cos(a), r * math.sin(a)
-        if abs(x) <= HALF and abs(y) <= HALF:
+        # 차체 + 뒤로 튀어나온 부착물(차체 뒤끝에서 1~3.5 cm, 09-24 확인) 제외.
+        # 09-25 회전 균형 시험이 이것을 0.13 m 장애물로 보고 멈췄다
+        if -REAR <= x <= HALF and abs(y) <= HALF:
             continue
         pts.append((x, y))
     return np.array(pts)

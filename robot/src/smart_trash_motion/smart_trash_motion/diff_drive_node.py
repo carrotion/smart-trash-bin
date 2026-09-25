@@ -355,6 +355,15 @@ class DiffDriveNode(Node):
         self.declare_parameter('turn_table_w_ccw', [0.0, 0.07, 0.16, 0.28, 0.41, 0.60, 0.89, 1.53])
         self.declare_parameter('turn_table_w_cw', [0.0, 0.05, 0.14, 0.21, 0.28, 0.38, 0.45, 0.97])
         self.declare_parameter('turn_min_slope', 0.0015)             # rad/s per PWM
+        # 제자리 회전 좌우 출력 균형 [좌회전, 우회전]: 오른쪽 ×√b, 왼쪽 ÷√b(총 출력 유지).
+        # 2026-09-25 매트릭스: 우회전만 90°마다 10~14 cm 밀림(회전 중심 약 8 cm 치우침,
+        # 우회전 때 역방향인 오른쪽 M2가 가장 약함) — tools/turn_balance_test.py로 측정:
+        #   우회전 b 1.0 → 11.6 cm / **1.1 → 2.4 cm** / 1.2 → 11.3 cm(반대 방향) / 1.4 → 15.7 cm.
+        #   밀림 벡터로 역산한 회전 중심: b 1.0은 오른쪽 바퀴 줄(오른쪽 8.2 cm), b 1.2는 왼쪽
+        #   바퀴 줄 — 한쪽이 바닥에 붙고 다른 쪽이 끌고 도는 두 상태 사이의 경계가 1.1.
+        #   0.1 차이로 약 10 cm가 달라지므로 고정값은 출발점일 뿐, 회전 중 추적 보정이 필요하다
+        #   (turn_balance_20260925_2021.json)
+        self.declare_parameter('turn_balance', [1.0, 1.1])
         self.declare_parameter('velocity_pi_mode', 'wheel')   # 'wheel' | 'side' — 아래 _velocity_control 참고  # 목표/측정/PWM 로그(0.25초 간격)
 
         # (구) turn_boost — 회전 PWM 모델로 대체되어 더 이상 쓰이지 않는다.
@@ -481,6 +490,7 @@ class DiffDriveNode(Node):
         self._turn_table_w = [[float(x) for x in p('turn_table_w_ccw').value],
                               [float(x) for x in p('turn_table_w_cw').value]]
         self._turn_min_slope = p('turn_min_slope').value
+        self._turn_balance = [float(x) for x in p('turn_balance').value]
         self._wheel_i = [0.0] * 4
         self._wheel_speed_raw = [0.0] * 4
         self._wheel_speed = [0.0] * 4      # 엔코더로 잰 바퀴별 속도(m/s, 전진 +)
@@ -793,6 +803,8 @@ class DiffDriveNode(Node):
                 self._turn_table_w[1] = [float(x) for x in prm.value]
             elif prm.name == 'turn_min_slope':
                 self._turn_min_slope = prm.value
+            elif prm.name == 'turn_balance':
+                self._turn_balance = [float(x) for x in prm.value]
             elif prm.name == 'turn_in_place_max_v':
                 self._turn_in_place_max_v = prm.value
             elif prm.name == 'odom_zero_translation_in_place':
@@ -878,11 +890,12 @@ class DiffDriveNode(Node):
             self._turn_i = 0.0
         mag = max(0.0, base + corr)               # 보정이 방향을 뒤집지는 못하게
         sgn = math.copysign(1.0, w)
+        bal = math.sqrt(max(0.1, self._turn_balance[d]))
         pwm = [0.0] * 4
         for i in self.LEFT:
-            pwm[i] = -sgn * mag
+            pwm[i] = -sgn * mag / bal
         for i in self.RIGHT:
-            pwm[i] = sgn * mag
+            pwm[i] = sgn * mag * bal
         self._update_wheel_speeds()               # 오도메트리/진단용 상태 유지
         if self._velocity_debug:
             self.get_logger().warn(
