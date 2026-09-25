@@ -285,8 +285,18 @@ class DiffDriveNode(Node):
         self.declare_parameter('ff_pwm0', [1100.0, 1180.0, 1350.0, 700.0])
         self.declare_parameter('ff_front_slope', 0.000608)
         self.declare_parameter('ff_rear_slope', 0.000334)
-        # 이보다 빠른 바퀴 속도는 물리적으로 불가능(앞 무부하 최고 1.13) → 엔코더 오독으로 버린다
-        self.declare_parameter('wheel_speed_sanity', 1.5)
+        # --- 엔코더 타당성 검사 (2026-09-25, 오도메트리와 velocity 모드 공용) ---
+        # 520 교체 후 드라이버 3·4번 채널(뒷바퀴)이 회전 패턴에서 불가능한 값을 읽는다
+        # (4번: 초당 약 22,000카운트 = −1.9 m/s, 520 무부하 최고 0.63 m/s). 커넥터
+        # 맞바꿈 시험에서 오독은 보드 4번 채널에 남았다. 370 4개 시절 녹화엔 0건.
+        # 하드웨어 대책 전까지 소프트웨어로 막는다:
+        #   ① 바퀴별 물리 상한을 넘으면 그 바퀴 값을 버린다
+        #   ② 같은 측 앞/뒤가 반대 방향이거나 크게 다르면 앞바퀴를 믿는다(앞 채널은
+        #      오독 이력 없음, 바닥에선 같은 측 바퀴가 지면으로 묶여 같은 속도여야 함)
+        self.declare_parameter('wheel_max_speed_front', 1.3)   # 370 무부하 최고 1.13
+        self.declare_parameter('wheel_max_speed_rear', 0.8)    # 520 무부하 최고 0.63
+        self.declare_parameter('side_disagree_abs', 0.15)      # m/s — 이만큼 넘게 다르고
+        self.declare_parameter('side_disagree_rel', 0.5)       # 큰 쪽의 50% 넘게 다르면 불일치
         # 바퀴 속도 PI — 게인은 "m/s 오차당 m/s 보정" 무차원이고 축별 slope로
         # 나눠 PWM으로 바꾼다(앞/뒤 플랜트 이득 차이를 자동 반영).
         self.declare_parameter('wheel_kp', 0.5)
@@ -392,8 +402,13 @@ class DiffDriveNode(Node):
             self._control_mode = 'legacy'
         self._ff_pwm0 = [float(x) for x in p('ff_pwm0').value]
         self._ff_slope = {'front': p('ff_front_slope').value, 'rear': p('ff_rear_slope').value}
-        self._wheel_speed_sanity = p('wheel_speed_sanity').value
-        self._enc_rejects = 0
+        self._wheel_max = [p('wheel_max_speed_front').value] * 2 + [p('wheel_max_speed_rear').value] * 2
+        self._side_disagree_abs = p('side_disagree_abs').value
+        self._side_disagree_rel = p('side_disagree_rel').value
+        self._enc_rejects = [0] * 4        # 바퀴별로 버린 횟수(진단용)
+        self._side_speed = {'L': 0.0, 'R': 0.0}
+        self._side_i = {'L': 0.0, 'R': 0.0}
+        self._side_reverse_since = {'L': None, 'R': None}
         self._wheel_kp = p('wheel_kp').value
         self._wheel_ki = p('wheel_ki').value
         self._wheel_i_limit = p('wheel_i_limit').value
@@ -404,11 +419,9 @@ class DiffDriveNode(Node):
         self._yaw_ki = p('yaw_ki').value
         self._yaw_i_limit = p('yaw_i_limit').value
         self._velocity_debug = p('velocity_debug').value
-        self._wheel_i = [0.0] * 4          # 바퀴별 적분항(m/s·s)
         self._wheel_speed = [0.0] * 4      # 엔코더로 잰 바퀴별 속도(m/s, 전진 +)
         self._wheel_target = [0.0] * 4
         self._vel_prev = None              # (counts, ts) — 속도 계산용 직전 샘플
-        self._reverse_since = [None] * 4   # 목표와 반대로 도는 상태가 시작된 시각
         self._fault = None                 # 폭주 감지 시 잠금(재시작 전까지 구동 거부)
 
         # 런타임 파라미터 변경 반영 (2026-08-17 추가).
@@ -715,10 +728,42 @@ class DiffDriveNode(Node):
         out = [int(max(-lim, min(lim, vals[i] * self._pwm_sign[i]))) for i in range(4)]
         self._send(f'$pwm:{out[0]},{out[1]},{out[2]},{out[3]}#'.encode())
 
+    def _side_values(self, v):
+        """바퀴별 값 v[4](거리 또는 속도, 전진 +) → 측별 값 {'L','R'}.
+
+        dt로 나눈 속도 기준으로 판정해야 하므로 호출자는 속도 스케일로 넘긴다
+        (오도메트리는 거리/dt를 넘기고 결과에 다시 dt를 곱한다).
+        """
+        out = {}
+        for side, (f, r) in (('L', self.LEFT), ('R', self.RIGHT)):
+            ok_f = abs(v[f]) <= self._wheel_max[f]
+            ok_r = abs(v[r]) <= self._wheel_max[r]
+            if ok_f and ok_r:
+                big = max(abs(v[f]), abs(v[r]))
+                diff = abs(v[f] - v[r])
+                if diff > self._side_disagree_abs and diff > self._side_disagree_rel * big:
+                    ok_r = False   # 불일치 — 오독 이력 없는 앞바퀴를 믿는다
+            for i, ok in ((f, ok_f), (r, ok_r)):
+                if not ok:
+                    self._enc_rejects[i] += 1
+                    self.get_logger().warn(
+                        f'M{i + 1} 엔코더 값 버림 {v[i]:+.2f} m/s (같은 측 '
+                        f'M{(r if i == f else f) + 1} {v[r if i == f else f]:+.2f}, '
+                        f'누적 {self._enc_rejects})', throttle_duration_sec=2.0)
+            if ok_f and ok_r:
+                out[side] = (v[f] + v[r]) / 2.0
+            elif ok_f:
+                out[side] = v[f]
+            elif ok_r:
+                out[side] = v[r]
+            else:
+                out[side] = None   # 둘 다 못 믿음 — 호출자가 처리
+        return out
+
     def _reset_velocity_state(self):
-        self._wheel_i = [0.0] * 4
         self._wheel_target = [0.0] * 4
-        self._reverse_since = [None] * 4
+        self._side_i = {'L': 0.0, 'R': 0.0}
+        self._side_reverse_since = {'L': None, 'R': None}
 
     def _update_wheel_speeds(self):
         """엔코더 새 샘플이 오면 바퀴별 속도를 갱신. 반환: 엔코더가 신선한지."""
@@ -734,19 +779,12 @@ class DiffDriveNode(Node):
             if dt > 1e-3:
                 sp = [(counts[i] - pc[i]) * self._encoder_sign[i] * self._meters_per_count[i] / dt
                       for i in range(4)]
-                if max(abs(x) for x in sp) > self._wheel_speed_sanity:
-                    # 물리적으로 불가능한 값 — 이 샘플은 버리고 직전 정상 샘플을 기준으로
-                    # 유지한다(한 번 튀었다 돌아오는 오독이면 다음 샘플이 정상으로 이어진다)
-                    self._enc_rejects += 1
-                    self.get_logger().warn(
-                        f'엔코더 속도 비정상 샘플 버림 {[round(x, 2) for x in sp]} m/s '
-                        f'(누적 {self._enc_rejects}회)', throttle_duration_sec=1.0)
-                    if self._enc_rejects % 20 == 0:
-                        self._vel_prev = (list(counts), ts)  # 진짜 점프였다면 기준 재설정
-                else:
-                    for i in range(4):
-                        self._wheel_speed[i] = 0.5 * self._wheel_speed[i] + 0.5 * sp[i]
-                    self._vel_prev = (list(counts), ts)
+                self._wheel_speed = sp   # 진단용 원시값
+                side = self._side_values(sp)
+                for k in ('L', 'R'):
+                    if side[k] is not None:
+                        self._side_speed[k] = 0.5 * self._side_speed[k] + 0.5 * side[k]
+                self._vel_prev = (list(counts), ts)
         return time.time() - ts < self._encoder_stale_sec
 
     def _velocity_control(self, v, w, dt, now, gyro_fresh):
@@ -778,41 +816,45 @@ class DiffDriveNode(Node):
         # 스키드-스티어: 실효 트레드(wheel_separation, 물리 폭의 약 2배)로 바퀴 속도 배분
         half = self._wheel_separation / 2.0
         side = {'L': v - w_eff * half, 'R': v + w_eff * half}
+        # 측 단위 PI: 측 속도(타당성 검사를 거친 앞/뒤 엔코더)로 오차를 재고, 같은 측
+        # 두 바퀴에 같은 속도 보정을 준다(PWM 환산은 바퀴별 slope). 바닥에선 같은 측
+        # 바퀴가 지면으로 묶여 있어 측 단위가 자연스럽다.
+        corr_v = {}
+        for k in ('L', 'R'):
+            tgt = side[k]
+            if abs(tgt) < 1e-4 or not enc_fresh:
+                self._side_i[k] = 0.0
+                corr_v[k] = 0.0
+                continue
+            meas = self._side_speed[k]
+            err = tgt - meas
+            self._side_i[k] += err * dt
+            if self._wheel_ki > 0:
+                lim = self._wheel_i_limit / self._wheel_ki
+                self._side_i[k] = max(-lim, min(lim, self._side_i[k]))
+            corr_v[k] = self._wheel_kp * err + self._wheel_ki * self._side_i[k]
+            # 폭주 감지: 측 속도가 목표와 반대로 빠르게 계속 → 부호 오류로 본다
+            if tgt * meas < 0 and abs(meas) > 0.15:
+                if self._side_reverse_since[k] is None:
+                    self._side_reverse_since[k] = now
+                elif now - self._side_reverse_since[k] > 0.5:
+                    self._fault = (f'{k}측 목표 {tgt:+.2f} m/s인데 {meas:+.2f} m/s로 0.5초 넘게 '
+                                   '반대로 돎 — 부호/배선 확인 전까지 구동 거부')
+                    self.get_logger().error(self._fault)
+                    self._send_pwm4([0, 0, 0, 0])
+                    return
+            else:
+                self._side_reverse_since[k] = None
         pwm = [0.0] * 4
         for i in range(4):
-            s = side['L'] if i in self.LEFT else side['R']
+            k = 'L' if i in self.LEFT else 'R'
+            s = side[k]
             self._wheel_target[i] = s
-            pwm0 = self._ff_pwm0[i]
-            slope = self._ff_slope['front' if i in (0, 1) else 'rear']
             if abs(s) < 1e-4:
-                self._wheel_i[i] = 0.0
                 continue
-            ff = math.copysign(pwm0 + abs(s) / slope, s)
-            corr = 0.0
-            if enc_fresh:
-                err = s - self._wheel_speed[i]
-                self._wheel_i[i] += err * dt
-                if self._wheel_ki > 0:
-                    lim = self._wheel_i_limit / self._wheel_ki
-                    self._wheel_i[i] = max(-lim, min(lim, self._wheel_i[i]))
-                corr = (self._wheel_kp * err + self._wheel_ki * self._wheel_i[i]) / slope
-                # 폭주 감지: 목표와 반대 방향으로 빠르게 계속 돌면 부호 오류로 본다
-                if s * self._wheel_speed[i] < 0 and abs(self._wheel_speed[i]) > 0.15:
-                    if self._reverse_since[i] is None:
-                        self._reverse_since[i] = now
-                    elif now - self._reverse_since[i] > 0.5:
-                        self._fault = (f'M{i + 1} 목표 {s:+.2f} m/s인데 {self._wheel_speed[i]:+.2f} m/s로 '
-                                       '0.5초 넘게 반대로 돎 — 부호/배선 확인 전까지 구동 거부')
-                        self.get_logger().error(self._fault)
-                        self._send_pwm4([0, 0, 0, 0])
-                        return
-                else:
-                    self._reverse_since[i] = None
-            else:
-                self._wheel_i[i] = 0.0   # 엔코더가 끊기면 피드포워드만
-            # 보정이 방향을 뒤집지는 못하게(정지마찰 근처 떨림 방지)
-            out = ff + corr
-            if out * s < 0:
+            slope = self._ff_slope['front' if i in (0, 1) else 'rear']
+            out = math.copysign(self._ff_pwm0[i] + abs(s) / slope, s) + corr_v[k] / slope
+            if out * s < 0:   # 보정이 방향을 뒤집지는 못하게(정지마찰 근처 떨림 방지)
                 out = 0.0
             pwm[i] = out
         # 안전 경로(타임아웃/critical)가 "구동 중"인지 판단하는 데 쓴다 — 한쪽 축만
@@ -822,7 +864,8 @@ class DiffDriveNode(Node):
                 f'vel_debug enc_fresh={enc_fresh} w_eff={w_eff:+.2f} '
                 f'목표 {[round(x, 3) for x in self._wheel_target]} '
                 f'측정 {[round(x, 3) for x in self._wheel_speed]} '
-                f'PWM {[int(x) for x in pwm]} I {[round(x, 3) for x in self._wheel_i]}',
+                f'측 {{L: {self._side_speed["L"]:+.3f}, R: {self._side_speed["R"]:+.3f}}} '
+                f'PWM {[int(x) for x in pwm]} I {self._side_i}',
                 throttle_duration_sec=0.25)
         self._target_left_pwm = int(max((pwm[i] for i in self.LEFT), key=abs))
         self._target_right_pwm = int(max((pwm[i] for i in self.RIGHT), key=abs))
@@ -1121,8 +1164,10 @@ class DiffDriveNode(Node):
         # 이제 채널별 리스트(뒷바퀴 520이 감속비가 달라 카운트당 거리도 다름).
         d = [(counts[i] - self._prev_counts[i]) * self._encoder_sign[i] * self._meters_per_count[i]
              for i in range(4)]
-        d_left = sum(d[i] for i in self.LEFT) / 2.0
-        d_right = sum(d[i] for i in self.RIGHT) / 2.0
+        # 2026-09-25: 뒷바퀴 채널 오독 방어 — 속도로 환산해 타당성 검사 후 측별 거리
+        side = self._side_values([x / dt for x in d])
+        d_left = side['L'] * dt if side['L'] is not None else 0.0
+        d_right = side['R'] * dt if side['R'] is not None else 0.0
         self._prev_counts = counts
         self._prev_odom_time = now
 
