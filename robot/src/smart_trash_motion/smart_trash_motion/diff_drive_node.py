@@ -333,6 +333,18 @@ class DiffDriveNode(Node):
         # 오른쪽은 M2 하나) 오도메트리가 여러 바퀴에 0.5 m 전진했다고 기록 — 라이다 ICP
         # 기준 실제 밀림은 한 바퀴당 1~3 cm. 0이 수십 cm의 가짜 전진보다 사실에 가깝다.
         self.declare_parameter('odom_zero_translation_in_place', True)
+        # --- velocity 모드 전환 정지 간격 + 각가속도 제한 (2026-09-25, 사용자 제안) ---
+        # 직진 중 급히 회전하거나 회전 중 바로 출발하면 관성·미끄러짐이 겹쳐 궤적이 튀고
+        # 오도메트리가 오염된다. 동작 종류(직진↔제자리 회전)가 바뀌면 바퀴·자이로가
+        # 멈춘 것을 확인하고(최소 dwell_min, 최대 dwell_max) 다음 동작을 시작한다.
+        # 회전 명령은 가속 방향으로만 각가속도 제한 — 바닥 실측에서 출발 1초 과회전
+        # 30~50%(정지마찰이 아니라 출발 순간 최대 오차에 비례 보정이 크게 걸린 것:
+        # 회전 시작·정지 PWM이 둘 다 약 1600으로 히스테리시스 없음). 감속·정지는 즉시.
+        self.declare_parameter('angular_accel_limit', 1.5)      # rad/s^2, 0이면 끔
+        self.declare_parameter('motion_dwell_min', 0.15)        # s
+        self.declare_parameter('motion_dwell_max', 0.6)         # s
+        self.declare_parameter('dwell_settle_gyro', 0.05)       # rad/s
+        self.declare_parameter('dwell_settle_speed', 0.03)      # m/s
         # 직선 적합은 우회전 고속에서 틀렸다(2000→0.45, 2200→0.97로 급변) → 측정표 보간.
         # 1차 재시험(직선 적합): 정속 정확도 96~109%, 흔들림 좌 0.04 / 우 고속 0.3~0.68.
         # 보정 이득도 그 지점의 실제 기울기로 PWM 환산한다(기울기 하한 turn_min_slope).
@@ -453,6 +465,15 @@ class DiffDriveNode(Node):
         self._velocity_pi_mode = p('velocity_pi_mode').value
         self._turn_in_place_max_v = p('turn_in_place_max_v').value
         self._odom_zero_in_place = p('odom_zero_translation_in_place').value
+        self._angular_accel_limit = p('angular_accel_limit').value
+        self._dwell_min = p('motion_dwell_min').value
+        self._dwell_max = p('motion_dwell_max').value
+        self._dwell_settle_gyro = p('dwell_settle_gyro').value
+        self._dwell_settle_speed = p('dwell_settle_speed').value
+        self._ramped_w = 0.0
+        self._last_active_mode = None     # 'rotate' | 'translate'
+        self._last_active_t = 0.0
+        self._dwell_start = None
         self._turn_table_pwm = [float(x) for x in p('turn_table_pwm').value]
         self._turn_table_w = [[float(x) for x in p('turn_table_w_ccw').value],
                               [float(x) for x in p('turn_table_w_cw').value]]
@@ -747,6 +768,11 @@ class DiffDriveNode(Node):
             'yaw_i_limit': '_yaw_i_limit',
             'velocity_debug': '_velocity_debug',
             'velocity_pi_mode': '_velocity_pi_mode',
+            'angular_accel_limit': '_angular_accel_limit',
+            'motion_dwell_min': '_dwell_min',
+            'motion_dwell_max': '_dwell_max',
+            'dwell_settle_gyro': '_dwell_settle_gyro',
+            'dwell_settle_speed': '_dwell_settle_speed',
         }
         for prm in params:
             attr = live.get(prm.name)
@@ -863,7 +889,40 @@ class DiffDriveNode(Node):
         self._target_right_pwm = int(pwm[self.RIGHT[0]])
         self._send_pwm4(pwm)
 
+    def _ramp_w(self, w, dt):
+        """각속도 명령에 가속 방향으로만 제한을 건다(감속·정지·역전은 즉시)."""
+        cur = self._ramped_w
+        accelerating = abs(w) > abs(cur) and (cur == 0.0 or (w > 0) == (cur > 0))
+        if accelerating and self._angular_accel_limit > 0:
+            step = self._angular_accel_limit * dt
+            cur += max(-step, min(step, w - cur))
+        else:
+            cur = w
+        self._ramped_w = cur
+        return cur
+
+    def _motion_dwell(self, mode, now, enc_fresh, gyro_fresh):
+        """직진↔제자리 회전 전환이면 멈춤을 확인할 때까지 True(=0 출력). 파라미터 주석 참고."""
+        if mode == 'stop':
+            if now - self._last_active_t > self._dwell_max:
+                self._last_active_mode = None      # 충분히 멈춰 있었으면 간격 불필요
+            self._dwell_start = None
+            return False
+        self._last_active_t = now
+        if self._last_active_mode is not None and mode != self._last_active_mode:
+            if self._dwell_start is None:
+                self._dwell_start = now
+            elapsed = now - self._dwell_start
+            settled = (gyro_fresh and abs(self._gyro_z) < self._dwell_settle_gyro and enc_fresh
+                       and max(abs(self._side_speed['L']), abs(self._side_speed['R'])) < self._dwell_settle_speed)
+            if elapsed < self._dwell_min or (elapsed < self._dwell_max and not settled):
+                return True
+            self._dwell_start = None
+        self._last_active_mode = mode
+        return False
+
     def _reset_velocity_state(self):
+        self._ramped_w = 0.0
         self._wheel_target = [0.0] * 4
         self._wheel_i = [0.0] * 4
         self._side_reverse_since = {'L': None, 'R': None}
@@ -902,8 +961,22 @@ class DiffDriveNode(Node):
             return
         enc_fresh = self._update_wheel_speeds()
         v = max(-self._max_linear_speed, min(self._max_linear_speed, v))
+        w = self._ramp_w(w, dt)
 
-        if abs(v) <= self._turn_in_place_max_v and abs(w) > 1e-3:
+        if abs(v) > self._turn_in_place_max_v:
+            mode = 'translate'
+        elif abs(w) > 1e-3:
+            mode = 'rotate'
+        else:
+            mode = 'stop'
+        if self._motion_dwell(mode, now, enc_fresh, gyro_fresh):
+            self._reset_velocity_state()      # 전환 대기 — 출력 0, 적분·램프 초기화
+            self._turn_i = 0.0
+            self._target_left_pwm = self._target_right_pwm = 0
+            self._send_pwm4([0, 0, 0, 0])
+            return
+
+        if mode == 'rotate':
             self._turn_in_place(w, dt, gyro_fresh)
             return
 
