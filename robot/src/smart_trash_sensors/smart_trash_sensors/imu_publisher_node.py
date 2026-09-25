@@ -9,6 +9,7 @@ from sensor_msgs.msg import Imu, MagneticField
 
 import qwiic_icm20948
 from geometry_msgs.msg import Twist
+from std_msgs.msg import Int32MultiArray
 
 # ICM-20948 default full-scale range after begin(): accel +/-2g, gyro +/-250dps.
 # AK09916 magnetometer: 0.15 uT/LSB (16-bit, +/-4912 uT).
@@ -71,9 +72,44 @@ class ImuPublisherNode(Node):
         self._gyro_bias_auto = self.get_parameter('gyro_bias_auto_calibrate').value
         self._gyro_bias_z = self.get_parameter('gyro_bias_z').value
         self._gyro_calib_samples_target = self.get_parameter('gyro_bias_calib_samples').value
-        self._gyro_calib_acc = 0.0
+        self._gyro_calib_window = []
         self._gyro_calib_count = 0
         self._gyro_bias_calibrated = not self._gyro_bias_auto
+        # --- 2026-09-25 추가 ---
+        # ① 부팅 영점의 정지 판정: diff_drive_node와 같은 결함(09-24 사고: 사람이 로봇을
+        #    만지던 중 영점이 -0.438로 잡힘)이 이 노드에도 있었다. 이 노드 값은 EKF가 직접
+        #    쓰므로 틀리면 지도가 통째로 돈다. 창 평균/표준편차로 정지 여부를 판정.
+        #    원시 영점 이력(08-29~09-25, 12회): -0.002 ~ -0.013 rad/s.
+        self.declare_parameter('gyro_bias_max_abs', 0.05)
+        self.declare_parameter('gyro_bias_max_std', 0.08)
+        # ② 자이로 눈금: 자이로가 실제 회전보다 덜 읽는다 — 08-29 육안 10바퀴(1.0 rad/s)
+        #    99.29% → 1.0071, 09-25 라이다 ICP 5바퀴(0.5 rad/s, 영점 10초) 좌 1.0071 / 우
+        #    1.0039. 평균 1.006. 90°마다 약 0.5°, 매핑 한 세션(총 회전 약 2800°)이면 약 17°.
+        self.declare_parameter('gyro_z_scale', 1.006)
+        # ③ 정지 중 영점 추적(zero-rate update): 영점이 기동마다 -0.002~-0.013으로 떠다닌다
+        #    (#14 바이어스 랜덤워크). 명령이 0이고 바퀴 엔코더도 멈춘 채 still_sec가 지나면
+        #    영점을 천천히 다시 맞춘다. 영점과 zru_max_dev 넘게 다른 샘플(들고 돌리는 중
+        #    등)은 반영하지 않는다.
+        self.declare_parameter('gyro_zru_enable', True)
+        self.declare_parameter('gyro_zru_still_sec', 1.0)
+        self.declare_parameter('gyro_zru_alpha', 0.004)     # 50Hz에서 시정수 약 5초
+        self.declare_parameter('gyro_zru_max_dev', 0.05)    # rad/s
+        self.declare_parameter('wheel_encoders_topic', '/wheel_encoders')
+        gp = self.get_parameter
+        self._gyro_bias_max_abs = gp('gyro_bias_max_abs').value
+        self._gyro_bias_max_std = gp('gyro_bias_max_std').value
+        self._gyro_z_scale = gp('gyro_z_scale').value
+        self._zru_enable = gp('gyro_zru_enable').value
+        self._zru_still_sec = gp('gyro_zru_still_sec').value
+        self._zru_alpha = gp('gyro_zru_alpha').value
+        self._zru_max_dev = gp('gyro_zru_max_dev').value
+        self._enc_last = None
+        self._enc_last_change_t = 0.0      # 시작 직후는 "막 움직인 것"으로 보수적으로
+        self._zru_last_log_t = 0.0
+        self._zru_bias_at_log = None
+        self.create_subscription(Int32MultiArray, gp('wheel_encoders_topic').value, self._on_encoders, 10)
+        self.get_logger().info(f'자이로 z 눈금 {self._gyro_z_scale:.4f}, 정지 중 영점 추적 '
+                               f'{"켬" if self._zru_enable else "끔"}')
         if self._gyro_bias_auto:
             self.get_logger().info(
                 f'자이로 Z 자동 재보정 시작 — 정지 상태로 {self._gyro_calib_samples_target}샘플 대기')
@@ -149,6 +185,51 @@ class ImuPublisherNode(Node):
         self._last_cmd_v = msg.linear.x
         self._last_cmd_w = msg.angular.z
 
+    def _on_encoders(self, msg):
+        data = list(msg.data)
+        if data != self._enc_last:
+            self._enc_last = data
+            self._enc_last_change_t = time.monotonic()
+
+    def _is_still(self, now):
+        """명령이 0이고 바퀴도 멈춘 채 zru_still_sec가 지났는가."""
+        cmd_zero = abs(self._last_cmd_v) < 1e-3 and abs(self._last_cmd_w) < 1e-3
+        return (cmd_zero and now - self._last_cmd_change_t > self._zru_still_sec
+                and now - self._enc_last_change_t > self._zru_still_sec)
+
+    def _gyro_z_out(self, gz_raw_radps, now):
+        """원시 자이로 z(rad/s) → 발행값. 부팅 영점(정지 판정) → 정지 중 영점 추적 → 눈금.
+        반환 None이면 아직 영점 미확정(호출자가 0 + 큰 공분산으로 발행)."""
+        if self._gyro_bias_auto and not self._gyro_bias_calibrated:
+            self._gyro_calib_window.append(gz_raw_radps)
+            if len(self._gyro_calib_window) >= self._gyro_calib_samples_target:
+                win = self._gyro_calib_window
+                self._gyro_calib_window = []
+                mean = sum(win) / len(win)
+                std = math.sqrt(sum((x - mean) ** 2 for x in win) / len(win))
+                if abs(mean) > self._gyro_bias_max_abs or std > self._gyro_bias_max_std:
+                    self.get_logger().warn(
+                        f'자이로 Z 영점 측정 거부 — 평균 {mean:+.4f} / 표준편차 {std:.4f} rad/s '
+                        '(움직이는 중으로 보고 다시 잰다)', throttle_duration_sec=5.0)
+                else:
+                    self._gyro_bias_z = mean
+                    self._gyro_bias_calibrated = True
+                    self._gyro_calib_count = len(win)
+                    self.get_logger().info(
+                        f'자이로 Z 자동 재보정 완료: {mean:+.5f} rad/s ({len(win)}샘플, 표준편차 {std:.4f})')
+            return None
+        if (self._zru_enable and self._is_still(now)
+                and abs(gz_raw_radps - self._gyro_bias_z) < self._zru_max_dev):
+            self._gyro_bias_z += self._zru_alpha * (gz_raw_radps - self._gyro_bias_z)
+            if now - self._zru_last_log_t > 60.0:
+                if self._zru_bias_at_log is not None:
+                    self.get_logger().info(
+                        f'정지 중 영점 추적: {self._gyro_bias_z:+.5f} rad/s '
+                        f'(1분 전 대비 {self._gyro_bias_z - self._zru_bias_at_log:+.5f})')
+                self._zru_bias_at_log = self._gyro_bias_z
+                self._zru_last_log_t = now
+        return (gz_raw_radps - self._gyro_bias_z) * self._gyro_z_scale
+
     def _on_timer(self):
         if not self._imu.dataReady():
             return
@@ -166,21 +247,9 @@ class ImuPublisherNode(Node):
         msg.angular_velocity.y = self._imu.gyRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
 
         gz_raw_radps = self._imu.gzRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
-        if self._gyro_bias_auto and not self._gyro_bias_calibrated:
-            # 시작 직후 정지 상태를 가정(diff_drive_node의 자이로 바이어스
-            # 보정과 동일한 전제) — 보정 끝나기 전엔 회전 0으로 보고, EKF가
-            # 이 구간을 덜 믿도록 covariance도 같이 부풀린다(아래).
-            self._gyro_calib_acc += gz_raw_radps
-            self._gyro_calib_count += 1
-            if self._gyro_calib_count >= self._gyro_calib_samples_target:
-                self._gyro_bias_z = self._gyro_calib_acc / self._gyro_calib_count
-                self._gyro_bias_calibrated = True
-                self.get_logger().info(
-                    f'자이로 Z 자동 재보정 완료: {self._gyro_bias_z:+.5f} rad/s '
-                    f'({self._gyro_calib_count}샘플)')
-            msg.angular_velocity.z = 0.0
-        else:
-            msg.angular_velocity.z = gz_raw_radps - self._gyro_bias_z
+        # 영점 확정 전엔 회전 0으로 보고, EKF가 이 구간을 덜 믿도록 공분산을 부풀린다(아래)
+        gz = self._gyro_z_out(gz_raw_radps, time.monotonic())
+        msg.angular_velocity.z = 0.0 if gz is None else gz
 
         # This node doesn't fuse orientation — robot_localization EKF (Week 4) does
         # that downstream. Mark orientation unknown per REP-145.
