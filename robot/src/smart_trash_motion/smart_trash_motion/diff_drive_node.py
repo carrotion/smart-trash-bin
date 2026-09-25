@@ -364,6 +364,16 @@ class DiffDriveNode(Node):
         #   0.1 차이로 약 10 cm가 달라지므로 고정값은 출발점일 뿐, 회전 중 추적 보정이 필요하다
         #   (turn_balance_20260925_2021.json)
         self.declare_parameter('turn_balance', [1.0, 1.1])
+        # 좌우 대칭 루프(2026-09-25): 제자리 회전 중 좌우 측 속도 크기가 같아지도록 균형을
+        # 실시간 조정한다. 대칭 오차 e = (|왼쪽| − |오른쪽|) / (|왼쪽| + |오른쪽|) — 오른쪽이
+        # 붙어 느리면 e > 0 → 오른쪽 출력을 올린다. 균형 = turn_balance × exp(kp·e + ki·∫e),
+        # ∫e는 방향별로 기억(다음 회전의 출발점, 노드 재시작 시 초기화), |log 균형 보정| ≤ limit.
+        self.declare_parameter('turn_symmetry_enable', True)
+        # 관성 모델 시뮬: kp 0.1/0.0/0.03 모두 3회전 안에 균형 안정, 학습 균형 1.07~1.11(실측 최적 1.1).
+        # 관성 없는 모델에선 kp가 두 상태를 매 주기 넘나들게 해 보수적으로 작게 둔다
+        self.declare_parameter('turn_sym_kp', 0.03)
+        self.declare_parameter('turn_sym_ki', 0.15)         # 1/s
+        self.declare_parameter('turn_sym_limit', 0.4)       # log 단위(약 0.67~1.5배)
         self.declare_parameter('velocity_pi_mode', 'wheel')   # 'wheel' | 'side' — 아래 _velocity_control 참고  # 목표/측정/PWM 로그(0.25초 간격)
 
         # (구) turn_boost — 회전 PWM 모델로 대체되어 더 이상 쓰이지 않는다.
@@ -491,6 +501,11 @@ class DiffDriveNode(Node):
                               [float(x) for x in p('turn_table_w_cw').value]]
         self._turn_min_slope = p('turn_min_slope').value
         self._turn_balance = [float(x) for x in p('turn_balance').value]
+        self._turn_sym_enable = p('turn_symmetry_enable').value
+        self._turn_sym_kp = p('turn_sym_kp').value
+        self._turn_sym_ki = p('turn_sym_ki').value
+        self._turn_sym_limit = p('turn_sym_limit').value
+        self._turn_sym_i = [0.0, 0.0]      # 방향별 대칭 적분(log 균형)
         self._wheel_i = [0.0] * 4
         self._wheel_speed_raw = [0.0] * 4
         self._wheel_speed = [0.0] * 4      # 엔코더로 잰 바퀴별 속도(m/s, 전진 +)
@@ -781,6 +796,10 @@ class DiffDriveNode(Node):
             'yaw_i_limit': '_yaw_i_limit',
             'velocity_debug': '_velocity_debug',
             'velocity_pi_mode': '_velocity_pi_mode',
+            'turn_symmetry_enable': '_turn_sym_enable',
+            'turn_sym_kp': '_turn_sym_kp',
+            'turn_sym_ki': '_turn_sym_ki',
+            'turn_sym_limit': '_turn_sym_limit',
             'angular_accel_limit': '_angular_accel_limit',
             'motion_dwell_min': '_dwell_min',
             'motion_dwell_max': '_dwell_max',
@@ -890,17 +909,28 @@ class DiffDriveNode(Node):
             self._turn_i = 0.0
         mag = max(0.0, base + corr)               # 보정이 방향을 뒤집지는 못하게
         sgn = math.copysign(1.0, w)
-        bal = math.sqrt(max(0.1, self._turn_balance[d]))
+        enc_fresh = self._update_wheel_speeds()
+        log_b = math.log(max(0.1, self._turn_balance[d]))
+        sym_e = 0.0
+        if self._turn_sym_enable and enc_fresh:
+            vl, vr = abs(self._side_speed['L']), abs(self._side_speed['R'])
+            if vl + vr > 0.02:                    # 둘 다 서 있으면(출발 전) 판단 보류
+                sym_e = (vl - vr) / (vl + vr)
+                lim = self._turn_sym_limit
+                self._turn_sym_i[d] = max(-lim, min(lim, self._turn_sym_i[d] + self._turn_sym_ki * sym_e * dt))
+            log_b += max(-self._turn_sym_limit, min(self._turn_sym_limit,
+                                                    self._turn_sym_kp * sym_e + self._turn_sym_i[d]))
+        bal = math.sqrt(math.exp(log_b))
         pwm = [0.0] * 4
         for i in self.LEFT:
             pwm[i] = -sgn * mag / bal
         for i in self.RIGHT:
             pwm[i] = sgn * mag * bal
-        self._update_wheel_speeds()               # 오도메트리/진단용 상태 유지
         if self._velocity_debug:
             self.get_logger().warn(
                 f'turn_debug w={w:+.2f} gyro={self._gyro_z:+.3f} base={base:.0f} corr={corr:+.0f} '
-                f'PWM {[int(x) for x in pwm]}', throttle_duration_sec=0.25)
+                f'측 L {self._side_speed["L"]:+.3f} R {self._side_speed["R"]:+.3f} 대칭오차 {sym_e:+.2f} '
+                f'균형 {math.exp(log_b):.3f} PWM {[int(x) for x in pwm]}', throttle_duration_sec=0.25)
         self._target_left_pwm = int(pwm[self.LEFT[0]])
         self._target_right_pwm = int(pwm[self.RIGHT[0]])
         self._send_pwm4(pwm)
