@@ -120,7 +120,20 @@ def generate_launch_description():
         name='scan_self_filter',
         output='screen',
         parameters=[os.path.join(bringup_share, 'config', 'scan_self_filter.yaml')],
-        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
+        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan_selffilt')],
+    )
+
+    # 점 개수 고정 (scan_selffilt -> scan). 2026-09-26: LD06은 한 바퀴에 454~456점을
+    # 내는데 slam_toolbox는 첫 스캔과 개수가 다른 스캔을 버려서, 실제 매핑에서 스캔의
+    # 약 38%가 버려지고 있었다. 455칸으로 재분할(칸마다 최소 거리)해 전부 쓰게 한다.
+    # 녹화 재생 A/B/C에서 버림 0건 확인. 근거는 docs/todo.md 1e.
+    scan_resample = Node(
+        package='smart_trash_sensors',
+        executable='scan_resample_node',
+        name='scan_resample',
+        output='screen',
+        parameters=[{'num_bins': 455}],
+        remappings=[('scan_in', 'scan_selffilt'), ('scan_out', 'scan')],
     )
 
     # 회전 보정은 laser_scan_dir(위)에서 이미 처리돼서 롤/피치는 0 그대로 둠.
@@ -168,6 +181,7 @@ def generate_launch_description():
     ld.add_action(declare_lidar_port_cmd)
     ld.add_action(ldlidar_node)
     ld.add_action(scan_self_filter)
+    ld.add_action(scan_resample)
     ld.add_action(base_link_to_laser_tf)
     ld.add_action(placeholder_odom_tf)
     ld.add_action(slam_toolbox_launch)
