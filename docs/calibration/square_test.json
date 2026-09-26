@@ -108,5 +108,19 @@
   "estimate_error_m": 0.03434147325774908,
   "estimate_error_deg": -3.4824677811999747,
   "icp_resid_m": 0.018122788521131843
+ },
+ {
+  "time": "2026-09-26 17:29:49",
+  "label": "출발 보정 좌우 동일(ff_pwm0 M4 1350, kinetic M4 800), settle 0, velocity, 09-26",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.134559112866504,
+  "real_return_deg": 7.245407450327461,
+  "ekf_return_m": 0.15073630776864058,
+  "ekf_return_deg": 11.123071136292545,
+  "estimate_error_m": 0.02055879681367993,
+  "estimate_error_deg": 3.877663685965084,
+  "icp_resid_m": 0.017262389843610927
  }
 ]
