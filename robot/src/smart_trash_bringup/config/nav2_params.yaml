@@ -53,20 +53,27 @@ controller_server:
       # 2026-08-22: 시나리오 A 실주행 중 또 "속도를 절반으로" 지적 — 0.08 -> 0.04,
       # max_vel_theta 0.4 -> 0.2. 실행 중인 세션엔 ros2 param set으로 즉시
       # 반영했고(재시작 없이), 이 값은 다음 실행부터 반영되는 영구 기록.
-      # ⚠️ 2026-09-26 구동 기본값이 velocity로 바뀜 — 이제 0.04는 실제 0.04 m/s(정지마찰 근처, 부드러운 최저 약 0.06).
-      #   legacy 시절엔 명령과 무관하게 약 0.4 m/s로 달렸다. 자율주행 전에 재조정할 것(docs/todo.md #1).
-      max_vel_x: 0.04
+      # ⚠️ 2026-09-26 재설정 — 구동 기본값이 velocity로 바뀌어 명령한 속도가 실제로 나온다.
+      #   위 08-21~22 "빠르다/절반으로" 지적 당시 실제 속도는 설정(0.15→0.08→0.04)과 무관하게 **약 0.4 m/s**
+      #   (legacy 드라이버 deadzone, docs/todo.md #1). 즉 사용자가 빠르다고 한 건 0.4 m/s였다.
+      #   - max 0.15: velocity 바닥 실측에서 속도 정확도 확인 구간(0.15 → 0.145), 예전 실제 속도의 약 1/3
+      #   - min_speed_xy 0.05: 0.06 아래는 정지마찰로 붙었다 튐(0.04 명령 → 0.062, +55%)
+      #   - theta 0.25~0.5: 0.2 rad/s 이하 제자리 회전은 붙었다 튐(09-26 회전 기록), 0.5는 정사각형 시험 속도
+      #   - acc_lim_theta 0.75: 구동 노드 angular_accel_limit와 일치(더 크게 줘도 노드가 자름)
+      #   ⚠️ 달리는 중 작은 회전 명령은 2~5할만 먹힌다(tools/curve_gain_test.py) — 경로 추종이 굼뜨면 이 때문
+      #   판정: 자율주행 재개 첫 주행에서 사용자 체감 + 경로 이탈량. 체감 속도 조절은 max_vel_x/max_speed_xy만
+      max_vel_x: 0.15
       max_vel_y: 0.0
-      max_vel_theta: 0.2
-      min_speed_xy: 0.0
-      max_speed_xy: 0.04
-      min_speed_theta: 0.0
+      max_vel_theta: 0.5
+      min_speed_xy: 0.05
+      max_speed_xy: 0.15
+      min_speed_theta: 0.25
       acc_lim_x: 0.3
       acc_lim_y: 0.0
-      acc_lim_theta: 1.0
+      acc_lim_theta: 0.75
       decel_lim_x: -0.3
       decel_lim_y: 0.0
-      decel_lim_theta: -1.0
+      decel_lim_theta: -0.75
       vx_samples: 15
       vy_samples: 1
       vtheta_samples: 20
@@ -136,9 +143,12 @@ behavior_server:
     # (참고: BackUp의 후진 속도 0.15m/s는 여기 없다 — bt_navigator가 읽는
     # BT XML의 backup_speed 속성값이라 별도로 고쳐야 함. 아래
     # default_nav_to_pose_bt_xml 항목 참고.)
-    max_rotational_vel: 0.3
-    min_rotational_vel: 0.2
-    rotational_acc_lim: 1.5
+    # ⚠️ 2026-09-26: legacy 시절엔 설정과 무관한 속도로 돌았다(회전 PI 발진). velocity에선 명령대로 돈다 —
+    #   0.2 rad/s 이하 제자리 회전은 정지마찰로 붙었다 튐 → min 0.25, max는 정사각형 시험 속도 0.5,
+    #   가속은 구동 노드 angular_accel_limit 0.75와 일치. 후진 0.075 m/s는 최저 부드러운 속도(0.06)보다 커서 유지
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.25
+    rotational_acc_lim: 0.75
 
 bt_navigator:
   ros__parameters:
