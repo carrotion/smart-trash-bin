@@ -20,6 +20,34 @@ def nearest(m):
             d=math.hypot(x,y)
             if best is None or d<best[0]: best=(d,x,y)
     return best
+def nearest_all(m, box=0.13):
+    # 전 방향에서 차체 상자(±box) 밖 가장 가까운 점 — 방향이 뒤집혀 들어와도 보이게(09-27)
+    best=None
+    for i,r in enumerate(m.ranges):
+        if not (m.range_min<=r<=m.range_max): continue
+        a=m.angle_min+i*m.angle_increment; x=LX+r*math.cos(a); y=r*math.sin(a)
+        if abs(x)<=box and abs(y)<=box: continue
+        d=math.hypot(x,y)
+        if best is None or d<best[0]: best=(d,math.degrees(math.atan2(y,x)))
+    return best
+def cm_near_all():
+    cm=S.get('cm')
+    if cm is None: return None
+    try: tf=tfb.lookup_transform(cm.header.frame_id,'base_link',rclpy.time.Time())
+    except Exception: return None
+    bx,by=tf.transform.translation.x,tf.transform.translation.y; q=tf.transform.rotation
+    yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
+    res=cm.metadata.resolution; ox,oy=cm.metadata.origin.position.x,cm.metadata.origin.position.y; w,h=cm.metadata.size_x,cm.metadata.size_y
+    best=None
+    for my in range(h):
+        for mx in range(w):
+            c=cm.data[my*w+mx]
+            if c!=254: continue
+            wx=ox+(mx+0.5)*res-bx; wy=oy+(my+0.5)*res-by
+            fx=wx*math.cos(yaw)+wy*math.sin(yaw); fy=-wx*math.sin(yaw)+wy*math.cos(yaw)
+            d=math.hypot(fx,fy)
+            if best is None or d<best[0]: best=(d,math.degrees(math.atan2(fy,fx)))
+    return best
 def cm_near():
     cm=S.get('cm')
     if cm is None: return None
@@ -46,4 +74,6 @@ while time.time()-t0<D:
     last=time.time()
     f=lambda b: '없음' if b is None else f'{b[0]*100:.0f}cm(y {b[2]*100:+.0f})'
     c=cm_near(); cs='없음' if c is None else (c if isinstance(c,str) else f'{c*100:.0f}cm')
-    print(f'[{time.time()-t0:5.1f}s] 원본 {f(nearest(S["raw"])) if "raw" in S else "-"} | 필터후 {f(nearest(S["scan"])) if "scan" in S else "-"} | 코스트맵 {cs}  (로봇 중심 기준, 앞면=11cm)',flush=True)
+    g=lambda b: '없음' if b is None else f'{b[0]*100:.0f}cm@{b[1]:+.0f}°'
+    print(f'[{time.time()-t0:5.1f}s] 정면: 원본 {f(nearest(S["raw"])) if "raw" in S else "-"} | 필터후 {f(nearest(S["scan"])) if "scan" in S else "-"} | 코스트맵 {cs}'
+          f'  ‖ 전방향 최근접: 원본 {g(nearest_all(S["raw"])) if "raw" in S else "-"} 필터후 {g(nearest_all(S["scan"])) if "scan" in S else "-"} 코스트맵 {g(cm_near_all())}  (중심 기준, 0°=정면, +=왼쪽)',flush=True)
