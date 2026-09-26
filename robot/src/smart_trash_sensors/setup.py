@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'imu_publisher_node = smart_trash_sensors.imu_publisher_node:main',
             'scan_filter_node = smart_trash_sensors.scan_filter_node:main',
+            'scan_resample_node = smart_trash_sensors.scan_resample_node:main',
         ],
     },
 )
