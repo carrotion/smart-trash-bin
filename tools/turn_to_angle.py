@@ -12,6 +12,11 @@
   2) |rem| < 예상 관성 각(|측정 w| × coast_s) 이면 정지 명령
   3) 자이로가 가라앉을 때까지 기다린 뒤 rem을 다시 읽고, |rem| > tol이면 w_min으로 짧게 추가 회전
      (넘쳤으면 반대로). 최대 max_fix번
+실측 튜닝(2026-09-26 저녁, 바닥 정사각형 회전 기록 docs/calibration/square_turn_trace_*.json):
+- coast_s 0.10 → 0.23: 0.2 rad/s에서 정지 명령 뒤 실제로 2~3° 더 돎(관성 시간 0.12~0.26초, 중앙 약 0.23)
+- tol 1° → 3°, max_fix 3 → 1: 작은 보정 회전은 정지마찰을 뚫는 순간 튀어서(순간 0.5 rad/s) 한 번에 4~6°씩
+  돈다 → 2.5°를 고치려다 반대로 5° 넘치는 왕복이 생겼다. 이 로봇이 만들 수 있는 최소 회전보다 작은 오차는
+  고치지 않는 게 낫다
 안전: 전체 시간 제한, 회전 명령 1.5초 뒤에도 자이로 적분이 5° 미만이면 중단(09-26 IMU 재시작 사고).
 """
 import math
@@ -32,14 +37,19 @@ class TurnToAngle:
     """get_yaw(): EKF 방향(rad), get_gyro(): 최신 자이로 z(rad/s), spin(t): t초 동안 콜백 처리."""
 
     def __init__(self, pub, spin, get_yaw, get_gyro, kp=1.5, w_min=0.2, w_max=0.5,
-                 coast_s=0.10, tol_deg=1.0, max_fix=3, settle_gyro=0.03, settle_s=0.3):
+                 coast_s=0.23, tol_deg=3.0, max_fix=1, settle_gyro=0.03, settle_s=0.3):
         self.pub, self.spin, self.get_yaw, self.get_gyro = pub, spin, get_yaw, get_gyro
         self.kp, self.w_min, self.w_max, self.coast_s = kp, w_min, w_max, coast_s
         self.tol, self.max_fix = math.radians(tol_deg), max_fix
         self.settle_gyro, self.settle_s = settle_gyro, settle_s
+        self.trace = []   # (시각, 단계, 명령 w, 자이로, EKF 방향) — 실물 진단용
+        self._w = 0.0
+        self._phase = ''
 
     def _cmd(self, w):
         c = Twist(); c.angular.z = float(w); self.pub.publish(c)
+        self._w = float(w)
+        self.trace.append((time.time(), self._phase, self._w, self.get_gyro(), self.get_yaw()))
 
     def stop(self, n=5):
         for _ in range(n):
@@ -49,6 +59,7 @@ class TurnToAngle:
         t0 = time.time(); calm = None
         while time.time() - t0 < limit:
             self.spin(0.02)
+            self.trace.append((time.time(), 'settle', 0.0, self.get_gyro(), self.get_yaw()))
             if abs(self.get_gyro()) < self.settle_gyro:
                 calm = calm or time.time()
                 if time.time() - calm >= self.settle_s:
@@ -81,6 +92,7 @@ class TurnToAngle:
         t0 = time.time()
         target = wrap(self.get_yaw() + delta_rad)
         limit = abs(delta_rad) / self.w_min + 3.0
+        self._phase = 'main'
         ok, msg = self._drive(target, self.w_max, limit)
         fixes = 0
         while ok:
@@ -89,6 +101,7 @@ class TurnToAngle:
             if abs(rem) <= self.tol or fixes >= self.max_fix:
                 break
             fixes += 1
+            self._phase = f'fix{fixes}'
             ok, msg = self._drive(target, self.w_min, abs(rem) / self.w_min + 3.0)
         rem = wrap(target - self.get_yaw())
         return dict(ok=ok, msg=msg, err_deg=-math.degrees(rem), fixes=fixes, secs=time.time() - t0)
