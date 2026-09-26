@@ -79,7 +79,21 @@ def process_name(args):
 DANGEROUS_NAMES = {'ros2', 'python', 'python3', 'bash', 'sh', 'systemd', 'launch'}
 
 
-def find(names):
+def _service_of(pid):
+    """systemd 시스템 서비스에 속한 프로세스면 서비스 이름, 아니면 None."""
+    try:
+        with open(f'/proc/{pid}/cgroup') as f:
+            for line in f:
+                if '/system.slice/' in line:
+                    unit = line.strip().rsplit('/', 1)[-1]
+                    if unit.endswith('.service'):
+                        return unit
+    except OSError:
+        pass
+    return None
+
+
+def find(names, include_services=False, skipped=None):
     protect = _ancestors(os.getpid())
     hits = []
     for entry in os.listdir('/proc'):
@@ -95,6 +109,14 @@ def find(names):
         for want in names:
             # 실행파일/스크립트 이름 단위 매칭. 확장자는 있어도 되고 없어도 된다.
             if pname == want or pname == want + '.py' or pname.rsplit('.', 1)[0] == want:
+                # ⚠️ 2026-09-26: 임시로 띄운 static_transform_publisher를 끄려다 같은 실행파일을
+                # 쓰는 smart-trash-imu-tf 서비스까지 죽였다 → EKF가 IMU를 버리고(TF 없음)
+                # 정사각형 시험에서 방향 -72° 오차. 서비스 소속은 systemctl로만 다룬다.
+                unit = _service_of(pid)
+                if unit and not include_services:
+                    if skipped is not None:
+                        skipped.append((pid, pname, unit))
+                    break
                 hits.append((pid, pname, ' '.join(args)[:100]))
                 break
     return hits
@@ -106,6 +128,8 @@ def main():
     ap.add_argument('--dry-run', action='store_true', help='죽이지 않고 목록만 출력')
     ap.add_argument('--kill9', action='store_true', help='TERM 후 남으면 KILL까지')
     ap.add_argument('--timeout', type=float, default=5.0, help='종료 대기 초')
+    ap.add_argument('--include-services', action='store_true',
+                    help='systemd 서비스 소속 프로세스도 대상에 포함(보통은 systemctl stop을 쓸 것)')
     ap.add_argument('--allow-dangerous', action='store_true',
                     help='ros2/python3 같은 포괄적 이름도 허용 (거의 항상 실수다)')
     args = ap.parse_args()
@@ -119,7 +143,10 @@ def main():
         print('   정말 의도한 것이면 --allow-dangerous')
         return 2
 
-    hits = find(args.names)
+    skipped = []
+    hits = find(args.names, args.include_services, skipped)
+    for pid, pname, unit in skipped:
+        print(f'  ⏭  {pid:>7}  {pname:<24} — {unit} 서비스 소속이라 건너뜀(systemctl로 다룰 것, 강제는 --include-services)')
     if not hits:
         print(f'해당 프로세스 없음: {", ".join(args.names)}')
         return 0
@@ -137,12 +164,12 @@ def main():
 
     deadline = time.time() + args.timeout
     while time.time() < deadline:
-        if not find(args.names):
+        if not find(args.names, args.include_services):
             print(f'{len(hits)}개 종료 완료')
             return 0
         time.sleep(0.2)
 
-    left = find(args.names)
+    left = find(args.names, args.include_services)
     if args.kill9:
         for pid, _, _ in left:
             try:
@@ -150,7 +177,7 @@ def main():
             except OSError:
                 pass
         time.sleep(0.5)
-        left = find(args.names)
+        left = find(args.names, args.include_services)
 
     if left:
         print(f'⚠️ {len(left)}개가 아직 살아있다: {[p for p, _, _ in left]}')
