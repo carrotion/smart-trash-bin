@@ -16,5 +16,41 @@
   "rf2o_return_deg": -120.11795420183633,
   "rf2o_estimate_error_m": 1.7937606017426597,
   "rf2o_estimate_error_deg": -125.14138282805614
+ },
+ {
+  "time": "2026-09-26 14:51:09",
+  "label": "velocity+대칭루프, 단일 구동노드, EKF 정상, rf2o 필터+TF(패치), 재부팅 후, 09-26",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.19214862026072105,
+  "real_return_deg": -18.450085516354438,
+  "ekf_return_m": 1.284333617302216,
+  "ekf_return_deg": -154.65361889390863,
+  "estimate_error_m": 1.4022374503261108,
+  "estimate_error_deg": -136.20353337755418,
+  "icp_resid_m": 0.022592665909029055,
+  "rf2o_return_m": 0.1492439725133039,
+  "rf2o_return_deg": -16.104645391682343,
+  "rf2o_estimate_error_m": 0.34136301565124383,
+  "rf2o_estimate_error_deg": 2.345440124672095
+ },
+ {
+  "time": "2026-09-26 14:53:36",
+  "label": "EKF vx만 융합(x,y 제외), velocity+대칭루프, rf2o 비교, 09-26",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.195126870361633,
+  "real_return_deg": -13.453020097012034,
+  "ekf_return_m": 0.20072409947194078,
+  "ekf_return_deg": -15.725886462123585,
+  "estimate_error_m": 0.0064061333692524034,
+  "estimate_error_deg": -2.2728663651115504,
+  "icp_resid_m": 0.019136797051059917,
+  "rf2o_return_m": 0.10512322939757046,
+  "rf2o_return_deg": -9.874153937795281,
+  "rf2o_estimate_error_m": 0.29859988079325844,
+  "rf2o_estimate_error_deg": 3.578866159216753
  }
 ]
