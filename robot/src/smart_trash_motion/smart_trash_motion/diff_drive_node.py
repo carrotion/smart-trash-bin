@@ -269,7 +269,11 @@ class DiffDriveNode(Node):
         # 'velocity': 드라이버 deadzone 0, 바퀴별 목표 속도(m/s) → 축별 피드포워드
         #   + 엔코더 속도 PI. 회전 폐루프도 PWM이 아니라 각속도(rad/s)를 보정한다.
         #   기동 시에만 읽는다(deadzone이 모드와 짝이라 도중 전환 불가).
-        self.declare_parameter('control_mode', 'legacy')
+        # ⚠️ 2026-09-26 기본값 legacy → velocity(사용자 승인). legacy는 명령과 무관하게 약 0.4 m/s,
+        #   회전 PI(370 시절 게인)가 발진해 회전 중 역회전(5초에 4번). velocity는 역회전 0, 출력 조절 가능,
+        #   출발 틀어짐 약 0.5°, 정사각형 복귀 8~13 cm. 근거 docs/todo.md 1e·1f.
+        #   Nav2 속도(max_vel_x 0.04)는 legacy 과속을 전제로 한 값 → 자율주행 전 재조정 필요.
+        self.declare_parameter('control_mode', 'velocity')
         self.declare_parameter('velocity_driver_deadzone', 0)
         # 축별 피드포워드: |pwm| = pwm0 + |v|/slope. 도크 무부하, deadzone 0 스윕
         # (docs/calibration/axle_speed_sweep_dz0_20260924.csv) 1800~3000 구간 적합:
