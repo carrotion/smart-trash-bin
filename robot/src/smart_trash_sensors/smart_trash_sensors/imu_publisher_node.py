@@ -184,11 +184,16 @@ class ImuPublisherNode(Node):
         self.get_logger().info(f'ICM-20948 연결됨, {rate_hz}Hz로 imu/data 퍼블리시 시작')
 
     def _on_cmd_vel(self, msg):
-        # 부호가 바뀌거나 정지<->구동 전환이면 "모터 전환"으로 본다. 아주 미세한
-        # 값 흔들림(PID 잔진동 등)까지 매번 반응하지 않게 임계값을 둠.
+        # 정지<->구동 전환이나 방향 반전만 "모터 전환"으로 본다(주석의 원래 의도).
+        # ⚠️ 2026-09-26: 예전엔 값이 0.001만 바뀌어도 전환으로 봤다. 대시보드는 버튼을 누르는
+        # 동안 명령을 매 틱 조금씩 올려서(가속 램프) 수동 매핑 중 **회전 샘플의 51%**가
+        # "믿지 말라"(공분산 50)로 표시됐고, EKF는 그동안 자이로 없이 추측해 세션 동안 26° 더
+        # 돌았다고 믿었다(녹화 20260926_150027_remap_ekf_vx_fix).
         eps = 1e-3
-        if (abs(msg.linear.x - self._last_cmd_v) > eps
-                or abs(msg.angular.z - self._last_cmd_w) > eps):
+        def phase(x):
+            return 0 if abs(x) < eps else (1 if x > 0 else -1)
+        if (phase(msg.linear.x) != phase(self._last_cmd_v)
+                or phase(msg.angular.z) != phase(self._last_cmd_w)):
             self._last_cmd_change_t = time.monotonic()
         self._last_cmd_v = msg.linear.x
         self._last_cmd_w = msg.angular.z
