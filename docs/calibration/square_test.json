@@ -1,0 +1,20 @@
+[
+ {
+  "time": "2026-09-26 14:00:04",
+  "label": "velocity+대칭루프, 09-26 첫 측정",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.3277089064997061,
+  "real_return_deg": 5.023428626219816,
+  "ekf_return_m": 0.7855781700804876,
+  "ekf_return_deg": -71.9989287134428,
+  "estimate_error_m": 0.7174590097814441,
+  "estimate_error_deg": -77.0223573396626,
+  "icp_resid_m": 0.03174619158818645,
+  "rf2o_return_m": 1.9250699407864393,
+  "rf2o_return_deg": -120.11795420183633,
+  "rf2o_estimate_error_m": 1.7937606017426597,
+  "rf2o_estimate_error_deg": -125.14138282805614
+ }
+]

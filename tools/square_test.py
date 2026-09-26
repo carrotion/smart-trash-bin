@@ -42,7 +42,10 @@ def main():
 
     rclpy.init()
     n = rclpy.create_node('square_test')
-    S = {'g': [], 'scan': None, 'enc': None, 'ekf': None}
+    S = {'g': [], 'scan': None, 'enc': None, 'ekf': None, 'rf2o': None}
+    # 비교용: rf2o가 떠 있으면 그 복귀 오차도 같이 기록(09-26 재평가)
+    n.create_subscription(Odometry, '/odom_rf2o', lambda m: S.update(
+        rf2o=(m.pose.pose.position.x, m.pose.pose.position.y, yaw_of(m.pose.pose.orientation))), 10)
     n.create_subscription(Imu, '/imu/data', lambda m: S['g'].append((time.time(), m.angular_velocity.z)), 100)
     n.create_subscription(LaserScan, '/scan', lambda m: S.update(scan=m), 5)
     n.create_subscription(Int32MultiArray, '/wheel_encoders', lambda m: S.update(enc=list(m.data)), 20)
@@ -69,6 +72,7 @@ def main():
     spin(1.0)
     start_scan = scan_points(S['scan'])
     ekf0 = S['ekf']
+    rf0 = S['rf2o']
     try:
         for leg in range(4):
             clear = corridor_clearance(S['scan'], True)
@@ -98,6 +102,7 @@ def main():
     spin(1.0)
     end_scan = scan_points(S['scan'])
     ekf1 = S['ekf']
+    rf1 = S['rf2o']
     # ICP: 도착 스캔을 출발 스캔에 맞추는 변환 → 로봇의 실제 복귀 오차(출발 자세 기준)
     dx, dy, dth, resid = icp(end_scan, start_scan)
     # EKF: 출발 자세 기준 도착 위치
@@ -119,6 +124,14 @@ def main():
     print(f'\n① 실제 복귀 오차(라이다): {res["real_return_m"] * 100:.1f} cm, {real_th:+.1f}°  (ICP 잔차 {resid * 100:.1f} cm)')
     print(f'② EKF가 믿는 복귀 오차:   {res["ekf_return_m"] * 100:.1f} cm, {ekf_dth:+.1f}°')
     print(f'③ 위치 추정 오차(②−①):  {res["estimate_error_m"] * 100:.1f} cm, {res["estimate_error_deg"]:+.1f}°')
+    if rf0 and rf1:
+        c, s_ = math.cos(rf0[2]), math.sin(rf0[2]); ex, ey = rf1[0] - rf0[0], rf1[1] - rf0[1]
+        rx, ry = c * ex + s_ * ey, -s_ * ex + c * ey
+        rth = math.degrees((rf1[2] - rf0[2] + math.pi) % (2 * math.pi) - math.pi)
+        res.update(rf2o_return_m=math.hypot(rx, ry), rf2o_return_deg=rth,
+                   rf2o_estimate_error_m=math.hypot(rx - real_x, ry - real_y), rf2o_estimate_error_deg=rth - real_th)
+        print(f'④ rf2o가 믿는 복귀 오차:  {res["rf2o_return_m"] * 100:.1f} cm, {rth:+.1f}° → '
+              f'추정 오차 {res["rf2o_estimate_error_m"] * 100:.1f} cm, {res["rf2o_estimate_error_deg"]:+.1f}°')
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(repo, 'docs/calibration/square_test.json')
     hist = json.load(open(path)) if os.path.exists(path) else []
