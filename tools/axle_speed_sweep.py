@@ -30,7 +30,7 @@ DRIVE_S = 1.5
 
 class Driver:
     def __init__(self, deadzone=None):
-        self.ser = serial.Serial(PORT, BAUD, timeout=0.3)
+        self.ser = serial.Serial(PORT, BAUD, timeout=0.3, exclusive=True)
         time.sleep(0.3)
         self.ser.reset_input_buffer()
         # ⚠️ 2026-09-24: 드라이버 deadzone은 출력 바닥으로 깔린다(1900 vs 1000에서

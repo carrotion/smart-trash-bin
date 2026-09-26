@@ -529,7 +529,10 @@ class DiffDriveNode(Node):
         self._meters_per_count = [_mpc_front, _mpc_front, _mpc_rear, _mpc_rear]
 
         self._serial_lock = threading.Lock()
-        self._ser = serial.Serial(p('port').value, p('baudrate').value, timeout=0.2)
+        # exclusive=True(TIOCEXCL): 다른 프로세스가 이미 포트를 쥐고 있으면 열기에서 실패한다.
+        # 2026-09-26 사고: EKF 재시작이 Wants=로 구동 서비스를 끌어올려, 수동으로 띄운 구동
+        # 노드와 서비스 노드가 같은 포트에 명령을 섞었다 → 정사각형 시험 첫 변 0.8 m 목표에 2.3 m 주행
+        self._ser = serial.Serial(p('port').value, p('baudrate').value, timeout=0.2, exclusive=True)
         time.sleep(0.3)
         self._configure_driver()
 
