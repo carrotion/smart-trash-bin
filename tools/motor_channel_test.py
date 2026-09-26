@@ -42,7 +42,7 @@ NAMES = {i + 1: n.split(' ', 1)[1] for i, n in enumerate(_NAMES)}
 
 class Driver:
     def __init__(self, port, baud):
-        self.ser = serial.Serial(port, baud, timeout=0.3)
+        self.ser = serial.Serial(port, baud, timeout=0.3, exclusive=True)
         time.sleep(0.3)
         self.ser.reset_input_buffer()
 

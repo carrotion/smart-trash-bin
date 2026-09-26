@@ -40,7 +40,7 @@ def main():
                       capture_output=True, text=True).stdout.strip() == 'active':
         print('❌ diff_drive_node가 /dev/motor 사용 중 — 먼저 sudo systemctl stop smart-trash-diff-drive')
         return 1
-    ser = serial.Serial('/dev/motor', 115200, timeout=0.2)
+    ser = serial.Serial('/dev/motor', 115200, timeout=0.2, exclusive=True)
     time.sleep(0.3)
 
     def cmd(c, wait=0.15):

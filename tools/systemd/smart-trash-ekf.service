@@ -1,7 +1,10 @@
 [Unit]
 Description=Smart Trash Bin - robot_localization EKF (odom + IMU gyro fusion, publishes odom->base_link TF)
 After=network.target smart-trash-diff-drive.service smart-trash-imu.service
-Wants=smart-trash-diff-drive.service smart-trash-imu.service
+# 2026-09-26: diff-drive를 Wants에서 뺐다 — EKF를 재시작하면 멈춰 둔 구동 서비스까지 켜져,
+# 수동으로 띄운 구동 노드와 같은 모터 포트를 동시에 쥐는 사고가 났다(정사각형 시험 2.3 m 과주행).
+# 부팅 때는 둘 다 WantedBy=multi-user.target로 따로 켜지고, 순서는 After가 맡는다.
+Wants=smart-trash-imu.service
 
 [Service]
 Type=simple
