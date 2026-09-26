@@ -330,6 +330,16 @@ class DiffDriveNode(Node):
         self.declare_parameter('yaw_kp', 0.5)
         self.declare_parameter('yaw_ki', 1.0)
         self.declare_parameter('yaw_i_limit', 1.0)       # rad/s 환산 상한
+        # 직진·곡선 주행 중 방향 유지 전용 게인(제자리 회전은 위 yaw_kp/ki 그대로).
+        # ⚠️ 2026-09-26 분리: 달리는 중 작은 회전 명령은 실제로 2~5할만 반영된다(스키드 조향 옆 미끄럼,
+        #   tools/curve_gain_test.py: w 0.05 → 19~54%, 0.1 → 35~52%, 0.3 → 약 100%). 그래서 제자리 회전과
+        #   같은 게인(0.5/1.0)으로는 직진 방향이 2.5초에 1.6°씩 흘렀다. 게인별 2.5초 방향 흐름 평균:
+        #   0.5/1.0 → 1.6°, 1.5/3.0 → 1.3°, 3.0/6.0 → 0.6~1.0°(start_lag_test 0.12 m/s 앞뒤 2회씩).
+        #   ⚠️ 5.0/10.0은 발산 — 로봇이 좌우로 ±44°까지 흔들림. 그래서 발산 값의 40%인 2.0/4.0
+        #   (바닥·배터리가 달라져도 여유). 정사각형 복귀(EKF 폐루프 회전과 함께): 0.5/1.0에서
+        #   9.0 cm −6.2° / 15.6 cm −14.6° → 2.0/4.0에서 5.1 cm −2.7° / 4.3 cm −3.5°.
+        self.declare_parameter('yaw_hold_kp', 2.0)
+        self.declare_parameter('yaw_hold_ki', 4.0)
         self.declare_parameter('velocity_debug', False)
         # --- velocity 모드의 제자리 회전 (2026-09-25 바닥 실측) ---
         # 바퀴별 속도 PI로 제자리 회전을 하면 바퀴 목표가 0.05~0.1 m/s로 너무 낮아
@@ -496,6 +506,8 @@ class DiffDriveNode(Node):
         self._yaw_kp = p('yaw_kp').value
         self._yaw_ki = p('yaw_ki').value
         self._yaw_i_limit = p('yaw_i_limit').value
+        self._yaw_hold_kp = p('yaw_hold_kp').value
+        self._yaw_hold_ki = p('yaw_hold_ki').value
         self._velocity_debug = p('velocity_debug').value
         self._velocity_pi_mode = p('velocity_pi_mode').value
         self._turn_in_place_max_v = p('turn_in_place_max_v').value
@@ -810,6 +822,8 @@ class DiffDriveNode(Node):
             'yaw_kp': '_yaw_kp',
             'yaw_ki': '_yaw_ki',
             'yaw_i_limit': '_yaw_i_limit',
+            'yaw_hold_kp': '_yaw_hold_kp',
+            'yaw_hold_ki': '_yaw_hold_ki',
             'velocity_debug': '_velocity_debug',
             'velocity_pi_mode': '_velocity_pi_mode',
             'turn_symmetry_enable': '_turn_sym_enable',
@@ -1048,10 +1062,10 @@ class DiffDriveNode(Node):
         if self._turn_closed_loop and moving and gyro_fresh:
             err = w - self._gyro_z
             self._turn_i += err * dt
-            if self._yaw_ki > 0:
-                lim = self._yaw_i_limit / self._yaw_ki
+            if self._yaw_hold_ki > 0:
+                lim = self._yaw_i_limit / self._yaw_hold_ki
                 self._turn_i = max(-lim, min(lim, self._turn_i))
-            w_eff = w + self._yaw_kp * err + self._yaw_ki * self._turn_i
+            w_eff = w + self._yaw_hold_kp * err + self._yaw_hold_ki * self._turn_i
         else:
             self._turn_i = 0.0
 

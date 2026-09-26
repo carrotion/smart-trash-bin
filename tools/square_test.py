@@ -83,6 +83,7 @@ def main():
     rf0 = S['rf2o']
     turner = TurnToAngle(pub, spin, lambda: S['ekf'][2], lambda: S['gz'], w_max=args.turn)
     turn_errs = []
+    turn_traces = []
     try:
         for leg in range(4):
             clear = corridor_clearance(S['scan'], True)
@@ -113,6 +114,7 @@ def main():
                 print(f'  {leg + 1}/4 완료 (전진 {(d[0] + d[1]) / 2:.3f} m, 회전 EKF 기준 오차 {tr["err_deg"]:+.1f}°, '
                       f'보정 {tr["fixes"]}회, {tr["secs"]:.1f}초)', flush=True)
                 turn_errs.append(tr['err_deg'])
+                turn_traces.append(list(turner.trace)); turner.trace.clear()
                 continue
             S['g'] = []; yaw = 0.0; last = time.time(); t_turn = last
             turn_limit = (math.pi / 2) / args.turn * 2.0 + 2.0
@@ -170,6 +172,8 @@ def main():
     path = os.path.join(repo, 'docs/calibration/square_test.json')
     hist = json.load(open(path)) if os.path.exists(path) else []
     hist.append(res)
+    if turn_traces:   # 회전 진단 기록은 따로(square_test.json을 부풀리지 않게)
+        json.dump(turn_traces, open(os.path.join(repo, 'docs/calibration', f'square_turn_trace_{time.strftime("%Y%m%d_%H%M%S")}.json'), 'w'))
     json.dump(hist, open(path, 'w'), ensure_ascii=False, indent=1)
     print('저장:', path)
     rclpy.shutdown()
