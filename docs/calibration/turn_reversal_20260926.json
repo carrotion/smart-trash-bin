@@ -1,0 +1,122 @@
+[
+ {
+  "mode": "legacy",
+  "dir": "CW",
+  "rep": 1,
+  "mean": 0.5992293435581924,
+  "std": 1.9025131684424854,
+  "rev_samples": 98,
+  "rev_events": 4,
+  "peak": 3.0109189272207115
+ },
+ {
+  "mode": "legacy",
+  "dir": "CCW",
+  "rep": 1,
+  "mean": 0.6568252291173602,
+  "std": 2.049007841144909,
+  "rev_samples": 97,
+  "rev_events": 4,
+  "peak": 3.3940637154999562
+ },
+ {
+  "mode": "legacy",
+  "dir": "CW",
+  "rep": 2,
+  "mean": 0.5926249039779872,
+  "std": 1.8193037506800978,
+  "rev_samples": 96,
+  "rev_events": 4,
+  "peak": 2.941690375824736
+ },
+ {
+  "mode": "legacy",
+  "dir": "CCW",
+  "rep": 2,
+  "mean": 0.67001668322924,
+  "std": 1.9833032049067272,
+  "rev_samples": 96,
+  "rev_events": 4,
+  "peak": 3.366617831057253
+ },
+ {
+  "mode": "legacy",
+  "dir": "CW",
+  "rep": 3,
+  "mean": 0.5940983616563354,
+  "std": 1.8876776367751202,
+  "rev_samples": 97,
+  "rev_events": 4,
+  "peak": 3.0544614009032705
+ },
+ {
+  "mode": "legacy",
+  "dir": "CCW",
+  "rep": 3,
+  "mean": 0.6623575105617122,
+  "std": 2.02626295464227,
+  "rev_samples": 99,
+  "rev_events": 4,
+  "peak": 3.4230210067771325
+ },
+ {
+  "mode": "velocity",
+  "dir": "CW",
+  "rep": 1,
+  "mean": 0.8989681952863917,
+  "std": 0.1885192852067925,
+  "rev_samples": 0,
+  "rev_events": 0,
+  "peak": 1.3308547765994907
+ },
+ {
+  "mode": "velocity",
+  "dir": "CCW",
+  "rep": 1,
+  "mean": 0.7959586798069375,
+  "std": 0.1614368188420585,
+  "rev_samples": 0,
+  "rev_events": 0,
+  "peak": 1.1585374039761225
+ },
+ {
+  "mode": "velocity",
+  "dir": "CW",
+  "rep": 2,
+  "mean": 0.8792448938549134,
+  "std": 0.24828247858416777,
+  "rev_samples": 0,
+  "rev_events": 0,
+  "peak": 1.6097378898064718
+ },
+ {
+  "mode": "velocity",
+  "dir": "CCW",
+  "rep": 2,
+  "mean": 0.7949003255012228,
+  "std": 0.15118378106629696,
+  "rev_samples": 0,
+  "rev_events": 0,
+  "peak": 1.1461119607900712
+ },
+ {
+  "mode": "velocity",
+  "dir": "CW",
+  "rep": 3,
+  "mean": 0.8845082398909142,
+  "std": 0.2979964066508825,
+  "rev_samples": 0,
+  "rev_events": 0,
+  "peak": 1.73385908578486
+ },
+ {
+  "mode": "velocity",
+  "dir": "CCW",
+  "rep": 3,
+  "mean": 0.7838753945075259,
+  "std": 0.15486011105310638,
+  "rev_samples": 0,
+  "rev_events": 0,
+  "peak": 1.1260510752390183
+ }
+]
