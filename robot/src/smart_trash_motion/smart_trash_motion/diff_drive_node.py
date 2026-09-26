@@ -1339,6 +1339,12 @@ class DiffDriveNode(Node):
                 f'자이로 바이어스 보정 완료: {mean:+.5f} rad/s (표준편차 {std:.4f})')
             return
 
+        # 공분산이 큰(IMU가 "믿기 어렵다"고 표시한 — 영점 확정 전, 모터 전환 직후) 샘플은
+        # 회전 폐루프 입력으로 쓰지 않는다(값도 갱신 안 함 → gyro_stale_sec 뒤 폐루프가 꺼짐).
+        # 09-26: IMU 재시작 중 가짜 0을 믿은 회전 PI가 출력을 최대로 올려 5분간 약 2.1 rad/s로
+        # 돌았다. 모터 전환 직후 0.15초 표시는 gyro_stale_sec(0.3초)보다 짧아 영향 없다.
+        if msg.angular_velocity_covariance[8] > 1.0:
+            return
         self._gyro_z = wz - self._gyro_bias
         self._gyro_ts = time.time()
         self._imu_seen = True

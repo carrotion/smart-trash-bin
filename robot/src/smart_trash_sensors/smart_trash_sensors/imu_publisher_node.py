@@ -81,6 +81,12 @@ class ImuPublisherNode(Node):
         #    쓰므로 틀리면 지도가 통째로 돈다. 창 평균/표준편차로 정지 여부를 판정.
         #    원시 영점 이력(08-29~09-25, 12회): -0.002 ~ -0.013 rad/s.
         self.declare_parameter('gyro_bias_max_abs', 0.05)
+        # 영점 확정 전 임시 영점: 예전엔 확정 전까지 z를 0으로 발행했다. 2026-09-26 주행 중
+        # 자동 업데이트가 이 서비스를 재시작했고, 회전 중이라 정지 판정이 5분간 거부되는 동안
+        # 계속 0이 나가 → 시험 도구는 90°에 영원히 못 닿고, 구동 노드 회전 PI는 "안 돈다"고
+        # 믿고 출력을 최대로 올려 약 2.1 rad/s로 5분 회전. 이제 원시값 − 임시 영점을 큰
+        # 공분산과 함께 발행한다(영점 이력 -0.002~-0.013이라 오차 약 0.01 rad/s 이내).
+        self.declare_parameter('gyro_bias_fallback', -0.009)
         self.declare_parameter('gyro_bias_max_std', 0.08)
         # ② 자이로 눈금: 자이로가 실제 회전보다 덜 읽는다 — 08-29 육안 10바퀴(1.0 rad/s)
         #    99.29% → 1.0071, 09-25 라이다 ICP 5바퀴(0.5 rad/s, 영점 10초) 좌 1.0089 / 우
@@ -98,6 +104,7 @@ class ImuPublisherNode(Node):
         self.declare_parameter('wheel_encoders_topic', '/wheel_encoders')
         gp = self.get_parameter
         self._gyro_bias_max_abs = gp('gyro_bias_max_abs').value
+        self._gyro_bias_fallback = gp('gyro_bias_fallback').value
         self._gyro_bias_max_std = gp('gyro_bias_max_std').value
         self._gyro_z_scale = gp('gyro_z_scale').value
         self._zru_enable = gp('gyro_zru_enable').value
@@ -200,7 +207,7 @@ class ImuPublisherNode(Node):
 
     def _gyro_z_out(self, gz_raw_radps, now):
         """원시 자이로 z(rad/s) → 발행값. 부팅 영점(정지 판정) → 정지 중 영점 추적 → 눈금.
-        반환 None이면 아직 영점 미확정(호출자가 0 + 큰 공분산으로 발행)."""
+        영점 확정 전에는 임시 영점으로 계산한 값을 돌려준다(호출자가 큰 공분산으로 발행)."""
         if self._gyro_bias_auto and not self._gyro_bias_calibrated:
             self._gyro_calib_window.append(gz_raw_radps)
             if len(self._gyro_calib_window) >= self._gyro_calib_samples_target:
@@ -218,7 +225,7 @@ class ImuPublisherNode(Node):
                     self._gyro_calib_count = len(win)
                     self.get_logger().info(
                         f'자이로 Z 자동 재보정 완료: {mean:+.5f} rad/s ({len(win)}샘플, 표준편차 {std:.4f})')
-            return None
+            return (gz_raw_radps - self._gyro_bias_fallback) * self._gyro_z_scale
         if (self._zru_enable and self._is_still(now)
                 and abs(gz_raw_radps - self._gyro_bias_z) < self._zru_max_dev):
             self._gyro_bias_z += self._zru_alpha * (gz_raw_radps - self._gyro_bias_z)
@@ -248,9 +255,8 @@ class ImuPublisherNode(Node):
         msg.angular_velocity.y = self._imu.gyRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
 
         gz_raw_radps = self._imu.gzRaw / GYRO_SENSITIVITY_LSB_PER_DPS * DEG_TO_RAD
-        # 영점 확정 전엔 회전 0으로 보고, EKF가 이 구간을 덜 믿도록 공분산을 부풀린다(아래)
-        gz = self._gyro_z_out(gz_raw_radps, time.monotonic())
-        msg.angular_velocity.z = 0.0 if gz is None else gz
+        # 영점 확정 전엔 임시 영점 값 + 큰 공분산(아래) — 0을 내보내면 회전 중 재시작 시 위험
+        msg.angular_velocity.z = self._gyro_z_out(gz_raw_radps, time.monotonic())
 
         # This node doesn't fuse orientation — robot_localization EKF (Week 4) does
         # that downstream. Mark orientation unknown per REP-145.
