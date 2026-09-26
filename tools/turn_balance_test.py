@@ -18,6 +18,7 @@ from geometry_msgs.msg import Twist
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
 from sensor_msgs.msg import Imu, LaserScan
+from nav_msgs.msg import Odometry
 
 from rotation_quality_test import scan_points
 from turn_start_matrix import icp_with_guess
@@ -38,7 +39,13 @@ def main():
 
     rclpy.init()
     n = rclpy.create_node('turn_balance_test')
-    S = {'g': [], 'scan': None}
+    S = {'g': [], 'scan': None, 'rf2o': None}
+    # 비교용: rf2o 라이다 오도메트리가 떠 있으면 회전마다 그 추정 밀림도 기록(09-26)
+    def on_rf2o(m):
+        q = m.pose.pose.orientation
+        S['rf2o'] = (m.pose.pose.position.x, m.pose.pose.position.y,
+                     math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+    n.create_subscription(Odometry, '/odom_rf2o', on_rf2o, 10)
     n.create_subscription(Imu, '/imu/data', lambda m: S['g'].append((time.time(), m.angular_velocity.z)), 100)
     n.create_subscription(LaserScan, '/scan', lambda m: S.update(scan=m), 5)
     pub = n.create_publisher(Twist, '/cmd_vel', 10)
@@ -67,6 +74,7 @@ def main():
         near = min((math.hypot(x, y) for x, y in before), default=9)
         if near < MIN_CLEAR:
             return None, near
+        r0 = S['rf2o']
         S['g'] = []; ts = time.time(); last = ts; yaw = 0.0
         while abs(yaw) < math.pi / 2 - args.w * 0.12 and time.time() - ts < math.pi / 2 / args.w + 6:
             c = Twist(); c.angular.z = sgn * args.w; pub.publish(c); spin(0.02)
@@ -79,6 +87,12 @@ def main():
         stop(1.2)
         yaw += sum((v - bias) * 0.02 for t, v in S['g'] if t > t_stop)
         after = scan_points(S['scan'])
+        r1 = S['rf2o']
+        if r0 and r1:     # rf2o 추정 이동(출발 자세 기준)
+            c, s_ = math.cos(r0[2]), math.sin(r0[2]); ex, ey = r1[0] - r0[0], r1[1] - r0[1]
+            S['rf2o_last'] = (c * ex + s_ * ey, -s_ * ex + c * ey, math.degrees(r1[2] - r0[2]))
+        else:
+            S['rf2o_last'] = None
         return icp_with_guess(after, before, math.degrees(yaw)), near
 
     t0 = time.time()
@@ -101,7 +115,12 @@ def main():
                 if res is None:
                     print(f'❌ 주변 최근접 {near:.2f} m — 밀려서 여유 부족, 중단'); return 1
                 dx, dy, dth, resid = res
+                rf = S.get('rf2o_last')
+                if rf:
+                    print(f'   rf2o 추정: 앞뒤 {rf[0] * 100:+5.1f}, 좌우 {rf[1] * 100:+5.1f} cm, 회전 {rf[2]:+.1f}° '
+                          f'(라이다 ICP: {dx * 100:+5.1f}, {dy * 100:+5.1f} cm, {dth:+.1f}°)', flush=True)
                 rows.append({'balance': b, 'dir': args.dir, 'rep': rep + 1, 'dx_cm': dx * 100, 'dy_cm': dy * 100,
+                             'rf2o': rf,
                              'shift_cm': math.hypot(dx, dy) * 100, 'dtheta': dth, 'resid_cm': resid * 100,
                              'clear_m': near})
                 # 복귀(반대 방향, 기본 균형)
