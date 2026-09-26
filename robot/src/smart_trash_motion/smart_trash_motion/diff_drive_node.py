@@ -1311,6 +1311,11 @@ class DiffDriveNode(Node):
             if self._target_left_pwm or self._target_right_pwm:
                 self._gyro_bias_window = []
                 return
+            # imu_publisher_node는 자기 영점을 잡는 동안(약 2초) z를 0으로 채우고 공분산을
+            # 크게 표시한다. 2026-09-26 부팅에서 이 가짜 0만 받아 바이어스 +0.00000(표준편차 0)으로
+            # 확정됐다 — 결과는 무해했지만 정지 판정이 가짜 데이터에 속은 것. 그런 샘플은 뺀다.
+            if msg.angular_velocity_covariance[8] > 1.0:
+                return
             self._gyro_bias_window.append(wz)
             if len(self._gyro_bias_window) < self._gyro_bias_samples_target:
                 return
