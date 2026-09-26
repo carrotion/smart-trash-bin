@@ -27,6 +27,7 @@ from wheel_config import wheel_distances
 from rotation_quality_test import scan_points, icp
 from speed_floor_sweep import corridor_clearance
 from dock_guard import looks_on_dock
+from turn_to_angle import TurnToAngle
 
 
 def yaw_of(q):
@@ -39,15 +40,20 @@ def main():
     ap.add_argument('--speed', type=float, default=0.15)
     ap.add_argument('--turn', type=float, default=0.5)
     ap.add_argument('--label', default='')
+    # ekf: EKF 방향 기준 폐루프(감속 → 정지 → 재측정 보정, tools/turn_to_angle.py) — 09-26 기본값
+    # early: 예전 방식(자이로 적분, w×0.12초 앞당겨 정지 — 관성 추정이 고정이라 90°마다 2~3° 틀림)
+    ap.add_argument('--turn-mode', choices=['ekf', 'early'], default='ekf')
     args = ap.parse_args()
 
     rclpy.init()
     n = rclpy.create_node('square_test')
-    S = {'g': [], 'scan': None, 'enc': None, 'ekf': None, 'rf2o': None}
+    S = {'g': [], 'gz': 0.0, 'scan': None, 'enc': None, 'ekf': None, 'rf2o': None}
     # 비교용: rf2o가 떠 있으면 그 복귀 오차도 같이 기록(09-26 재평가)
     n.create_subscription(Odometry, '/odom_rf2o', lambda m: S.update(
         rf2o=(m.pose.pose.position.x, m.pose.pose.position.y, yaw_of(m.pose.pose.orientation))), 10)
-    n.create_subscription(Imu, '/imu/data', lambda m: S['g'].append((time.time(), m.angular_velocity.z)), 100)
+    def on_imu(m):
+        S['g'].append((time.time(), m.angular_velocity.z)); S['gz'] = m.angular_velocity.z
+    n.create_subscription(Imu, '/imu/data', on_imu, 100)
     n.create_subscription(LaserScan, '/scan', lambda m: S.update(scan=m), 5)
     n.create_subscription(Int32MultiArray, '/wheel_encoders', lambda m: S.update(enc=list(m.data)), 20)
     n.create_subscription(Odometry, '/odometry/filtered', lambda m: S.update(
@@ -75,6 +81,8 @@ def main():
     start_msg = S['scan']
     ekf0 = S['ekf']
     rf0 = S['rf2o']
+    turner = TurnToAngle(pub, spin, lambda: S['ekf'][2], lambda: S['gz'], w_max=args.turn)
+    turn_errs = []
     try:
         for leg in range(4):
             clear = corridor_clearance(S['scan'], True)
@@ -98,6 +106,14 @@ def main():
                 print('  ' + msg)
                 if bad:
                     return 1
+            if args.turn_mode == 'ekf':
+                tr = turner.turn_by(math.pi / 2)
+                if not tr['ok']:
+                    print(f'❌ {leg + 1}번째 회전 이상: {tr["msg"]} — 중단'); return 1
+                print(f'  {leg + 1}/4 완료 (전진 {(d[0] + d[1]) / 2:.3f} m, 회전 EKF 기준 오차 {tr["err_deg"]:+.1f}°, '
+                      f'보정 {tr["fixes"]}회, {tr["secs"]:.1f}초)', flush=True)
+                turn_errs.append(tr['err_deg'])
+                continue
             S['g'] = []; yaw = 0.0; last = time.time(); t_turn = last
             turn_limit = (math.pi / 2) / args.turn * 2.0 + 2.0
             while yaw < math.pi / 2 - args.turn * 0.12:
@@ -133,7 +149,7 @@ def main():
     real_x, real_y, real_th = dx, dy, dth
     res = {
         'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'label': args.label, 'side_m': args.side,
-        'speed': args.speed, 'turn': args.turn,
+        'speed': args.speed, 'turn': args.turn, 'turn_mode': args.turn_mode, 'turn_errs_deg': turn_errs,
         'real_return_m': math.hypot(real_x, real_y), 'real_return_deg': real_th,
         'ekf_return_m': math.hypot(ekf_dx, ekf_dy), 'ekf_return_deg': ekf_dth,
         'estimate_error_m': math.hypot(ekf_dx - real_x, ekf_dy - real_y),
