@@ -155,7 +155,13 @@ class ImuPublisherNode(Node):
         # orientation_covariance[0]=-1로 "이 필드는 못 믿는다"를 표시하던
         # 방식과 같은 원리.
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
-        self.declare_parameter('gyro_settle_after_cmd_sec', 0.15)
+        # ⚠️ 2026-09-26: 기본값 0.15 → 0(전환 불신 끔). 재매핑 녹화 2개를 재생해 비교한 결과
+        # 전환마다 자이로를 불신하면 EKF가 그동안 "직전 속도 유지"로 추측해 오히려 틀렸다.
+        # 짧게 누르는 조종(4.5분에 전환 271회)에서 EKF 방향 오차 RMS 30° vs 자이로 단순 적분 7.6°
+        # (SLAM 기준). 불신을 끄고 재생하니 SLAM 방향 보정 흔들림 폭 71° → 19°, 5° 넘는 점프
+        # 13 → 2회(15시 녹화도 111° → 33°, 38 → 2회). 위 08-23 진단의 순간 튐(0.3~0.4 rad/s,
+        # 0.1초)보다 EKF 추측 오차가 훨씬 컸다는 뜻. 근거와 판정 시험은 docs/todo.md 1e.
+        self.declare_parameter('gyro_settle_after_cmd_sec', 0.0)
         self.declare_parameter('gyro_unsettled_covariance', 50.0)  # 정상치(0.0004)보다 훨씬 큼
         self._gyro_settle_sec = self.get_parameter('gyro_settle_after_cmd_sec').value
         self._gyro_unsettled_cov = self.get_parameter('gyro_unsettled_covariance').value
