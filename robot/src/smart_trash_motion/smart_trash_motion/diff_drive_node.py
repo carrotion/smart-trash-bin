@@ -338,6 +338,18 @@ class DiffDriveNode(Node):
         #   ⚠️ 5.0/10.0은 발산 — 로봇이 좌우로 ±44°까지 흔들림. 그래서 발산 값의 40%인 2.0/4.0
         #   (바닥·배터리가 달라져도 여유). 정사각형 복귀(EKF 폐루프 회전과 함께): 0.5/1.0에서
         #   9.0 cm −6.2° / 15.6 cm −14.6° → 2.0/4.0에서 5.1 cm −2.7° / 4.3 cm −3.5°.
+        # 능동 제동(정지 명령 후 바퀴 반대 방향 출력). ⚠️ 2026-09-26: 출력을 0으로 끊기만 하면 바퀴가 굴러
+        #   멈춰서 0.15 m/s → 6~8 cm·0.6초, 0.3 m/s → 13~18 cm·0.9초(감속 약 0.16 m/s², Nav2 가정 0.3의 절반,
+        #   tools/stop_distance_test.py). brake_kp: 측 속도(m/s) 1당 PWM 환산 비율(0이면 끔).
+        #   안전: brake_max_s까지만, |속도| < brake_min_speed면 0, 제동 중 속도가 오히려 커지면 즉시 중단.
+        #   바닥 비교(엔코더/EKF 기준 정지 명령 후 이동): 0 → 0.15 m/s 6~8 cm, 0.3 m/s 13~18 cm /
+        #   2 → 0.15 m/s 3~5 cm / **4 → 0.15 m/s 1~5 cm, 0.3 m/s 6~9 cm** / 6 → 0.3 m/s 5~10 cm(나아지지 않고
+        #   엔코더·EKF 차가 벌어짐 = 바퀴는 멈추고 차체가 미끄러짐). → 4. 회전 정지도 제동돼 폐루프 회전 오차가
+        #   평균 −1.2° → −0.8~+0.3°로 모임(정사각형 0.7 m). 위치 추정 오차 6.5 cm(이전 1.7~4.4) — 제동 미끄럼 의심, 관찰 중
+        self.declare_parameter('brake_kp', 4.0)
+        self.declare_parameter('brake_max_pwm', 1500.0)
+        self.declare_parameter('brake_min_speed', 0.02)
+        self.declare_parameter('brake_max_s', 0.6)
         self.declare_parameter('yaw_hold_kp', 2.0)
         self.declare_parameter('yaw_hold_ki', 4.0)
         self.declare_parameter('velocity_debug', False)
@@ -507,6 +519,13 @@ class DiffDriveNode(Node):
         self._yaw_ki = p('yaw_ki').value
         self._yaw_i_limit = p('yaw_i_limit').value
         self._yaw_hold_kp = p('yaw_hold_kp').value
+        self._brake_kp = float(p('brake_kp').value)
+        self._brake_max_pwm = float(p('brake_max_pwm').value)
+        self._brake_min_speed = float(p('brake_min_speed').value)
+        self._brake_max_s = float(p('brake_max_s').value)
+        self._brake_start = None
+        self._brake_v0 = {'L': 0.0, 'R': 0.0}
+        self._brake_out = [0.0] * 4
         self._yaw_hold_ki = p('yaw_hold_ki').value
         self._velocity_debug = p('velocity_debug').value
         self._velocity_pi_mode = p('velocity_pi_mode').value
@@ -823,6 +842,10 @@ class DiffDriveNode(Node):
             'yaw_ki': '_yaw_ki',
             'yaw_i_limit': '_yaw_i_limit',
             'yaw_hold_kp': '_yaw_hold_kp',
+            'brake_kp': '_brake_kp',
+            'brake_max_pwm': '_brake_max_pwm',
+            'brake_min_speed': '_brake_min_speed',
+            'brake_max_s': '_brake_max_s',
             'yaw_hold_ki': '_yaw_hold_ki',
             'velocity_debug': '_velocity_debug',
             'velocity_pi_mode': '_velocity_pi_mode',
@@ -997,6 +1020,35 @@ class DiffDriveNode(Node):
         self._last_active_mode = mode
         return False
 
+    def _brake_pwm(self, enc_fresh, now):
+        """정지 명령 직후 능동 제동 출력(바퀴별). 파라미터 brake_* 주석 참고."""
+        if self._brake_kp <= 0:
+            return [0.0] * 4
+        if self._brake_start is None:
+            self._brake_start = now
+            self._brake_v0 = dict(self._side_speed)
+            self._brake_out = [0.0] * 4
+        if now - self._brake_start > self._brake_max_s:
+            self._brake_out = [0.0] * 4
+            return self._brake_out
+        if enc_fresh:
+            out = [0.0] * 4
+            for i in range(4):
+                k = 'L' if i in self.LEFT else 'R'
+                sp = self._side_speed[k]
+                if abs(sp) > abs(self._brake_v0[k]) + 0.05:     # 제동인데 빨라짐 → 부호 이상, 즉시 끊음
+                    self._brake_start = now - self._brake_max_s - 1.0
+                    self.get_logger().error(f'능동 제동 중 {k}측 속도 증가({self._brake_v0[k]:+.2f} → {sp:+.2f}) — 제동 중단')
+                    self._brake_out = [0.0] * 4
+                    return self._brake_out
+                if abs(sp) < self._brake_min_speed:
+                    continue
+                slope = self._ff_slope['front' if i in (0, 1) else 'rear']
+                b = -self._brake_kp * sp / slope
+                out[i] = max(-self._brake_max_pwm, min(self._brake_max_pwm, b))
+            self._brake_out = out
+        return self._brake_out
+
     def _reset_velocity_state(self):
         self._ramped_w = 0.0
         self._wheel_target = [0.0] * 4
@@ -1045,6 +1097,8 @@ class DiffDriveNode(Node):
             mode = 'rotate'
         else:
             mode = 'stop'
+        if mode != 'stop':
+            self._brake_start = None
         if self._motion_dwell(mode, now, enc_fresh, gyro_fresh):
             self._reset_velocity_state()      # 전환 대기 — 출력 0, 적분·램프 초기화
             self._turn_i = 0.0
@@ -1072,7 +1126,7 @@ class DiffDriveNode(Node):
         if not moving:
             self._reset_velocity_state()
             self._target_left_pwm = self._target_right_pwm = 0
-            self._send_pwm4([0, 0, 0, 0])
+            self._send_pwm4(self._brake_pwm(enc_fresh, now))
             return
 
         # 스키드-스티어: 실효 트레드(wheel_separation, 물리 폭의 약 2배)로 바퀴 속도 배분
