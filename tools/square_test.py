@@ -80,13 +80,19 @@ def main():
                 print(f'❌ {leg + 1}번째 전진 전 앞 여유 {clear:.2f} m < {args.side + 0.3:.2f} — 중단')
                 stop(); return 1
             e0 = list(S['enc'])
+            t_leg = time.time()
+            leg_limit = args.side / args.speed * 2.0 + 2.0   # 예상 시간의 2배 + 2초
             while True:
                 d = wheel_distances(e0, S['enc'])
                 if (d[0] + d[1]) / 2 >= args.side:
                     break
+                # ⚠️ 09-26: 루프에 시간 제한이 없어 센서가 이상하면 끝없이 달릴 수 있었다
+                if time.time() - t_leg > leg_limit:
+                    stop(); print(f'❌ {leg + 1}번째 전진이 {leg_limit:.0f}초 안에 안 끝남(엔코더 이상?) — 중단'); return 1
                 c = Twist(); c.linear.x = args.speed; pub.publish(c); spin(0.02)
             stop()
-            S['g'] = []; yaw = 0.0; last = time.time()
+            S['g'] = []; yaw = 0.0; last = time.time(); t_turn = last
+            turn_limit = (math.pi / 2) / args.turn * 2.0 + 2.0
             while yaw < math.pi / 2 - args.turn * 0.12:
                 c = Twist(); c.angular.z = args.turn; pub.publish(c); spin(0.02)
                 now = time.time()
@@ -94,6 +100,11 @@ def main():
                 if g:
                     yaw += st.mean(g) * (now - last)
                 last = now
+                # ⚠️ 09-26: IMU가 주행 중 재시작돼 자이로가 0을 내는 동안 90°에 영원히 못 닿아
+                # 약 5분간 회전했다. 시간 제한 + 1.5초 지나도 자이로 적분이 10° 미만이면 중단
+                if now - t_turn > turn_limit or (now - t_turn > 1.5 and yaw < math.radians(10)):
+                    stop(); print(f'❌ {leg + 1}번째 회전 이상(경과 {now - t_turn:.1f}초, 자이로 적분 '
+                                  f'{math.degrees(yaw):.1f}°) — 중단'); return 1
             stop()
             print(f'  {leg + 1}/4 완료 (전진 {(d[0] + d[1]) / 2:.3f} m, 회전 {math.degrees(yaw):.1f}°+관성)', flush=True)
     finally:
