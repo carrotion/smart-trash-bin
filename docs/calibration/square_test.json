@@ -52,5 +52,61 @@
   "rf2o_return_deg": -9.874153937795281,
   "rf2o_estimate_error_m": 0.29859988079325844,
   "rf2o_estimate_error_deg": 3.578866159216753
+ },
+ {
+  "time": "2026-09-26 16:47:29",
+  "label": "IMU 전환불신 0초(settle 0), velocity, 09-26 16:4x",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.08307871358138876,
+  "real_return_deg": -7.368879478071599,
+  "ekf_return_m": 0.09479554473770377,
+  "ekf_return_deg": -8.05333468226339,
+  "estimate_error_m": 0.01786960467350556,
+  "estimate_error_deg": -0.6844552041917913,
+  "icp_resid_m": 0.017047461322118554
+ },
+ {
+  "time": "2026-09-26 16:48:56",
+  "label": "IMU 전환불신 0.15초(settle 0.15), velocity, 09-26 16:5x",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.22761152781684135,
+  "real_return_deg": -23.4252756708244,
+  "ekf_return_m": 0.2351213886152084,
+  "ekf_return_deg": -27.031834381750194,
+  "estimate_error_m": 0.009194645998119847,
+  "estimate_error_deg": -3.6065587109257926,
+  "icp_resid_m": 0.020433261387878716
+ },
+ {
+  "time": "2026-09-26 16:49:56",
+  "label": "IMU 전환불신 0.15초(settle 0.15) 2회차, velocity, 09-26",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.14824281107933465,
+  "real_return_deg": -15.924917742000762,
+  "ekf_return_m": 0.2071337580726891,
+  "ekf_return_deg": -25.320200315184245,
+  "estimate_error_m": 0.0595120314346081,
+  "estimate_error_deg": -9.395282573183483,
+  "icp_resid_m": 0.01664628590978392
+ },
+ {
+  "time": "2026-09-26 16:51:14",
+  "label": "IMU 전환불신 0초(settle 0) 2회차, velocity, 09-26",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.5,
+  "real_return_m": 0.10145682581040479,
+  "real_return_deg": -7.95974011363682,
+  "ekf_return_m": 0.1268908517818227,
+  "ekf_return_deg": -11.442207894836795,
+  "estimate_error_m": 0.03434147325774908,
+  "estimate_error_deg": -3.4824677811999747,
+  "icp_resid_m": 0.018122788521131843
  }
 ]
