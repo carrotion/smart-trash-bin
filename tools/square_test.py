@@ -26,6 +26,7 @@ from std_msgs.msg import Int32MultiArray
 from wheel_config import wheel_distances
 from rotation_quality_test import scan_points, icp
 from speed_floor_sweep import corridor_clearance
+from dock_guard import looks_on_dock
 
 
 def yaw_of(q):
@@ -71,6 +72,7 @@ def main():
 
     spin(1.0)
     start_scan = scan_points(S['scan'])
+    start_msg = S['scan']
     ekf0 = S['ekf']
     rf0 = S['rf2o']
     try:
@@ -91,6 +93,11 @@ def main():
                     stop(); print(f'❌ {leg + 1}번째 전진이 {leg_limit:.0f}초 안에 안 끝남(엔코더 이상?) — 중단'); return 1
                 c = Twist(); c.linear.x = args.speed; pub.publish(c); spin(0.02)
             stop()
+            if leg == 0:   # ⚠️ 09-26 도크 위 시험 2회 재발 방지 — tools/dock_guard.py
+                bad, msg = looks_on_dock((d[0] + d[1]) / 2, start_msg, S['scan'])
+                print('  ' + msg)
+                if bad:
+                    return 1
             S['g'] = []; yaw = 0.0; last = time.time(); t_turn = last
             turn_limit = (math.pi / 2) / args.turn * 2.0 + 2.0
             while yaw < math.pi / 2 - args.turn * 0.12:
