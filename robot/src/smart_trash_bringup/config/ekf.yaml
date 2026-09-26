@@ -14,7 +14,12 @@ ekf_filter_node:
 
     odom0: odom
     # [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
-    odom0_config: [true,  true,  false,
+    # 🔄 2026-09-26: x, y(절대 위치) → false, vx(전진 속도)만. 휠 /odom의 x,y는 **휠로 계산한
+    # 방향**(스키드 스티어라 회전 중 미끄러져 틀림)으로 쌓인 값인데, EKF 방향은 자이로에서 온다.
+    # 둘이 모순되면 필터가 위치를 맞추려다 방향까지 끌려간다 — 정사각형 복귀 시험(0.8 m, 90°×4)
+    # 에서 실제 −18.5°인데 EKF −154.7°(위치 추정 오차 140 cm). robot_localization 예제 권고:
+    # "한 센서는 위치, 다른 센서는 속도". 이제 x,y는 EKF가 vx와 자이로 방향으로 적분한다.
+    odom0_config: [false, false, false,
                    false, false, false,
                    true,  false, false,
                    false, false, false,
