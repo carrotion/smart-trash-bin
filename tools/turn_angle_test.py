@@ -48,6 +48,7 @@ def main():
     ap.add_argument('--angles', type=float, nargs='+', default=[15, 45, 90, 180])
     # 기본값 None = turn_to_angle.py 기본값(09-27 ④ 비교 D 설정)을 그대로
     ap.add_argument('--w-max', type=float, default=None)
+    ap.add_argument('--w-max-cw', type=float, default=None, help='시계방향(우회전) 최대 속도')
     ap.add_argument('--kp', type=float, default=None, help='남은 각(rad) × kp = 감속 목표 속도')
     ap.add_argument('--w-min', type=float, default=None)
     ap.add_argument('--coast', type=float, default=None, help='정지 명령 뒤 관성 시간(s) 추정')
@@ -87,7 +88,7 @@ def main():
     t0 = time.time()
     while (S['scan'] is None or S['ekf'] is None or len(S['g']) < 20) and time.time() - t0 < 10:
         spin(0.1)
-    kw = {k: v for k, v in dict(kp=a.kp, w_min=a.w_min, w_max=a.w_max, coast_s=a.coast, settle_s=a.settle,
+    kw = {k: v for k, v in dict(kp=a.kp, w_min=a.w_min, w_max=a.w_max, w_max_cw=a.w_max_cw, coast_s=a.coast, settle_s=a.settle,
                                 accel=a.accel, tol_deg=a.tol, max_fix=a.max_fix).items() if v is not None}
     turner = TurnToAngle(pub, spin, lambda: S['ekf'], lambda: S['gz'], **kw)
     w_max = turner.w_max
@@ -132,7 +133,7 @@ def main():
             pub.publish(Twist()); rclpy.spin_once(n, timeout_sec=0.02)
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         out = os.path.join(repo, 'docs/calibration', f'turn_angle_{time.strftime("%Y%m%d_%H%M")}{("_" + a.label) if a.label else ""}.json')
-        json.dump(dict(criteria=CRIT, args=vars(a), turner=dict(kp=turner.kp, w_min=turner.w_min, w_max=turner.w_max, accel=turner.accel, settle=turner.settle_s), rows=rows, aborted=aborted), open(out, 'w'), ensure_ascii=False, indent=1)
+        json.dump(dict(criteria=CRIT, args=vars(a), turner=dict(kp=turner.kp, w_min=turner.w_min, w_max=turner.w_max, w_max_cw=turner.w_max_cw, accel=turner.accel, settle=turner.settle_s), rows=rows, aborted=aborted), open(out, 'w'), ensure_ascii=False, indent=1)
         rates = {k: (sum(r['pass'][k] for r in rows) / len(rows) if rows else 0.0) for k in RATE}
         ok = bool(rows) and not aborted and all(rates[k] >= RATE[k] for k in RATE) and all(r['ok_turn'] for r in rows)
         print('항목별 통과율: ' + ', '.join(f'{k} {rates[k]*100:.0f}%(기준 {RATE[k]*100:.0f}%)' for k in RATE))

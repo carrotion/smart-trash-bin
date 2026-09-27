@@ -42,10 +42,14 @@ class TurnToAngle:
 #   ⚠️ 09-27 17:30 IMU 저역 필터(DLPF) 켠 뒤 자이로 지연으로 0.17이면 첫 회전 평균 +3° 넘침 → 0.20, 그리고
 #   흩어짐(±3~5°)을 보정으로 흡수: 허용 3°→2°(합격 기준 EKF 2°와 일치), 보정 최대 1→2회. 16회 전 항목 100% 가속 제한은 구동 노드가 아니라
     #   여기서 건다 — 대시보드 수동 조종 반응은 그대로 두기 위해(사용자 결정).
-    def __init__(self, pub, spin, get_yaw, get_gyro, kp=3.0, w_min=0.25, w_max=0.8,
+    # ⚠️⚠️ 09-27 20:20 정정: "낮추면 오히려 튐 증가"는 시계방향(우회전)에 맞지 않았다. 시계방향 160° × 5, 케이블 정리 뒤:
+    #   w_max 0.8 → 최대 1.03~1.46 rad/s(1.2 초과 2/5), 0.6 → 0.79~0.89(0/5). 시계방향 회전표가 0.44→0.71로 건너뛰는
+    #   경계(미끄럼 상태로 넘어감) 바로 위가 0.8이라 넘어가면 1.0~1.4로 튄다. 반시계는 0.8에서 0.86~1.07이라 그대로
+    def __init__(self, pub, spin, get_yaw, get_gyro, kp=3.0, w_min=0.25, w_max=0.8, w_max_cw=0.6,
                  coast_s=0.20, tol_deg=2.0, max_fix=2, settle_gyro=0.03, settle_s=0.2, accel=0.3):
         self.pub, self.spin, self.get_yaw, self.get_gyro = pub, spin, get_yaw, get_gyro
         self.kp, self.w_min, self.w_max, self.coast_s = kp, w_min, w_max, coast_s
+        self.w_max_cw = w_max if w_max_cw is None else min(w_max, w_max_cw)
         self.accel = accel
         self._t_cmd = None
         self.tol, self.max_fix = math.radians(tol_deg), max_fix
@@ -113,7 +117,7 @@ class TurnToAngle:
         t0 = time.time()
         limit = abs(delta_rad) / self.w_min + 3.0
         self._phase = 'main'
-        ok, msg, total = self._drive(delta_rad, self.w_max, limit)
+        ok, msg, total = self._drive(delta_rad, self.w_max if delta_rad > 0 else self.w_max_cw, limit)
         fixes = 0; main_err = None
         while ok:
             total += self._settle_track()
