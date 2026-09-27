@@ -437,5 +437,28 @@
   "estimate_error_m": 0.08485713481386273,
   "estimate_error_deg": -7.983794523385551,
   "icp_resid_m": 0.017327315279612666
+ },
+ {
+  "time": "2026-09-27 17:31:00",
+  "label": "suite",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.8,
+  "turn_mode": "ekf",
+  "turn_errs_deg": [
+   0.33969022217334705,
+   2.206237881673086,
+   0.5068013972030279,
+   -1.0390399531880943
+  ],
+  "drive": "primitive",
+  "dir": "ccw",
+  "real_return_m": 0.020306970894300683,
+  "real_return_deg": -0.2589315442141053,
+  "ekf_return_m": 0.042648644773523245,
+  "ekf_return_deg": 1.2972805685576378,
+  "estimate_error_m": 0.03249616280331516,
+  "estimate_error_deg": 1.5562121127717432,
+  "icp_resid_m": 0.017471298895175326
  }
 ]

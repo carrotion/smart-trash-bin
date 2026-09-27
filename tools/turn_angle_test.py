@@ -53,6 +53,8 @@ def main():
     ap.add_argument('--coast', type=float, default=None, help='정지 명령 뒤 관성 시간(s) 추정')
     ap.add_argument('--settle', type=float, default=None, help='정지 판정에 필요한 조용한 시간(s)')
     ap.add_argument('--accel', type=float, default=None, help='명령 가속 제한(rad/s²)')
+    ap.add_argument('--tol', type=float, default=None, help='보정 회전 기준(°)')
+    ap.add_argument('--max-fix', type=int, default=None)
     ap.add_argument('--label', default='')
     a = ap.parse_args()
     rclpy.init(); n = rclpy.create_node('turn_angle_test')
@@ -86,7 +88,7 @@ def main():
     while (S['scan'] is None or S['ekf'] is None or len(S['g']) < 20) and time.time() - t0 < 10:
         spin(0.1)
     kw = {k: v for k, v in dict(kp=a.kp, w_min=a.w_min, w_max=a.w_max, coast_s=a.coast, settle_s=a.settle,
-                                accel=a.accel).items() if v is not None}
+                                accel=a.accel, tol_deg=a.tol, max_fix=a.max_fix).items() if v is not None}
     turner = TurnToAngle(pub, spin, lambda: S['ekf'], lambda: S['gz'], **kw)
     w_max = turner.w_max
     rows = []; aborted = False
