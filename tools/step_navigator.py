@@ -55,6 +55,7 @@ class StepNavigator:
         self.turner = TurnToAngle(self.pub, self.spin, lambda: self.S['pose'][2], lambda: self.S['gz'])
         self.driver = DriveDistance(self.pub, self.spin, lambda: self.S['pose'], lambda: self.S['v'], clear_fn=self._clear_now)
         self.log = []
+        self._last_scan_key = None; self._blocked_streak = 0
 
     def _on_odom(self, m):
         p = m.pose.pose
@@ -68,8 +69,18 @@ class StepNavigator:
             rclpy.spin_once(self.n, timeout_sec=0.005)
 
     def _clear_now(self, sgn):
-        """직진 중 매 주기: 가는 쪽 통로에 0.2 m 안 장애물이면 멈춤(collision_monitor와 별개의 한 겹)."""
-        return self.S['scan'] is not None and corridor_clearance(self.S['scan'], sgn > 0, 0.0 if sgn > 0 else 0.1) > 0.2
+        """직진 중 매 주기: 가는 쪽 통로에 0.2 m 안 장애물이 **스캔 두 장 연속**이면 멈춤(collision_monitor와 별개의 한 겹).
+        ⚠️ 09-27 실물: 차체 앞 모서리 바로 바깥의 자기반사 점(바닥 녹화에서 스캔의 약 9%)이 한 장에만 찍혀
+        여유 0.01 m로 오판 → 직진이 멈췄다. 진짜 장애물은 연속으로 보인다."""
+        m = self.S['scan']
+        if m is None:
+            return False
+        key = (m.header.stamp.sec, m.header.stamp.nanosec)
+        if key != self._last_scan_key:
+            self._last_scan_key = key
+            blocked = corridor_clearance(m, sgn > 0, 0.0 if sgn > 0 else 0.1) <= 0.2
+            self._blocked_streak = self._blocked_streak + 1 if blocked else 0
+        return self._blocked_streak < 2
 
     def map_pose(self):
         try:
