@@ -1,0 +1,193 @@
+{
+ "criteria": {
+  "err_ekf": 2.0,
+  "err_icp": 3.0,
+  "peak_ratio": 1.3,
+  "time_over": 0.0
+ },
+ "args": {
+  "angles": [
+   15,
+   45,
+   90,
+   180
+  ],
+  "w_max": null,
+  "kp": null,
+  "w_min": null,
+  "coast": 0.12,
+  "settle": null,
+  "accel": null,
+  "label": "coast012_1"
+ },
+ "turner": {
+  "kp": 3.0,
+  "w_min": 0.25,
+  "w_max": 0.8,
+  "accel": 0.3,
+  "settle": 0.2
+ },
+ "rows": [
+  {
+   "angle": 15,
+   "err_ekf": 2.106241140542174,
+   "err_icp": 3.095358592649891,
+   "icp_resid_cm": 1.9616993740731665,
+   "peak": 0.476768528784601,
+   "peak_ratio": 0.5959606609807513,
+   "secs": 3.454848527908325,
+   "time_over": 0.5185162149097429,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 2.053100905433134,
+   "pass": {
+    "err_ekf": false,
+    "err_icp": false,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": -15,
+   "err_ekf": 0.8470994967080241,
+   "err_icp": 0.4374110454902027,
+   "icp_resid_cm": 1.6780200917001866,
+   "peak": 0.3811771129421667,
+   "peak_ratio": 0.47647139117770837,
+   "secs": 6.065707206726074,
+   "time_over": 3.129374893727492,
+   "fixes": 1,
+   "ok_turn": true,
+   "main_err": -4.17240252456401,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": 45,
+   "err_ekf": 1.329882505447351,
+   "err_icp": 0.6501469090177991,
+   "icp_resid_cm": 2.4241596888765744,
+   "peak": 0.8012908190576095,
+   "peak_ratio": 1.0016135238220119,
+   "secs": 5.541740655899048,
+   "time_over": 1.7327437169033004,
+   "fixes": 1,
+   "ok_turn": true,
+   "main_err": 3.3681062270112365,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": -45,
+   "err_ekf": 1.9166194147039448,
+   "err_icp": 0.7066178688898432,
+   "icp_resid_cm": 1.9239880335433346,
+   "peak": 0.8016602359254372,
+   "peak_ratio": 1.0020752949067964,
+   "secs": 3.9543373584747314,
+   "time_over": 0.14534041947898402,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -1.9718061254813255,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": 90,
+   "err_ekf": 0.7151837537085299,
+   "err_icp": 0.2146092932727015,
+   "icp_resid_cm": 2.429193873898766,
+   "peak": 0.922000767100959,
+   "peak_ratio": 1.1525009588761987,
+   "secs": 4.3399293422698975,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 0.5497890403076495,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -90,
+   "err_ekf": 1.2507042142639477,
+   "err_icp": 0.8010779311913296,
+   "icp_resid_cm": 2.2726602514350334,
+   "peak": 1.1705057276327477,
+   "peak_ratio": 1.4631321595409346,
+   "secs": 5.07949423789978,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -1.3685530083815705,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": false,
+    "time_over": true
+   },
+   "ok": false
+  },
+  {
+   "angle": 180,
+   "err_ekf": 0.6021128021581035,
+   "err_icp": 0.5493815305913756,
+   "icp_resid_cm": 2.0548445123852033,
+   "peak": 0.8781196689930386,
+   "peak_ratio": 1.0976495862412983,
+   "secs": 6.246323347091675,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -0.7448184867237662,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -180,
+   "err_ekf": 0.6015421209235683,
+   "err_icp": 0.021648352120735126,
+   "icp_resid_cm": 1.852069468273996,
+   "peak": 1.084135243360051,
+   "peak_ratio": 1.3551690542000638,
+   "secs": 9.584349393844604,
+   "time_over": 1.8483616378616157,
+   "fixes": 1,
+   "ok_turn": true,
+   "main_err": -3.26123684239052,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": false,
+    "time_over": false
+   },
+   "ok": false
+  }
+ ],
+ "aborted": false
+}

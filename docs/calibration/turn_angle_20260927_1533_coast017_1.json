@@ -1,0 +1,193 @@
+{
+ "criteria": {
+  "err_ekf": 2.0,
+  "err_icp": 3.0,
+  "peak_ratio": 1.3,
+  "time_over": 0.0
+ },
+ "args": {
+  "angles": [
+   15,
+   45,
+   90,
+   180
+  ],
+  "w_max": null,
+  "kp": null,
+  "w_min": null,
+  "coast": 0.17,
+  "settle": null,
+  "accel": null,
+  "label": "coast017_1"
+ },
+ "turner": {
+  "kp": 3.0,
+  "w_min": 0.25,
+  "w_max": 0.8,
+  "accel": 0.3,
+  "settle": 0.2
+ },
+ "rows": [
+  {
+   "angle": 15,
+   "err_ekf": 1.4617208724436654,
+   "err_icp": 1.7439269010656506,
+   "icp_resid_cm": 1.629268368603776,
+   "peak": 0.4038899714215164,
+   "peak_ratio": 0.5048624642768954,
+   "secs": 2.6102397441864014,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -1.740101300338279,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -15,
+   "err_ekf": 1.6455886308757695,
+   "err_icp": 1.2330360450024376,
+   "icp_resid_cm": 1.8134398009725505,
+   "peak": 0.41817819453402194,
+   "peak_ratio": 0.5227227431675274,
+   "secs": 1.9320740699768066,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 1.2774043512257296,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": 45,
+   "err_ekf": 1.4852574940498187,
+   "err_icp": 1.2165268917720269,
+   "icp_resid_cm": 2.33454798127418,
+   "peak": 0.6445169478941856,
+   "peak_ratio": 0.8056461848677319,
+   "secs": 3.4210731983184814,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 1.4741200290010774,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -45,
+   "err_ekf": 1.4558473040204731,
+   "err_icp": 1.4375800783479775,
+   "icp_resid_cm": 1.782187689595818,
+   "peak": 0.8039299465631083,
+   "peak_ratio": 1.0049124332038855,
+   "secs": 2.654496431350708,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -1.3941868088951825,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": 90,
+   "err_ekf": 0.6902962856918293,
+   "err_icp": 2.106069916231135,
+   "icp_resid_cm": 1.9658551451446769,
+   "peak": 0.9102843983397729,
+   "peak_ratio": 1.1378554979247162,
+   "secs": 5.064162254333496,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -1.1275129519826002,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -90,
+   "err_ekf": 1.7099990921114738,
+   "err_icp": 2.8332131133371945,
+   "icp_resid_cm": 2.315086301739077,
+   "peak": 0.9893083632331401,
+   "peak_ratio": 1.236635454041425,
+   "secs": 4.655252695083618,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -2.411322224306699,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": 180,
+   "err_ekf": 0.5005730825349133,
+   "err_icp": 1.2609149402046,
+   "icp_resid_cm": 1.9993122425074978,
+   "peak": 1.0183550915825283,
+   "peak_ratio": 1.2729438644781603,
+   "secs": 6.735355615615845,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -0.5387685936853451,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -180,
+   "err_ekf": 1.9773720296188344,
+   "err_icp": 0.2608754297970961,
+   "icp_resid_cm": 1.8934738850622257,
+   "peak": 1.029284790487199,
+   "peak_ratio": 1.2866059881089986,
+   "secs": 5.640655279159546,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -2.0127844776246526,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  }
+ ],
+ "aborted": false
+}

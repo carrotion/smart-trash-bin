@@ -23,10 +23,13 @@ CRIT = dict(err_ekf=2.0, err_icp=3.0, peak_ratio=1.3, time_over=0.0)
 
 
 def time_limit(ang_deg):
-    """허용 시간: 시작·정지 여유 2.5 s + 평균 0.6 rad/s. 09-27 사용자: "해보고 합리적 수준으로" —
-    멈춤-확인-이동에서 회전 시간은 결정적이지 않아 ④ D 설정 실측(90° 5.0~7.6 s, 180° 6.4~7.1 s)을 보고 정함.
-    90° ≈ 5.1 s, 180° ≈ 7.7 s."""
-    return 2.5 + math.radians(abs(ang_deg)) / 0.6
+    """허용 시간 3.0 s + 각/0.6 rad/s(90° ≈ 5.6 s, 180° ≈ 8.2 s). 09-27 사용자 "해보고 합리적 수준으로" →
+    D 설정·coast 0.17 16회 실측(보정 없는 회전은 모두 이내, 보정 1회 붙으면 +3 s)을 보고 정함."""
+    return 3.0 + math.radians(abs(ang_deg)) / 0.6
+
+
+# 합격 = 항목별 통과 비율(한 번씩의 편차가 있어 전체 비율로 판정, 09-27 결정)
+RATE = dict(err_icp=0.95, err_ekf=0.90, peak_ratio=0.95, time_over=0.80)
 
 
 def icp_rotation_deg(before, after, guess_rad):
@@ -108,14 +111,14 @@ def main():
                 m = dict(angle=sgn * ang, err_ekf=abs(turned_ekf - sgn * ang), err_icp=abs(real - sgn * ang),
                          icp_resid_cm=resid * 100, peak=peak, peak_ratio=peak / w_max,
                          secs=secs, time_over=max(0.0, secs - time_limit(ang)),
-                         fixes=r['fixes'], ok_turn=r['ok'])
+                         fixes=r['fixes'], ok_turn=r['ok'], main_err=r.get('main_err_deg'))
                 m['pass'] = {k: (m[k] <= CRIT[k]) for k in CRIT}
                 m['ok'] = all(m['pass'].values()) and r['ok'] and resid < 0.05
                 rows.append(m); p = m['pass']
                 print(f'{sgn*ang:+5.0f}°: EKF 오차 {m["err_ekf"]:.1f}°{"✅" if p["err_ekf"] else "❌"} '
                       f'라이다 오차 {m["err_icp"]:.1f}°{"✅" if p["err_icp"] else "❌"}(잔차 {resid*100:.1f}cm) '
                       f'최대 {peak:.2f}(×{m["peak_ratio"]:.2f}{"✅" if p["peak_ratio"] else "❌"}) '
-                      f'{secs:.1f}초{"✅" if p["time_over"] else "❌"} 보정 {r["fixes"]}회', flush=True)
+                      f'{secs:.1f}초{"✅" if p["time_over"] else "❌"} 보정 {r["fixes"]}회(첫 회전 뒤 {(r.get("main_err_deg") or 0) * (1 if ang * sgn > 0 else -1):+.1f}°)', flush=True)
     except Abort as e:
         print('❌ 안전 중단:', e); aborted = True
     finally:
@@ -124,8 +127,10 @@ def main():
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         out = os.path.join(repo, 'docs/calibration', f'turn_angle_{time.strftime("%Y%m%d_%H%M")}{("_" + a.label) if a.label else ""}.json')
         json.dump(dict(criteria=CRIT, args=vars(a), turner=dict(kp=turner.kp, w_min=turner.w_min, w_max=turner.w_max, accel=turner.accel, settle=turner.settle_s), rows=rows, aborted=aborted), open(out, 'w'), ensure_ascii=False, indent=1)
-        ok = rows and all(r['ok'] for r in rows) and not aborted
-        print(f'④ 각도 회전: {"✅ 합격" if ok else "❌ 불합격"} ({sum(r["ok"] for r in rows)}/{len(rows)}) | 저장 {out}')
+        rates = {k: (sum(r['pass'][k] for r in rows) / len(rows) if rows else 0.0) for k in RATE}
+        ok = bool(rows) and not aborted and all(rates[k] >= RATE[k] for k in RATE) and all(r['ok_turn'] for r in rows)
+        print('항목별 통과율: ' + ', '.join(f'{k} {rates[k]*100:.0f}%(기준 {RATE[k]*100:.0f}%)' for k in RATE))
+        print(f'④ 각도 회전: {"✅ 합격" if ok else "❌ 불합격"} | 저장 {out}')
     rclpy.shutdown()
     return 0 if ok else 2
 

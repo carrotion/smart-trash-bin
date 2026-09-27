@@ -1,0 +1,193 @@
+{
+ "criteria": {
+  "err_ekf": 2.0,
+  "err_icp": 3.0,
+  "peak_ratio": 1.3,
+  "time_over": 0.0
+ },
+ "args": {
+  "angles": [
+   15,
+   45,
+   90,
+   180
+  ],
+  "w_max": null,
+  "kp": null,
+  "w_min": null,
+  "coast": null,
+  "settle": null,
+  "accel": null,
+  "label": "mainerr"
+ },
+ "turner": {
+  "kp": 3.0,
+  "w_min": 0.25,
+  "w_max": 0.8,
+  "accel": 0.3,
+  "settle": 0.2
+ },
+ "rows": [
+  {
+   "angle": 15,
+   "err_ekf": 2.555431712771856,
+   "err_icp": 2.7203599864034125,
+   "icp_resid_cm": 1.7882101065618987,
+   "peak": 0.3720922548809204,
+   "peak_ratio": 0.46511531860115046,
+   "secs": 3.265188217163086,
+   "time_over": 0.3288559041645036,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -2.96642286979645,
+   "pass": {
+    "err_ekf": false,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": -15,
+   "err_ekf": 1.3177863922504827,
+   "err_icp": 1.1946095090059323,
+   "icp_resid_cm": 1.7943752984724757,
+   "peak": 0.4295901115100201,
+   "peak_ratio": 0.536987639387525,
+   "secs": 3.1596808433532715,
+   "time_over": 0.22334853035468916,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -1.468462480847574,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": 45,
+   "err_ekf": 2.2387300696476657,
+   "err_icp": 2.4309098457287774,
+   "icp_resid_cm": 2.2551566848759443,
+   "peak": 0.6460604583825423,
+   "peak_ratio": 0.8075755729781778,
+   "secs": 4.050753831863403,
+   "time_over": 0.2417568928676559,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": -2.492946290829913,
+   "pass": {
+    "err_ekf": false,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": -45,
+   "err_ekf": 0.2045535396790612,
+   "err_icp": 0.12134670590346275,
+   "icp_resid_cm": 2.436141969703216,
+   "peak": 0.8521838912791677,
+   "peak_ratio": 1.0652298640989595,
+   "secs": 2.876093864440918,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 0.05906688142896899,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": 90,
+   "err_ekf": 0.40153743569759115,
+   "err_icp": 0.2793681291932586,
+   "icp_resid_cm": 2.6951999661894352,
+   "peak": 0.9697074052261573,
+   "peak_ratio": 1.2121342565326965,
+   "secs": 3.7766573429107666,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 0.32087174371860644,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -90,
+   "err_ekf": 2.843601613798697,
+   "err_icp": 3.1458488351414218,
+   "icp_resid_cm": 2.1824298199537995,
+   "peak": 0.8284468669155161,
+   "peak_ratio": 1.035558583644395,
+   "secs": 7.094739675521851,
+   "time_over": 1.9767457975303557,
+   "fixes": 1,
+   "ok_turn": true,
+   "main_err": 6.184115744375169,
+   "pass": {
+    "err_ekf": false,
+    "err_icp": false,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": 180,
+   "err_ekf": 1.717232725732714,
+   "err_icp": 1.777994670464011,
+   "icp_resid_cm": 1.7964768285267059,
+   "peak": 0.9704508389881047,
+   "peak_ratio": 1.213063548735131,
+   "secs": 9.296051263809204,
+   "time_over": 1.5600635078262153,
+   "fixes": 1,
+   "ok_turn": true,
+   "main_err": -4.329600774809538,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": false
+   },
+   "ok": false
+  },
+  {
+   "angle": -180,
+   "err_ekf": 0.08015568515313021,
+   "err_icp": 1.6602973443410747,
+   "icp_resid_cm": 1.6195374387230628,
+   "peak": 0.9939679651192158,
+   "peak_ratio": 1.2424599563990197,
+   "secs": 5.513977527618408,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 0.14403013952200058,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  }
+ ],
+ "aborted": false
+}
