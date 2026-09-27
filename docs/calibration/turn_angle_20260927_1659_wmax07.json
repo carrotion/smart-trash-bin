@@ -1,0 +1,209 @@
+{
+ "criteria": {
+  "err_ekf": 2.0,
+  "err_icp": 3.0,
+  "peak_ratio": 1.3,
+  "time_over": 0.0
+ },
+ "args": {
+  "angles": [
+   15,
+   45,
+   90,
+   180
+  ],
+  "w_max": 0.7,
+  "kp": null,
+  "w_min": null,
+  "coast": null,
+  "settle": null,
+  "accel": null,
+  "label": "wmax07"
+ },
+ "turner": {
+  "kp": 3.0,
+  "w_min": 0.25,
+  "w_max": 0.7,
+  "accel": 0.3,
+  "settle": 0.2
+ },
+ "rows": [
+  {
+   "angle": 15,
+   "turned_ekf": 16.349120067024547,
+   "turned_icp": 15.835238102910767,
+   "err_ekf": 1.349120067024547,
+   "err_icp": 0.8352381029107665,
+   "icp_resid_cm": 1.8005887856859168,
+   "peak": 0.44547511650744515,
+   "peak_ratio": 0.6363930235820645,
+   "secs": 2.8871381282806396,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 1.2728831448132827,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -15,
+   "turned_ekf": -13.996472443135985,
+   "turned_icp": -14.780020158430736,
+   "err_ekf": 1.0035275568640145,
+   "err_icp": 0.21997984156926442,
+   "icp_resid_cm": 1.706807699776764,
+   "peak": 0.3884362412714849,
+   "peak_ratio": 0.5549089161021213,
+   "secs": 3.2455928325653076,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 1.0882944868061541,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": 45,
+   "turned_ekf": 45.62865488488586,
+   "turned_icp": 44.64598778025947,
+   "err_ekf": 0.6286548848858615,
+   "err_icp": 0.35401221974053243,
+   "icp_resid_cm": 2.0923545684578624,
+   "peak": 0.5772373291984988,
+   "peak_ratio": 0.8246247559978555,
+   "secs": 4.160606145858765,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 0.6804399960947041,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -45,
+   "turned_ekf": -43.81986996820684,
+   "turned_icp": -43.84226204916367,
+   "err_ekf": 1.180130031793162,
+   "err_icp": 1.157737950836328,
+   "icp_resid_cm": 2.511431578359036,
+   "peak": 0.8030997958222823,
+   "peak_ratio": 1.1472854226032605,
+   "secs": 3.130444288253784,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 1.2609325474896336,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": 90,
+   "turned_ekf": 90.40218875730582,
+   "turned_icp": 90.18121023628802,
+   "err_ekf": 0.40218875730582226,
+   "err_icp": 0.1812102362880239,
+   "icp_resid_cm": 2.1103362478687924,
+   "peak": 0.8318070131413944,
+   "peak_ratio": 1.1882957330591348,
+   "secs": 3.6352646350860596,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 0.3084370794330391,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": true
+  },
+  {
+   "angle": -90,
+   "turned_ekf": -88.94733697330028,
+   "turned_icp": -89.26292029084246,
+   "err_ekf": 1.0526630266997188,
+   "err_icp": 0.7370797091575412,
+   "icp_resid_cm": 1.9474767455668647,
+   "peak": 1.0061660860118518,
+   "peak_ratio": 1.4373801228740741,
+   "secs": 5.02993369102478,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 0.819429158612971,
+   "pass": {
+    "err_ekf": true,
+    "err_icp": true,
+    "peak_ratio": false,
+    "time_over": true
+   },
+   "ok": false
+  },
+  {
+   "angle": 180,
+   "turned_ekf": 182.3720297590381,
+   "turned_icp": 181.45561876280775,
+   "err_ekf": 2.3720297590380994,
+   "err_icp": 1.4556187628077453,
+   "icp_resid_cm": 1.8045399542910536,
+   "peak": 0.8814960526562843,
+   "peak_ratio": 1.2592800752232634,
+   "secs": 7.441515684127808,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 2.179626852899262,
+   "pass": {
+    "err_ekf": false,
+    "err_icp": true,
+    "peak_ratio": true,
+    "time_over": true
+   },
+   "ok": false
+  },
+  {
+   "angle": -180,
+   "turned_ekf": -177.6851038006604,
+   "turned_icp": -176.52981259642783,
+   "err_ekf": 2.314896199339586,
+   "err_icp": 3.4701874035721687,
+   "icp_resid_cm": 2.0246510525694017,
+   "peak": 1.0309796718793036,
+   "peak_ratio": 1.4728281026847196,
+   "secs": 7.386772155761719,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_turn": true,
+   "main_err": 2.5505676429224597,
+   "pass": {
+    "err_ekf": false,
+    "err_icp": false,
+    "peak_ratio": false,
+    "time_over": true
+   },
+   "ok": false
+  }
+ ],
+ "aborted": false
+}

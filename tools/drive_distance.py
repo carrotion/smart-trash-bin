@@ -62,15 +62,21 @@ class DriveDistance:
 
     def _drive(self, start, target, v_cap, time_limit):
         """출발 자세 start 기준 target(m, 부호=방향) 지점까지. (ok, msg)"""
-        t0 = time.time(); sgn = 1.0 if target > 0 else -1.0; last_prog = None; t_prog = t0
+        t0 = time.time(); sgn = 1.0 if target > 0 else -1.0; last_prog = None; t_prog = t0; t_block = None
         while True:
             along, _ = self._progress(start)
             rem = target - along
             v_now = abs(self.get_speed())
             if rem * sgn < max(v_now * self.coast_s, 0.003):
                 break
+            # 막힘이 0.15초(스캔 두 장) 넘게 이어질 때만 정지 — ⚠️ 09-27: 차체 앞 모서리 바로 바깥 자기반사 점이
+            #   스캔 한 장에만 찍혀 0.03 m 만에 멈춘 일(주행기·회귀 시험 각 1회). 판정을 1층 동작 안에 둔다
             if not self.clear_fn(sgn):
-                self.stop(); return False, '진행 방향 장애물 — 정지'
+                t_block = t_block or time.time()
+                if time.time() - t_block > 0.15:
+                    self.stop(); return False, '진행 방향 장애물 — 정지'
+            else:
+                t_block = None
             v = sgn * max(self.v_min, min(v_cap, self.kp * abs(rem)))
             # 출발 방향 유지: 방향 오차 × head_kp를 작은 회전 명령으로(±head_w_max). ⚠️ 09-27 기준 측정에서 0.3 m마다
             #   출발 때 1~2° 틀어진 채 남음 — 구동 노드 yaw_hold는 각속도만 잡아 이미 틀어진 각은 되돌리지 않는다

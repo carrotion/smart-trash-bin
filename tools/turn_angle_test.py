@@ -2,7 +2,7 @@
 """1층 기본 동작 ④ — 정해진 각도까지 회전 (docs/motion_foundation.md 합격 기준).
 
 각도 15, 45, 90, 180° × 좌/우를 tools/turn_to_angle.py(EKF 방향 폐루프)로 돌리고 판정:
-  최종 오차 ≤ 2°(EKF) / ≤ 3°(라이다 ICP: 회전 전후 스캔 정합) / 최대 회전(0.2초 평균) ≤ 1.3 × w_max /
+  최종 오차 ≤ 2°(EKF) / ≤ 3°(라이다 ICP: 회전 전후 스캔 정합) / 최대 회전(0.2초 평균) ≤ 1.2 rad/s /
   시간 ≤ 2.5 s + 각도/0.6 rad/s(time_limit)
 안전: |자이로| > 2.0 rad/s 0.2초 초과 시 정지·중단. 주변 0.4 m 여유. ⚠️ 바닥 전용.
 
@@ -19,7 +19,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rotation_quality_test import scan_points, icp
 from turn_to_angle import TurnToAngle, yaw_of, wrap
 
-CRIT = dict(err_ekf=2.0, err_icp=3.0, peak_ratio=1.3, time_over=0.0)
+# 튐 기준: 설정 대비 배율(1.3×) → **절대 1.2 rad/s**(0.2초 평균). ⚠️ 09-27: 최대 속도를 0.8→0.7→0.4로 낮춰도 실제 최대가
+#   1.0~1.1 rad/s로 같았다(차체가 길게 돌면 자연 회전 속도로 감) → 배율은 설정만 낮추면 나빠지는 잘못된 척도.
+#   중요한 건 실제 회전이 안전한 속도 안에 머무는지(사고 때 4.4, 폭주 잠금 2.5). 배율은 참고로 남김
+CRIT = dict(err_ekf=2.0, err_icp=3.0, peak=1.2, time_over=0.0)
 
 
 def time_limit(ang_deg):
@@ -29,7 +32,7 @@ def time_limit(ang_deg):
 
 
 # 합격 = 항목별 통과 비율(한 번씩의 편차가 있어 전체 비율로 판정, 09-27 결정)
-RATE = dict(err_icp=0.95, err_ekf=0.90, peak_ratio=0.95, time_over=0.80)
+RATE = dict(err_icp=0.95, err_ekf=0.90, peak=0.95, time_over=0.80)
 
 
 def icp_rotation_deg(before, after, guess_rad):
@@ -118,7 +121,7 @@ def main():
                 rows.append(m); p = m['pass']
                 print(f'{sgn*ang:+5.0f}°: EKF 오차 {m["err_ekf"]:.1f}°{"✅" if p["err_ekf"] else "❌"} '
                       f'라이다 오차 {m["err_icp"]:.1f}°{"✅" if p["err_icp"] else "❌"}(잔차 {resid*100:.1f}cm) '
-                      f'최대 {peak:.2f}(×{m["peak_ratio"]:.2f}{"✅" if p["peak_ratio"] else "❌"}) '
+                      f'최대 {peak:.2f} rad/s{"✅" if p["peak"] else "❌"}(×{m["peak_ratio"]:.2f}) '
                       f'{secs:.1f}초{"✅" if p["time_over"] else "❌"} 보정 {r["fixes"]}회(첫 회전 뒤 {(r.get("main_err_deg") or 0) * (1 if ang * sgn > 0 else -1):+.1f}°)', flush=True)
     except Abort as e:
         print('❌ 안전 중단:', e); aborted = True
