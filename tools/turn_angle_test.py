@@ -3,7 +3,7 @@
 
 각도 15, 45, 90, 180° × 좌/우를 tools/turn_to_angle.py(EKF 방향 폐루프)로 돌리고 판정:
   최종 오차 ≤ 2°(EKF) / ≤ 3°(라이다 ICP: 회전 전후 스캔 정합) / 최대 회전(0.2초 평균) ≤ 1.3 × w_max /
-  시간 ≤ 각도/w_max + 2 s
+  시간 ≤ 2.5 s + 각도/0.6 rad/s(time_limit)
 안전: |자이로| > 2.0 rad/s 0.2초 초과 시 정지·중단. 주변 0.4 m 여유. ⚠️ 바닥 전용.
 
     python3 tools/turn_angle_test.py [--angles 15 45 90 180] [--label 이름]
@@ -22,6 +22,13 @@ from turn_to_angle import TurnToAngle, yaw_of, wrap
 CRIT = dict(err_ekf=2.0, err_icp=3.0, peak_ratio=1.3, time_over=0.0)
 
 
+def time_limit(ang_deg):
+    """허용 시간: 시작·정지 여유 2.5 s + 평균 0.6 rad/s. 09-27 사용자: "해보고 합리적 수준으로" —
+    멈춤-확인-이동에서 회전 시간은 결정적이지 않아 ④ D 설정 실측(90° 5.0~7.6 s, 180° 6.4~7.1 s)을 보고 정함.
+    90° ≈ 5.1 s, 180° ≈ 7.7 s."""
+    return 2.5 + math.radians(abs(ang_deg)) / 0.6
+
+
 def icp_rotation_deg(before, after, guess_rad):
     """회전 전 스캔(before)에 회전 후 스캔(after)을 맞춰 실제 회전각(도). 제자리 회전이라 초기값은 회전만."""
     pb, pa = np.array(scan_points(before)), np.array(scan_points(after))
@@ -33,11 +40,13 @@ def icp_rotation_deg(before, after, guess_rad):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--angles', type=float, nargs='+', default=[15, 45, 90, 180])
-    ap.add_argument('--w-max', type=float, default=0.5)
-    ap.add_argument('--kp', type=float, default=1.5, help='남은 각(rad) × kp = 감속 목표 속도')
-    ap.add_argument('--w-min', type=float, default=0.2)
-    ap.add_argument('--coast', type=float, default=0.23, help='정지 명령 뒤 관성 시간(s) 추정')
-    ap.add_argument('--settle', type=float, default=0.3, help='정지 판정에 필요한 조용한 시간(s)')
+    # 기본값 None = turn_to_angle.py 기본값(09-27 ④ 비교 D 설정)을 그대로
+    ap.add_argument('--w-max', type=float, default=None)
+    ap.add_argument('--kp', type=float, default=None, help='남은 각(rad) × kp = 감속 목표 속도')
+    ap.add_argument('--w-min', type=float, default=None)
+    ap.add_argument('--coast', type=float, default=None, help='정지 명령 뒤 관성 시간(s) 추정')
+    ap.add_argument('--settle', type=float, default=None, help='정지 판정에 필요한 조용한 시간(s)')
+    ap.add_argument('--accel', type=float, default=None, help='명령 가속 제한(rad/s²)')
     ap.add_argument('--label', default='')
     a = ap.parse_args()
     rclpy.init(); n = rclpy.create_node('turn_angle_test')
@@ -70,8 +79,10 @@ def main():
     t0 = time.time()
     while (S['scan'] is None or S['ekf'] is None or len(S['g']) < 20) and time.time() - t0 < 10:
         spin(0.1)
-    turner = TurnToAngle(pub, spin, lambda: S['ekf'], lambda: S['gz'], kp=a.kp, w_min=a.w_min, w_max=a.w_max,
-                         coast_s=a.coast, settle_s=a.settle)
+    kw = {k: v for k, v in dict(kp=a.kp, w_min=a.w_min, w_max=a.w_max, coast_s=a.coast, settle_s=a.settle,
+                                accel=a.accel).items() if v is not None}
+    turner = TurnToAngle(pub, spin, lambda: S['ekf'], lambda: S['gz'], **kw)
+    w_max = turner.w_max
     rows = []; aborted = False
     try:
         for ang in a.angles:
@@ -95,8 +106,8 @@ def main():
                        for t, _ in win if t >= 0.2]
                 peak = max(avg, default=0.0)
                 m = dict(angle=sgn * ang, err_ekf=abs(turned_ekf - sgn * ang), err_icp=abs(real - sgn * ang),
-                         icp_resid_cm=resid * 100, peak=peak, peak_ratio=peak / a.w_max,
-                         secs=secs, time_over=max(0.0, secs - (math.radians(ang) / a.w_max + 2.0)),
+                         icp_resid_cm=resid * 100, peak=peak, peak_ratio=peak / w_max,
+                         secs=secs, time_over=max(0.0, secs - time_limit(ang)),
                          fixes=r['fixes'], ok_turn=r['ok'])
                 m['pass'] = {k: (m[k] <= CRIT[k]) for k in CRIT}
                 m['ok'] = all(m['pass'].values()) and r['ok'] and resid < 0.05
@@ -112,7 +123,7 @@ def main():
             pub.publish(Twist()); rclpy.spin_once(n, timeout_sec=0.02)
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         out = os.path.join(repo, 'docs/calibration', f'turn_angle_{time.strftime("%Y%m%d_%H%M")}{("_" + a.label) if a.label else ""}.json')
-        json.dump(dict(criteria=CRIT, args=vars(a), rows=rows, aborted=aborted), open(out, 'w'), ensure_ascii=False, indent=1)
+        json.dump(dict(criteria=CRIT, args=vars(a), turner=dict(kp=turner.kp, w_min=turner.w_min, w_max=turner.w_max, accel=turner.accel, settle=turner.settle_s), rows=rows, aborted=aborted), open(out, 'w'), ensure_ascii=False, indent=1)
         ok = rows and all(r['ok'] for r in rows) and not aborted
         print(f'④ 각도 회전: {"✅ 합격" if ok else "❌ 불합격"} ({sum(r["ok"] for r in rows)}/{len(rows)}) | 저장 {out}')
     rclpy.shutdown()

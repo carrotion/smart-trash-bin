@@ -38,7 +38,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--side', type=float, default=0.8)
     ap.add_argument('--speed', type=float, default=0.15)
-    ap.add_argument('--turn', type=float, default=0.5)
+    ap.add_argument('--turn', type=float, default=0.8)   # 09-27: 각도 회전 w_max(turn_to_angle D 설정)
     ap.add_argument('--label', default='')
     # ekf: EKF 방향 기준 폐루프(감속 → 정지 → 재측정 보정, tools/turn_to_angle.py) — 09-26 기본값
     # early: 예전 방식(자이로 적분, w×0.12초 앞당겨 정지 — 관성 추정이 고정이라 90°마다 2~3° 틀림)
