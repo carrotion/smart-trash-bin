@@ -38,10 +38,12 @@ class TurnToAngle:
 
     # 기본값: 2026-09-27 ④ 비교(docs/motion_foundation.md) D 설정 — w_max 0.8(차체 자연 회전 속도, 낮추면 오히려 튐 증가),
     #   명령 가속 0.3 rad/s²(튐 7/8 기준 내), kp 3·w_min 0.25·settle 0.2(시간 단축). coast 0.17: 능동 제동 뒤
-#   0.23이면 첫 회전 평균 −3°(덜 돎), 0.12면 +2.6°(더 돎) → 0.17에서 −1.7~+2.4°로 치우침 없음(09-27). 가속 제한은 구동 노드가 아니라
+#   0.23이면 첫 회전 평균 −3°(덜 돎), 0.12면 +2.6°(더 돎) → 0.17에서 −1.7~+2.4°로 치우침 없음(09-27).
+#   ⚠️ 09-27 17:30 IMU 저역 필터(DLPF) 켠 뒤 자이로 지연으로 0.17이면 첫 회전 평균 +3° 넘침 → 0.20, 그리고
+#   흩어짐(±3~5°)을 보정으로 흡수: 허용 3°→2°(합격 기준 EKF 2°와 일치), 보정 최대 1→2회. 16회 전 항목 100% 가속 제한은 구동 노드가 아니라
     #   여기서 건다 — 대시보드 수동 조종 반응은 그대로 두기 위해(사용자 결정).
     def __init__(self, pub, spin, get_yaw, get_gyro, kp=3.0, w_min=0.25, w_max=0.8,
-                 coast_s=0.17, tol_deg=3.0, max_fix=1, settle_gyro=0.03, settle_s=0.2, accel=0.3):
+                 coast_s=0.20, tol_deg=2.0, max_fix=2, settle_gyro=0.03, settle_s=0.2, accel=0.3):
         self.pub, self.spin, self.get_yaw, self.get_gyro = pub, spin, get_yaw, get_gyro
         self.kp, self.w_min, self.w_max, self.coast_s = kp, w_min, w_max, coast_s
         self.accel = accel

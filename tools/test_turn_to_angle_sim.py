@@ -16,7 +16,7 @@ from turn_to_angle import TurnToAngle
 class Plant:
     """가상 차체: 명령 뒤 lag초 정지, 이후 over배로 0.4초 튐, 시정수 tau로 추종, 명령 0이면 coast로 감속."""
 
-    def __init__(self, tau=0.15, coast=0.17, over=1.8, lag=0.1):   # coast 0.17 = 09-27 실측(능동 제동 후)
+    def __init__(self, tau=0.15, coast=0.20, over=1.8, lag=0.1):   # coast 0.20 = 09-27 실측(능동 제동·DLPF 후)
         self.yaw = 0.0; self.w = 0.0; self.cmd = 0.0; self.t_start = None
         self.tau, self.coast, self.over, self.lag = tau, coast, over, lag
         self.max_cmd_step = 0.0; self._last_cmd = 0.0; self._last_t = None
@@ -61,13 +61,13 @@ def run(deg, **kw):
 
 def main():
     fails = 0
-    # 관성 민감도: 실측 0.17 ± 50%(0.09, 0.26)는 합격 판정, 2배(0.35)는 참고만
+    # 관성 민감도: 실측 0.20 ± 50%(0.10, 0.30)는 합격 판정, 약 2배(0.35)는 참고만
     for deg, kw, judged in ((15, {}, 1), (-15, {}, 1), (90, {}, 1), (-90, {}, 1), (180, {}, 1), (-180, {}, 1), (270, {}, 1),
-                            (90, dict(over=2.5, lag=0.25), 1), (90, dict(coast=0.09), 1), (90, dict(coast=0.26), 1),
+                            (90, dict(over=2.5, lag=0.25), 1), (90, dict(coast=0.10), 1), (90, dict(coast=0.30), 1),
                             (90, dict(coast=0.35), 0)):
         r, real, acc = run(deg, **kw)
-        # 판정선 = 제어기 허용 오차(tol 3°) — 로직이 "보정 1회 이내로 허용 오차 안에 끝나는가"를 본다(실물 기준은 turn_angle_test)
-        ok = r['ok'] and abs(real - deg) < 3.0 and acc <= 0.3 * 1.5   # 가속 0.3 rad/s² (샘플 간격 여유 ×1.5)
+        # 판정선 = 제어기 허용 오차(tol 2°) + 0.5° — 로직이 "보정 2회 이내로 허용 오차 안에 끝나는가"를 본다(실물 기준은 turn_angle_test)
+        ok = r['ok'] and abs(real - deg) < 2.0 + 0.5 and acc <= 0.3 * 1.5   # 허용 2° + 보정 뒤 관성 여유 0.5°, 가속 0.3 rad/s²
         fails += (not ok) and judged
         if not judged:
             print('   (참고, 판정 제외)', end=' ')
