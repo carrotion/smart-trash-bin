@@ -47,6 +47,21 @@ class ImuPublisherNode(Node):
             raise RuntimeError(
                 'ICM-20948을 I2C 버스에서 찾을 수 없습니다. Qwiic 케이블/전원 연결을 확인하세요.')
         self._imu.begin()
+        # ⚠️ 2026-09-27: qwiic 라이브러리 begin()이 자이로·가속도 저역 필터(DLPF)를 **꺼 둔다**(enableDlpfGyro(False)).
+        #   꺼지면 칩이 약 12 kHz 대역 잡음·모터 진동을 그대로 내보내고, 우리는 50 Hz로 뽑아 쓰므로 빠른 진동이
+        #   느린 흔들림처럼 섞인다(에일리어싱). 정지 샘플 표준편차 0.03 rad/s(데이터시트 수준의 약 10배),
+        #   10초 평균이 ±0.0015 rad/s 흔들려 EKF 방향이 분당 0.5° 흐르고 정사각형에서 최대 8° 틀어짐.
+        #   → 발행 50 Hz에 맞춰 23.9 Hz(설정값 4)로 켠다. 근거: docs/motion_foundation.md 2층 조사
+        self.declare_parameter('gyro_dlpf_cfg', 4)     # 0:196.6 1:151.8 2:119.5 3:51.2 4:23.9 5:11.6 6:5.7 Hz, -1이면 끔
+        self.declare_parameter('accel_dlpf_cfg', 4)    # 4: 23.9 Hz
+        gcfg = int(self.get_parameter('gyro_dlpf_cfg').value)
+        acfg = int(self.get_parameter('accel_dlpf_cfg').value)
+        if gcfg >= 0:
+            self._imu.setDLPFcfgGyro(gcfg); self._imu.enableDlpfGyro(True)
+        if acfg >= 0:
+            self._imu.setDLPFcfgAccel(acfg); self._imu.enableDlpfAccel(True)
+        self._imu.setBank(0)
+        self.get_logger().info(f'IMU 저역 필터: 자이로 설정 {gcfg}, 가속도 설정 {acfg} (-1 = 끔)')
 
         self._pub = self.create_publisher(Imu, 'imu/data', 10)
         self._mag_pub = self.create_publisher(MagneticField, 'imu/mag', 10)
