@@ -322,5 +322,97 @@
   "estimate_error_m": 0.06499294250635942,
   "estimate_error_deg": -2.9151411136072802,
   "icp_resid_m": 0.01736196428188792
+ },
+ {
+  "time": "2026-09-27 16:31:59",
+  "label": "primitive ②'+④ ccw, 09-27",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.8,
+  "turn_mode": "ekf",
+  "turn_errs_deg": [
+   1.3719345846230278,
+   0.8334337878466878,
+   -1.2667798033010769,
+   1.9618901625471046
+  ],
+  "drive": "primitive",
+  "dir": "ccw",
+  "real_return_m": 0.027361763790398064,
+  "real_return_deg": -1.883092264032256,
+  "ekf_return_m": 0.013135720714638767,
+  "ekf_return_deg": 1.0487200058026174,
+  "estimate_error_m": 0.03654539850143382,
+  "estimate_error_deg": 2.9318122698348734,
+  "icp_resid_m": 0.016402673161031174
+ },
+ {
+  "time": "2026-09-27 16:33:00",
+  "label": "primitive ②'+④ cw, 09-27",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.8,
+  "turn_mode": "ekf",
+  "turn_errs_deg": [
+   -0.4619709513401383,
+   -0.5724312251854439,
+   0.00023179027514163308,
+   0.6627790398369877
+  ],
+  "drive": "primitive",
+  "dir": "cw",
+  "real_return_m": 0.041992677205575236,
+  "real_return_deg": -0.7957711484441917,
+  "ekf_return_m": 0.010951591869231145,
+  "ekf_return_deg": -0.2997415063317362,
+  "estimate_error_m": 0.03252219285459566,
+  "estimate_error_deg": 0.49602964211245554,
+  "icp_resid_m": 0.01867186103037456
+ },
+ {
+  "time": "2026-09-27 16:33:59",
+  "label": "primitive ②'+④ ccw, 09-27",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.8,
+  "turn_mode": "ekf",
+  "turn_errs_deg": [
+   0.4199743475854154,
+   0.6805814639990267,
+   0.1640869422124185,
+   1.2832749809170994
+  ],
+  "drive": "primitive",
+  "dir": "ccw",
+  "real_return_m": 0.043874646900804844,
+  "real_return_deg": -0.8099796009546016,
+  "ekf_return_m": 0.05377099727676241,
+  "ekf_return_deg": 5.796612220134518,
+  "estimate_error_m": 0.06124404250337268,
+  "estimate_error_deg": 6.60659182108912,
+  "icp_resid_m": 0.018338635982005677
+ },
+ {
+  "time": "2026-09-27 16:35:02",
+  "label": "primitive ②'+④ cw, 09-27",
+  "side_m": 0.8,
+  "speed": 0.15,
+  "turn": 0.8,
+  "turn_mode": "ekf",
+  "turn_errs_deg": [
+   -0.5512786348994059,
+   0.5650991769805405,
+   -1.6446431729643267,
+   -2.116380512884118
+  ],
+  "drive": "primitive",
+  "dir": "cw",
+  "real_return_m": 0.06032097320966589,
+  "real_return_deg": -2.074956109109301,
+  "ekf_return_m": 0.01911365306584612,
+  "ekf_return_deg": -3.601611655473607,
+  "estimate_error_m": 0.04325654259126893,
+  "estimate_error_deg": -1.5266555463643061,
+  "icp_resid_m": 0.01991625142308308
  }
 ]
