@@ -24,10 +24,19 @@ def judge(w, samples, dur):
     s = [(t, g * math.copysign(1, w)) for t, g in samples]           # 명령 방향을 +로
     steady = [g for t, g in s if 1.0 <= t <= dur]
     mean = sum(steady) / len(steady) if steady else 0.0
-    peak = max((g for t, g in s if t <= dur), default=0.0)
+    # 최대치는 0.2초 이동평균으로 판정(실제 회전 튐). 순간 최댓값은 스키드 조향 차체 떨림이 섞여 참고로만.
+    #   ⚠️ 2026-09-27: 자이로 보정을 끄고 회전표 출력만 줘도 순간값 1.3~1.7배 → 떨림과 회전 튐을 구분해야 했다
+    win = [(t, g) for t, g in s if t <= dur]
+    avg = []
+    for i, (t, _) in enumerate(win):
+        seg = [g for tt, g in win if t - 0.2 < tt <= t]
+        if t >= 0.2 and len(seg) >= 5:          # 시작 직후 샘플 1~2개짜리 창은 순간값과 같아 제외
+            avg.append(sum(seg) / len(seg))
+    peak = max(avg, default=0.0)
+    peak_raw = max((g for t, g in win), default=0.0)
     rev = sum(1 for t, g in s if 0.2 <= t <= dur and g < -0.1)
     rise = next((t for t, g in s if g >= 0.9 * abs(w)), float('inf'))
-    m = dict(w=w, mean=mean, mean_err=abs(mean - abs(w)) / abs(w), peak=peak, peak_ratio=peak / abs(w),
+    m = dict(w=w, mean=mean, mean_err=abs(mean - abs(w)) / abs(w), peak=peak, peak_ratio=peak / abs(w), peak_raw=peak_raw,
              reversal=rev, rise_s=rise)
     m['pass'] = {k: (m[k] <= CRIT[k]) for k in CRIT}
     m['ok'] = all(m['pass'].values())
@@ -80,11 +89,13 @@ def main():
                     else:
                         over = None
                 stop()
-                m = judge(w, [(t - ts, g) for t, g in S['g']], a.dur)
+                samples = [(t - ts, g) for t, g in S['g']]
+                m = judge(w, samples, a.dur)
+                m['samples'] = [(round(t, 3), round(g, 3)) for t, g in samples]
                 rows.append(m)
                 p = m['pass']
                 print(f'w {w:+.2f}: 정속 {m["mean"]:.2f}(오차 {m["mean_err"]*100:4.0f}% {"✅" if p["mean_err"] else "❌"}) '
-                      f'최대 {m["peak"]:.2f}(×{m["peak_ratio"]:.2f} {"✅" if p["peak_ratio"] else "❌"}) '
+                      f'최대(0.2초) {m["peak"]:.2f}(×{m["peak_ratio"]:.2f} {"✅" if p["peak_ratio"] else "❌"}, 순간 {m["peak_raw"]:.2f}) '
                       f'역회전 {m["reversal"]}{"✅" if p["reversal"] else "❌"} '
                       f'90%도달 {m["rise_s"]:.2f}s{"✅" if p["rise_s"] else "❌"}', flush=True)
     finally:

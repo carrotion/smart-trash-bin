@@ -1,0 +1,43 @@
+{
+ "criteria": {
+  "mean_err": 0.1,
+  "peak_ratio": 1.3,
+  "reversal": 0,
+  "rise_s": 0.7
+ },
+ "rows": [
+  {
+   "w": 0.5,
+   "mean": 0.5223864968338604,
+   "mean_err": 0.044772993667720806,
+   "peak": 0.7800508718861833,
+   "peak_ratio": 1.5601017437723665,
+   "reversal": 0,
+   "rise_s": 0.5142462253570557,
+   "pass": {
+    "mean_err": true,
+    "peak_ratio": false,
+    "reversal": true,
+    "rise_s": true
+   },
+   "ok": false
+  },
+  {
+   "w": -0.5,
+   "mean": 0.6232943592054777,
+   "mean_err": 0.24658871841095542,
+   "peak": 1.2994721602183308,
+   "peak_ratio": 2.5989443204366616,
+   "reversal": 0,
+   "rise_s": 0.4439516067504883,
+   "pass": {
+    "mean_err": false,
+    "peak_ratio": false,
+    "reversal": true,
+    "rise_s": true
+   },
+   "ok": false
+  }
+ ],
+ "aborted": false
+}

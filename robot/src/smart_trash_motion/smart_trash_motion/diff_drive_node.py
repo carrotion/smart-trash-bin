@@ -398,9 +398,18 @@ class DiffDriveNode(Node):
         # 직선 적합은 우회전 고속에서 틀렸다(2000→0.45, 2200→0.97로 급변) → 측정표 보간.
         # 1차 재시험(직선 적합): 정속 정확도 96~109%, 흔들림 좌 0.04 / 우 고속 0.3~0.68.
         # 보정 이득도 그 지점의 실제 기울기로 PWM 환산한다(기울기 하한 turn_min_slope).
-        self.declare_parameter('turn_table_pwm', [1560.0, 1620.0, 1680.0, 1740.0, 1800.0, 1900.0, 2000.0, 2200.0])
-        self.declare_parameter('turn_table_w_ccw', [0.0, 0.07, 0.16, 0.28, 0.41, 0.60, 0.89, 1.53])
-        self.declare_parameter('turn_table_w_cw', [0.0, 0.05, 0.14, 0.21, 0.28, 0.38, 0.45, 0.97])
+        # ⚠️ 2026-09-27 재측정(tools/turn_friction_calibrate.py, 바닥, 11.5 V, 돌고 있는 상태에서 출력을 50씩 내리며
+        #   각 1초 평균, 방향별 2회 평균 — docs/calibration/turn_friction_20260927_1359.json). 예전 표(09-25)는 우회전을
+        #   과소평가(2000에서 0.45 vs 실측 0.86)해서 우회전 0.5 명령에 약 25% 과속했다(turn_rate_test 기준 측정).
+        #   돌기 시작 출력(1560)과 멈추는 출력(1550)은 거의 같다 — 출발 튐은 정지마찰이 아니라 가속 지연 동안
+        #   보정이 부푸는 탓(아래 turn_engage_ratio).
+        self.declare_parameter('turn_table_pwm', [1550.0, 1600.0, 1650.0, 1700.0, 1750.0, 1800.0, 1850.0, 1900.0, 1950.0, 2000.0, 2050.0, 2100.0])
+        self.declare_parameter('turn_table_w_ccw', [0.0, 0.08, 0.15, 0.23, 0.31, 0.40, 0.53, 0.58, 0.86, 0.92, 1.09, 1.35])
+        self.declare_parameter('turn_table_w_cw', [0.0, 0.13, 0.16, 0.21, 0.29, 0.34, 0.40, 0.44, 0.71, 0.86, 0.90, 0.96])
+        # 출발 구간: 실제 회전이 목표의 이 비율(최소 0.1 rad/s)에 닿기 전까지는 자이로 보정(비례·적분)을 쓰지 않고
+        #   회전표 피드포워드만 준다. ⚠️ 2026-09-27: 모터 가속 지연(약 0.3초) 동안 보정이 +106~+135 PWM 쌓였다가
+        #   따라잡는 순간 출발 튐 1.6~2.7배(turn_rate_test 기준 측정 0/6 합격).
+        self.declare_parameter('turn_engage_ratio', 0.5)
         self.declare_parameter('turn_min_slope', 0.0015)             # rad/s per PWM
         # 제자리 회전 좌우 출력 균형 [좌회전, 우회전]: 오른쪽 ×√b, 왼쪽 ÷√b(총 출력 유지).
         # 2026-09-25 매트릭스: 우회전만 90°마다 10~14 cm 밀림(회전 중심 약 8 cm 치우침,
@@ -558,6 +567,9 @@ class DiffDriveNode(Node):
         self._last_active_t = 0.0
         self._dwell_start = None
         self._turn_table_pwm = [float(x) for x in p('turn_table_pwm').value]
+        self._turn_engage_ratio = float(p('turn_engage_ratio').value)
+        self._turn_engaged = False
+        self._turn_engaged_dir = -1
         self._turn_table_w = [[float(x) for x in p('turn_table_w_ccw').value],
                               [float(x) for x in p('turn_table_w_cw').value]]
         self._turn_min_slope = p('turn_min_slope').value
@@ -972,7 +984,16 @@ class DiffDriveNode(Node):
         base, slope = self._turn_table_lookup(d, abs(w))
         slope = max(slope, self._turn_min_slope)
         corr = 0.0
-        if self._turn_closed_loop and gyro_fresh:
+        # 출발 구간 판정(turn_engage_ratio 주석) — 방향이 바뀌면 다시 출발 구간
+        if self._turn_engaged_dir != d:
+            self._turn_engaged = False
+            self._turn_engaged_dir = d
+        if not self._turn_engaged and gyro_fresh and \
+                self._gyro_z * w > 0 and abs(self._gyro_z) >= max(0.1, self._turn_engage_ratio * abs(w)):
+            self._turn_engaged = True
+        if self._turn_closed_loop and gyro_fresh and not self._turn_engaged:
+            self._turn_i = 0.0
+        elif self._turn_closed_loop and gyro_fresh:
             err = w - self._gyro_z
             self._turn_i += err * dt
             if self._yaw_ki > 0:
@@ -1155,6 +1176,8 @@ class DiffDriveNode(Node):
         if mode == 'rotate':
             self._turn_in_place(w, dt, gyro_fresh)
             return
+        self._turn_engaged = False
+        self._turn_engaged_dir = -1
 
         # 회전: 자이로 PI가 각속도(rad/s)를 보정한다. 직진(w=0) 중에도 켜서 휨을 잡는다.
         moving = abs(v) > 1e-6 or abs(w) > 1e-6
