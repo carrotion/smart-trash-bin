@@ -220,7 +220,12 @@ global_costmap:
       # 영구 잔류한다. 그렇게 쌓인 유령이 로봇 셀을 inscribed(99)로 만들어
       # 경로계획이 통째로 실패했다(2026-08-17 실주행에서 확인).
       # 동적 장애물 회피는 local_costmap의 obstacle_layer가 담당하므로 손실 없음.
-      plugins: ["static_layer", "inflation_layer"]
+      # ⚠️⚠️ 2026-09-27 되살림: 4층 멈춤-확인-이동은 **planner 경로만** 쓰고 local_costmap을 안 쓴다.
+      #   SLAM은 20 cm 움직여야 스캔을 넣으므로, 서 있는 동안 놓인 병(앞 0.53 m)을 planner가 몰라
+      #   병을 관통하는 직선 경로를 냈다(주행기 앞 여유 확인이 막아 출발 안 함). 유령 문제는 연속 주행 중
+      #   슬립 순간의 점이었는데, 멈춤-확인-이동은 정지·안정 뒤에만 경로를 받고 정지 스캔이 매번 빈 곳을 지운다.
+      #   판정: 시험 뒤 "코스트맵 장애물인데 SLAM 지도엔 없는 칸" 수를 센다.
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         # ⚠️ 반드시 앞에 "/"를 붙인 절대경로여야 함. 이 코스트맵은 /global_costmap
