@@ -96,6 +96,9 @@ def main():
         nav.spin(0.2)
     if nav.map_pose() is None or G['enc'] is None:
         print('❌ SLAM 위치(map→base_link) 또는 엔코더 없음 — nav_test_stack.sh start 했나?'); return 1
+    t0 = time.time()
+    while n.count_subscribers('/cmd_vel_nav') == 0 and time.time() - t0 < 5:   # 발견(discovery) 지연 — 09-27 첫 확인에서 0으로 오판
+        nav.spin(0.2)
     if n.count_subscribers('/cmd_vel_nav') == 0:
         print('❌ /cmd_vel_nav 구독자(collision_monitor) 없음 — 명령이 바퀴까지 안 간다'); return 1
 
