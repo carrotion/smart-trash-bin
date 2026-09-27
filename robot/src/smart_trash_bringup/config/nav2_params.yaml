@@ -32,11 +32,25 @@ controller_server:
       # 돼버렸다(2026-08-16 실주행에서 확인). 0.10으로 줄여 짧은 목표도 실제
       # 이동을 요구하게 한다.
       xy_goal_tolerance: 0.10
-      yaw_goal_tolerance: 0.3
+      # 2026-09-27: 0.3(17°) → 0.15(9°). 복귀 목표가 방향 14° 모자란 채 성공 판정됐다. Shim이 도착 방향을 일정 속도로 맞추므로 좁혀도 됨
+      yaw_goal_tolerance: 0.15
       stateful: true
 
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
+      # 2026-09-27: RotationShim으로 감쌈(DWB는 primary_controller, DWB 설정은 아래 그대로 이 자리).
+      #   실물 복귀 목표(뒤 1 m)에서 DWB가 ① 회전 방향을 0.25~0.5초마다 뒤집고 ② 180° 중 124°만 돈 채
+      #   전진을 시작해 옆으로 14 cm 밀린 호를 그렸으며 ③ 도착 방향이 14° 모자란 채 성공 판정(사용자 관찰과 일치,
+      #   bags/20260927_132635_real_goal2). Shim은 경로 방향과 20° 넘게 어긋나면 한 방향 일정 속도로 먼저 돌고
+      #   9° 안에 들면 DWB에 넘긴다. 마지막 도착 방향 맞추기도 Shim이 한다(rotate_to_goal_heading).
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.35          # 20° 넘게 어긋나면 제자리 회전부터
+      angular_disengage_threshold: 0.15     # 9° 안에 들면 DWB로
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 0.5    # 제자리 회전 속도(0.2 이하는 붙었다 튐, 정사각형 시험 속도 0.5)
+      max_angular_accel: 0.75               # 구동 노드 angular_accel_limit와 같게
+      simulate_ahead_time: 1.0
+      rotate_to_goal_heading: true
       # 2026-08-21: 다음 실주행부터 critic별 점수를 직접 로그로 본다 — 추측
       # 대신 실제 데이터로 판단하기 위함(사용자 지적).
       debug_trajectory_details: true
