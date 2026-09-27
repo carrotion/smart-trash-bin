@@ -72,6 +72,19 @@ class StepNavigator:
         한 장 잡음 걸러내기(0.15초 지속)는 1층 drive_distance 안에서 한다(09-27 층 정리)."""
         return self.S['scan'] is not None and corridor_clearance(self.S['scan'], sgn > 0, 0.0 if sgn > 0 else 0.1) > 0.2
 
+    def _corridor_pts(self, room, lidar_x=0.054, half=0.11, corridor=0.10):
+        """앞 통로(corridor_clearance와 같은 범위)에서 차체 앞끝으로부터 room + 5 cm 안의 점 (x, y, 거리) — 진단 기록용."""
+        m = self.S['scan']; out = []
+        for i, r in enumerate(m.ranges):
+            if not (m.range_min <= r <= m.range_max):
+                continue
+            a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+            if (abs(x) <= half + 0.005 and abs(y) <= half + 0.005) or abs(y) > half + corridor or x < half:
+                continue
+            if x - half <= room + 0.05:
+                out.append((round(x, 3), round(y, 3), round(r, 3)))
+        return out[:20]
+
     def map_pose(self):
         try:
             t = self.tfb.lookup_transform('map', 'base_link', rclpy.time.Time(), timeout=Duration(seconds=0.5))
@@ -168,7 +181,9 @@ class StepNavigator:
                 self.settle()
             room = corridor_clearance(self.S['scan'], True)
             if room < seg + self.clear_margin:
-                blocked += 1; self._note(step, 'blocked', round(room, 2), None)
+                # ⚠️ 09-27: 병 옆 통과 뒤 "앞 여유 0"으로 멈췄는데 무엇이 막았는지 남기지 않아 원인을 못 가렸다
+                #   (사용자: 그 자리엔 아무것도 없었음, 병은 20~30 cm 옆). 막은 점들을 base_link 좌표로 기록
+                blocked += 1; self._note(step, 'blocked', dict(room=round(room, 2), pts=self._corridor_pts(room)), None)
                 if blocked >= self.blocked_max:
                     return self._done(False, f'앞 여유 부족 {blocked}회({room:.2f} m)', step, t0, goal)
                 self.spin(1.0); continue
