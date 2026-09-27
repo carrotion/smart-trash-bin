@@ -37,7 +37,7 @@ from speed_floor_sweep import corridor_clearance
 class StepNavigator:
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
-                 clear_margin=0.25, back_max=0.15, side_margin=0.05):
+                 clear_margin=0.25, back_max=0.15, side_margin=0.05, rot_radius=0.22):
         self.n = node
         self.step_m, self.xy_tol, self.yaw_tol = step_m, xy_tol, math.radians(yaw_tol_deg)
         self.turn_tol, self.settle_s, self.blocked_max, self.clear_margin = math.radians(turn_tol_deg), settle_s, blocked_max, clear_margin
@@ -45,6 +45,9 @@ class StepNavigator:
         #   병이 옆면 7 cm에 오자 "앞 여유 0" 3회로 중단. 근거: 직진 59회 옆밀림 최대 3.3 cm(95% 1.4 cm),
         #   3층 collision_monitor 직진 정지 구역이 옆 3 cm → 주행기가 그보다 한 겹 넓게
         self.back_max, self.side_margin = back_max, side_margin
+        # 제자리 회전 전 반경 확인: 3층 collision_monitor 회전 구역(반경 0.20) + 2 cm. ⚠️ 09-27 장애물 코스: 병 옆에서
+        #   −32° 회전이 3층에 막혀 "1.5초 동안 0°" 실패 — 주행기가 회전 전 주변을 안 봤다
+        self.rot_radius = rot_radius
         self.S = {'pose': None, 'v': 0.0, 'gz': 0.0, 'scan': None}
         node.create_subscription(Odometry, odom_topic, self._on_odom, 20)
         if gyro_from_odom:
@@ -167,7 +170,9 @@ class StepNavigator:
                 if goal[2] is not None:
                     dyaw = wrap(goal[2] - here[2])
                     if abs(dyaw) > self.yaw_tol:
-                        r = self.turner.turn_by(dyaw); self._note(step, 'final_turn', math.degrees(dyaw), r)
+                        r = self._turn(step, dyaw, 'final_turn')
+                        if not r['ok']:
+                            return self._done(False, f'마지막 회전 실패: {r["msg"]}', step, t0, goal)
                         # ⚠️ 09-27 합격 시험: 제자리 회전 중심이 base_link와 달라 마지막 150~175° 회전이 위치를 민다
                         #   — 실제 복귀 오차가 거의 앞뒤 성분(−10.3, −3.9, +5.1, −4.0, −3.7 cm). 방향은 이미 맞았으니
                         #   옆 오차가 작으면 돌지 않고 앞뒤 직진으로만 보정한다(1회)
@@ -192,7 +197,12 @@ class StepNavigator:
             if abs(dyaw) > math.pi / 2 and dist <= self.back_max:
                 rdyaw = wrap(dyaw - math.pi)
                 if abs(rdyaw) > self.turn_tol:
-                    r = self.turner.turn_by(rdyaw); self._note(step, 'turn', math.degrees(rdyaw), r)
+                    r = self._turn(step, rdyaw, 'turn')
+                    if r.get('blocked'):
+                        blocked += 1
+                        if blocked >= self.blocked_max:
+                            return self._done(False, f'회전 반경 막힘 {blocked}회', step, t0, goal)
+                        self.spin(1.0); continue
                     if not r['ok']:
                         return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
                     self.settle()
@@ -208,7 +218,12 @@ class StepNavigator:
                     if near_turns >= 2:
                         return self._done(False, f'가까운 목표 주변 진동({dist * 100:.0f} cm)', step, t0, goal)
                     near_turns += 1
-                r = self.turner.turn_by(dyaw); self._note(step, 'turn', math.degrees(dyaw), r)
+                r = self._turn(step, dyaw, 'turn')
+                if r.get('blocked'):
+                    blocked += 1
+                    if blocked >= self.blocked_max:
+                        return self._done(False, f'회전 반경 막힘 {blocked}회', step, t0, goal)
+                    self.spin(1.0); continue
                 if not r['ok']:
                     return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
                 self.settle()
@@ -229,15 +244,50 @@ class StepNavigator:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
 
+    def _near_pts(self, r_max, lidar_x=0.054, half=0.115):
+        """스캔 점 중 base_link에서 r_max 안(차체 사각형 제외) — 로봇 기준 (x, y)."""
+        m = self.S['scan']; out = []
+        for i, r in enumerate(m.ranges):
+            if not (m.range_min <= r <= m.range_max):
+                continue
+            a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+            if abs(x) <= half and abs(y) <= half:
+                continue
+            if math.hypot(x, y) <= r_max:
+                out.append((x, y))
+        return out
+
+    def _turn(self, step, dyaw, kind):
+        """제자리 회전. 먼저 반경 rot_radius 안이 비었는지 보고, 막혔으면 앞/뒤로 가장 짧게(5~25 cm) 떨어진 뒤 돈다.
+        떨어질 수 없으면 돌지 않고 dict(ok=False, blocked=True)."""
+        R = self.rot_radius
+        near = [p for p in self._near_pts(R)]
+        if near:
+            pts = self._near_pts(R + 0.3); move = None
+            for d in (0.05, 0.10, 0.15, 0.20, 0.25):
+                for s in (d, -d):
+                    if all(math.hypot(x - s, y) > R for x, y in pts):
+                        move = s; break
+                if move is not None:
+                    break
+            self._note(step, 'rot_near', dict(pts=[(round(x, 3), round(y, 3)) for x, y in near[:6]], move=move), None)
+            if move is None or not self._straight(step, move, 'rot_clear', margin=0.05):
+                return dict(ok=False, blocked=True, msg='회전 반경 안 장애물 — 떨어질 곳 없음')
+            self.settle()
+            if self._near_pts(R):
+                return dict(ok=False, blocked=True, msg='떨어진 뒤에도 회전 반경 안 장애물')
+        r = self.turner.turn_by(dyaw); self._note(step, kind, math.degrees(dyaw), r)
+        return r
+
     def _goal_in_body(self, goal, here):
         """목표까지 로봇 기준 (앞, 왼쪽) 거리."""
         dx, dy = goal[0] - here[0], goal[1] - here[1]; c, s = math.cos(here[2]), math.sin(here[2])
         return c * dx + s * dy, -s * dx + c * dy
 
-    def _straight(self, step, d, kind):
-        """돌지 않고 앞(+)/뒤(−)로 d m. 가는 쪽 여유가 |d| + clear_margin 이상일 때만. 실행했으면 True."""
+    def _straight(self, step, d, kind, margin=None):
+        """돌지 않고 앞(+)/뒤(−)로 d m. 가는 쪽 여유가 |d| + margin(기본 clear_margin) 이상일 때만. 실행했으면 True."""
         room = corridor_clearance(self.S['scan'], d > 0, 0.0 if d > 0 else 0.1, self.side_margin)
-        if room < abs(d) + self.clear_margin:
+        if room < abs(d) + (self.clear_margin if margin is None else margin):
             self._note(step, kind + '_blocked', dict(d=round(d, 3), room=round(room, 2)), None)
             return False
         r = self.driver.drive_by(d); self._note(step, kind, round(d, 3), r)
