@@ -352,6 +352,18 @@ class DiffDriveNode(Node):
         self.declare_parameter('brake_max_s', 0.6)
         self.declare_parameter('yaw_hold_kp', 2.0)
         self.declare_parameter('yaw_hold_ki', 4.0)
+        # ⚠️ 2026-09-27 실물 Nav2 첫 주행 사고: 곡선 명령(v 0.107, w 0.39)에서 이 방향 유지 루프가 발진 —
+        #   실제 회전 1.85 rad/s(명령의 4배) → w 0으로 바뀌자 반대로 넘쳐 **±4.4 rad/s(자이로 측정 한계)로 약 31초
+        #   좌우 발진**(녹화 bags/20260927_130109_real_goal1). 2.0/4.0은 직진(w=0)에서만 시험했었다. 달리는 중 작은
+        #   회전은 옆 미끄럼에 막히다가(곡선 이득 2~5할) 한번 미끄러지면 확 돌아서, 보정이 커지면 폭주한다.
+        #   → 보정 상한: 명령에 더하는 회전을 ±yaw_hold_max_corr로 제한(직진 흐름 보정엔 0.1 이하면 충분),
+        #     상한에 걸린 동안 적분 정지(anti-windup).
+        self.declare_parameter('yaw_hold_max_corr', 0.3)       # rad/s
+        # 회전 폭주 감지: 명령 |w| < yaw_runaway_cmd_max인데 실제 |자이로| > yaw_runaway_rate가
+        #   yaw_runaway_sec 넘게 이어지면 정지·잠금(재시작 전까지 구동 거부, 선속도 폭주 감지와 같은 방식)
+        self.declare_parameter('yaw_runaway_rate', 2.5)        # rad/s
+        self.declare_parameter('yaw_runaway_cmd_max', 1.0)     # rad/s
+        self.declare_parameter('yaw_runaway_sec', 0.3)
         self.declare_parameter('velocity_debug', False)
         # --- velocity 모드의 제자리 회전 (2026-09-25 바닥 실측) ---
         # 바퀴별 속도 PI로 제자리 회전을 하면 바퀴 목표가 0.05~0.1 m/s로 너무 낮아
@@ -527,6 +539,11 @@ class DiffDriveNode(Node):
         self._brake_v0 = {'L': 0.0, 'R': 0.0}
         self._brake_out = [0.0] * 4
         self._yaw_hold_ki = p('yaw_hold_ki').value
+        self._yaw_hold_max_corr = float(p('yaw_hold_max_corr').value)
+        self._yaw_runaway_rate = float(p('yaw_runaway_rate').value)
+        self._yaw_runaway_cmd_max = float(p('yaw_runaway_cmd_max').value)
+        self._yaw_runaway_sec = float(p('yaw_runaway_sec').value)
+        self._yaw_runaway_since = None
         self._velocity_debug = p('velocity_debug').value
         self._velocity_pi_mode = p('velocity_pi_mode').value
         self._turn_in_place_max_v = p('turn_in_place_max_v').value
@@ -850,6 +867,8 @@ class DiffDriveNode(Node):
             'brake_min_speed': '_brake_min_speed',
             'brake_max_s': '_brake_max_s',
             'yaw_hold_ki': '_yaw_hold_ki',
+            'yaw_hold_max_corr': '_yaw_hold_max_corr',
+            'yaw_runaway_rate': '_yaw_runaway_rate',
             'velocity_debug': '_velocity_debug',
             'velocity_pi_mode': '_velocity_pi_mode',
             'turn_symmetry_enable': '_turn_sym_enable',
@@ -1102,6 +1121,19 @@ class DiffDriveNode(Node):
             mode = 'stop'
         if mode != 'stop':
             self._brake_start = None
+        # 회전 폭주 감지(파라미터 yaw_runaway_* 주석, 09-27 사고) — 제어 경로와 무관하게 자이로로 판정
+        # 정지 명령 중(mode 'stop')은 제외 — 손으로 들고 돌리는 걸 폭주로 잠그지 않게
+        if mode != 'stop' and gyro_fresh and abs(self._gyro_z) > self._yaw_runaway_rate and abs(w) < self._yaw_runaway_cmd_max:
+            if self._yaw_runaway_since is None:
+                self._yaw_runaway_since = now
+            elif now - self._yaw_runaway_since > self._yaw_runaway_sec:
+                self._fault = (f'회전 폭주: 명령 {w:+.2f} rad/s인데 실제 {self._gyro_z:+.2f} rad/s가 '
+                               f'{self._yaw_runaway_sec:.1f}초 넘게 — 제어 발진 의심, 재시작 전까지 구동 거부')
+                self.get_logger().error(self._fault)
+                self._send_pwm4([0, 0, 0, 0])
+                return
+        else:
+            self._yaw_runaway_since = None
         if self._motion_dwell(mode, now, enc_fresh, gyro_fresh):
             self._reset_velocity_state()      # 전환 대기 — 출력 0, 적분·램프 초기화
             self._turn_i = 0.0
@@ -1122,7 +1154,12 @@ class DiffDriveNode(Node):
             if self._yaw_hold_ki > 0:
                 lim = self._yaw_i_limit / self._yaw_hold_ki
                 self._turn_i = max(-lim, min(lim, self._turn_i))
-            w_eff = w + self._yaw_hold_kp * err + self._yaw_hold_ki * self._turn_i
+            corr = self._yaw_hold_kp * err + self._yaw_hold_ki * self._turn_i
+            cl = self._yaw_hold_max_corr
+            if abs(corr) > cl:
+                self._turn_i -= err * dt          # 상한에 걸린 동안은 적분하지 않음(anti-windup)
+                corr = math.copysign(cl, corr)
+            w_eff = w + corr
         else:
             self._turn_i = 0.0
 
