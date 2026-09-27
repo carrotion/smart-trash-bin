@@ -52,7 +52,8 @@ def generate_launch_description():
     controller_server = Node(
         package='nav2_controller', executable='controller_server',
         name='controller_server', output='screen',
-        parameters=[nav2_params_file])
+        parameters=[nav2_params_file],
+        remappings=[('cmd_vel', 'cmd_vel_nav')])   # → collision_monitor → /cmd_vel (09-27, todo #12)
     planner_server = Node(
         package='nav2_planner', executable='planner_server',
         name='planner_server', output='screen',
@@ -60,14 +61,21 @@ def generate_launch_description():
     behavior_server = Node(
         package='nav2_behaviors', executable='behavior_server',
         name='behavior_server', output='screen',
-        parameters=[nav2_params_file])
+        parameters=[nav2_params_file],
+        remappings=[('cmd_vel', 'cmd_vel_nav')])   # → collision_monitor → /cmd_vel (09-27, todo #12)
     bt_navigator = Node(
         package='nav2_bt_navigator', executable='bt_navigator',
         name='bt_navigator', output='screen',
         parameters=[nav2_params_file])
     # velocity_smoother는 첫 버전에선 안 씀 — DWB 컨트롤러 자체 가감속 제한(acc_lim_x
     # 등)으로 충분하고, cmd_vel 리매핑 체인을 하나 줄여서 복잡도/실패 지점을 낮춤.
-    # controller_server가 기본 토픽명 그대로 cmd_vel에 바로 발행 -> diff_drive_node.
+    # 2026-09-27: controller/behavior → cmd_vel_nav → collision_monitor → cmd_vel → diff_drive_node.
+    # 충돌 감시: cmd_vel_nav를 받아 장애물이 정지 구역에 있거나 스캔이 0.5초 끊기면 0을 낸다
+    # (nav2_params.yaml collision_monitor 절에 구역 근거). lifecycle_manager가 관리.
+    collision_monitor = Node(
+        package='nav2_collision_monitor', executable='collision_monitor',
+        name='collision_monitor', output='screen',
+        parameters=[nav2_params_file])
     lifecycle_manager = Node(
         package='nav2_lifecycle_manager', executable='lifecycle_manager',
         name='lifecycle_manager_navigation', output='screen',
@@ -89,6 +97,7 @@ def generate_launch_description():
     ld.add_action(planner_server)
     ld.add_action(behavior_server)
     ld.add_action(bt_navigator)
+    ld.add_action(collision_monitor)
     ld.add_action(lifecycle_manager)
     ld.add_action(explore_node)
     return ld

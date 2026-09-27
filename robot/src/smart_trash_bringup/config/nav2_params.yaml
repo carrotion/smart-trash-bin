@@ -316,5 +316,69 @@ lifecycle_manager_navigation:
     # 직접 생성·전이시키므로, lifecycle_manager가 또 전이시키면 이중 전이가 된다.
     # 표준 nav2_bringup의 lifecycle_nodes 목록에도 코스트맵은 없음(2026-08-16 확인).
     node_names:
-      ["controller_server", "planner_server", "behavior_server", "bt_navigator"]
+      ["controller_server", "planner_server", "behavior_server", "bt_navigator", "collision_monitor"]
     bond_timeout: 10.0
+
+# 충돌 감시(todo #12, 2026-09-27) — Nav2 명령(controller/behavior → cmd_vel_nav)을 받아 안전할 때만 /cmd_vel로.
+# ⚠️ 대시보드 수동 조종(/cmd_vel 직접)은 이 감시를 거치지 않는다.
+# 정지 구역 근거(로봇 중심 기준, 차체 ±0.11):
+#   전진 앞 0.20 = 앞면 0.11 + 정지거리 0.05(0.15 m/s, 능동 제동, tools/stop_distance_test.py)
+#               + 반응 지연 0.023(스캔 0.1초 + 제어 0.05초) × 0.15 m/s + 여유 0.02
+#   후진 뒤 −0.17 = 뒷면 −0.11 + 후진 0.075 m/s 정지·지연 약 0.03 + 여유 0.03
+#   제자리 회전: 차체 모서리 회전 반경 0.156 → 반지름 0.20 팔각형(내접 0.185)
+#   min_points 3: 차체 경계 자기반사 점(바닥 녹화에서 스캔의 6~9%, 1점짜리)으로 서지 않게.
+#     물체 2 cm 폭은 0.15 m에서 약 10점 → 3점이면 충분히 잡힌다
+# source_timeout 0.5: 스캔(10 Hz)이 0.5초 끊기면 정지 — 09-26 라이다 드라이버 3.3초 멈춤 대책(todo #13).
+#   Iron부터 이 시간 초과는 경고가 아니라 **정지**(docs.nav2.org Iron 이전 가이드, PR #3880)
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_nav"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.5
+    source_timeout: 0.5
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    polygons: ["VelocityPolygonStop"]
+    VelocityPolygonStop:
+      type: "velocity_polygon"
+      action_type: "stop"
+      min_points: 3
+      visualize: True
+      enabled: True
+      polygon_pub_topic: "velocity_polygon_stop"
+      velocity_polygons: ["rotation", "translation_forward", "translation_backward", "stopped"]
+      holonomic: false
+      rotation:
+        points: "[[0.20, 0.0], [0.141, 0.141], [0.0, 0.20], [-0.141, 0.141], [-0.20, 0.0], [-0.141, -0.141], [0.0, -0.20], [0.141, -0.141]]"
+        linear_min: -0.03
+        linear_max: 0.03
+        theta_min: -3.0
+        theta_max: 3.0
+      translation_forward:
+        points: "[[0.20, 0.14], [0.20, -0.14], [0.0, -0.14], [0.0, 0.14]]"
+        linear_min: 0.03
+        linear_max: 1.0
+        theta_min: -3.0
+        theta_max: 3.0
+      translation_backward:
+        points: "[[0.0, 0.14], [0.0, -0.14], [-0.17, -0.14], [-0.17, 0.14]]"
+        linear_min: -1.0
+        linear_max: -0.03
+        theta_min: -3.0
+        theta_max: 3.0
+      # 마지막(대체) 구역 — 위에 안 걸리는 속도 전부. 정지 중엔 stop이 의미 없으므로 회전과 같게
+      stopped:
+        points: "[[0.20, 0.0], [0.141, 0.141], [0.0, 0.20], [-0.141, 0.141], [-0.20, 0.0], [-0.141, -0.141], [0.0, -0.20], [0.141, -0.141]]"
+        linear_min: -1.0
+        linear_max: 1.0
+        theta_min: -3.0
+        theta_max: 3.0
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      source_timeout: 0.5
+      enabled: True

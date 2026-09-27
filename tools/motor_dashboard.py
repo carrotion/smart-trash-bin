@@ -428,7 +428,8 @@ class TeleopNode(Node):
             infos = self.get_publishers_info_by_topic('/cmd_vel')
         except Exception:
             return False
-        return any(i.node_name == 'controller_server' for i in infos)
+        # 2026-09-27: 충돌 감시가 끼면 /cmd_vel 발행자는 collision_monitor(컨트롤러는 cmd_vel_nav로)
+        return any(i.node_name in ('controller_server', 'collision_monitor') for i in infos)
 
     def send_cmd(self, linear, angular):
         # 정지(0,0)는 항상 통과시킨다 — 자율주행 중이라도 사람이 세우려는

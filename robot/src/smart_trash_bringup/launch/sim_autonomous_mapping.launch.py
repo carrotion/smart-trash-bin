@@ -161,7 +161,8 @@ def generate_launch_description():
     controller_server = Node(
         package='nav2_controller', executable='controller_server',
         name='controller_server', output='screen',
-        parameters=[{'use_sim_time': True}, nav2_params_file, diag_tf_override_file])
+        parameters=[{'use_sim_time': True}, nav2_params_file, diag_tf_override_file],
+        remappings=[('cmd_vel', 'cmd_vel_nav')])   # 실물과 같이 collision_monitor 경유(09-27)
     planner_server = Node(
         package='nav2_planner', executable='planner_server',
         name='planner_server', output='screen',
@@ -169,7 +170,8 @@ def generate_launch_description():
     behavior_server = Node(
         package='nav2_behaviors', executable='behavior_server',
         name='behavior_server', output='screen',
-        parameters=[{'use_sim_time': True}, nav2_params_file, diag_tf_override_file])
+        parameters=[{'use_sim_time': True}, nav2_params_file, diag_tf_override_file],
+        remappings=[('cmd_vel', 'cmd_vel_nav')])   # 실물과 같이 collision_monitor 경유(09-27)
     # ⚠️ nav2_params.yaml의 default_nav_to_pose_bt_xml은 실물 Pi 홈 경로
     # (/home/carrotian/...)로 하드코딩돼 있어 이 시뮬 환경(사용자명이 다름)에서는
     # 존재하지 않는 파일이 된다 — bt_navigator가 활성화 자체에 실패한다
@@ -200,6 +202,11 @@ def generate_launch_description():
             bt_xml_override_file,
             diag_tf_override_file,
         ])
+    # 2026-09-27: nav2_params.yaml의 lifecycle node_names에 collision_monitor가 들어가 시뮬에도 필요
+    collision_monitor = Node(
+        package='nav2_collision_monitor', executable='collision_monitor',
+        name='collision_monitor', output='screen',
+        parameters=[{'use_sim_time': True}, nav2_params_file])
     lifecycle_manager = Node(
         package='nav2_lifecycle_manager', executable='lifecycle_manager',
         name='lifecycle_manager_navigation', output='screen',
@@ -287,6 +294,7 @@ def generate_launch_description():
     ld.add_action(planner_server)
     ld.add_action(behavior_server)
     ld.add_action(bt_navigator)
+    ld.add_action(collision_monitor)
     ld.add_action(lifecycle_manager)
     ld.add_action(explorer_start_handler)
     return ld
