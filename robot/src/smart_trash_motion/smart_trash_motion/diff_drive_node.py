@@ -603,6 +603,9 @@ class DiffDriveNode(Node):
         self._prev_counts = None
         self._prev_odom_time = None
 
+        # ⚠️ 2026-09-27: 이 노드의 경과 시간 계산은 전부 time.monotonic(). 예전엔 time.time()(벽시계)이라
+        #   부팅 후 NTP가 시계를 11.7시간 앞당긴 순간 "배터리 신호·엔코더 42186초 미수신" 경고가 떴다.
+        #   시계가 거꾸로 가면 반대로 cmd_vel 시간 초과 정지가 늦어질 수 있는 구조였다(파이 5는 RTC 배터리 없음).
         self._last_cmd_time = 0.0
         self._cmd_v = 0.0
         self._cmd_w = 0.0
@@ -717,12 +720,12 @@ class DiffDriveNode(Node):
             counts, raw = self._read_encoder()
             if counts is not None:
                 if fail_streak > 0:
-                    dur = time.time() - fail_streak_start
+                    dur = time.monotonic() - fail_streak_start
                     self.get_logger().warn(
                         f'엔코더 응답 복구됨 — {fail_streak}회 연속 실패, '
                         f'{dur:.1f}초 동안 정지해있었음')
                 fail_streak = 0
-                now = time.time()
+                now = time.monotonic()
                 with self._counts_lock:
                     self._latest_counts = counts
                     self._latest_counts_ts = now
@@ -733,7 +736,7 @@ class DiffDriveNode(Node):
                 except Exception:
                     pass  # 노드 종료 중 퍼블리셔가 이미 정리됐을 수 있음
             else:
-                now = time.time()
+                now = time.monotonic()
                 if fail_streak == 0:
                     fail_streak_start = now
                     self.get_logger().warn(
@@ -1081,7 +1084,7 @@ class DiffDriveNode(Node):
                     if val is not None:
                         self._wheel_speed[i] = 0.5 * self._wheel_speed[i] + 0.5 * val
                 self._vel_prev = (list(counts), ts)
-        return time.time() - ts < self._encoder_stale_sec
+        return time.monotonic() - ts < self._encoder_stale_sec
 
     def _velocity_control(self, v, w, dt, now, gyro_fresh):
         if self._fault:
@@ -1233,19 +1236,19 @@ class DiffDriveNode(Node):
         """
         self._cmd_v = msg.linear.x
         self._cmd_w = msg.angular.z
-        self._last_cmd_time = time.time()
+        self._last_cmd_time = time.monotonic()
 
     def _on_battery_tier(self, msg: String):
         prev = self._battery_tier
         self._battery_tier = msg.data
-        self._battery_tier_ts = time.time()
+        self._battery_tier_ts = time.monotonic()
         if msg.data == 'critical' and prev != 'critical':
             self.get_logger().warn(
                 '배터리 critical 수신 — cmd_vel 발행자와 무관하게 구동 거부')
 
     def _on_control_timer(self):
         """50Hz 제어 루프 — 직진은 개루프, 회전은 자이로 피드백 폐루프."""
-        now = time.time()
+        now = time.monotonic()
 
         # 안전: 배터리 critical이면 누가 뭘 명령하든 무조건 거부한다. 이게
         # cmd_vel_timeout보다 먼저 와야 한다 — 명령이 계속 들어오고 있어도
@@ -1427,13 +1430,13 @@ class DiffDriveNode(Node):
         if msg.angular_velocity_covariance[8] > 1.0:
             return
         self._gyro_z = wz - self._gyro_bias
-        self._gyro_ts = time.time()
+        self._gyro_ts = time.monotonic()
         self._imu_seen = True
 
     def _on_safety_timer(self):
         """cmd_vel이 끊기면 자동 정지 — 명령 유실/노드 죽음 대비."""
         if (self._target_left_pwm or self._target_right_pwm) and \
-                time.time() - self._last_cmd_time > self._cmd_vel_timeout:
+                time.monotonic() - self._last_cmd_time > self._cmd_vel_timeout:
             self._target_left_pwm = 0
             self._target_right_pwm = 0
             self._apply_pwm(0, 0)
@@ -1447,9 +1450,9 @@ class DiffDriveNode(Node):
         # 받은 경우(motor_dashboard가 애초에 안 떠있는 정상 상황)는 경고하지
         # 않는다 — 그건 fail-open의 정상 범위.
         if self._battery_tier_ts is not None and \
-                time.time() - self._battery_tier_ts > 15.0:
+                time.monotonic() - self._battery_tier_ts > 15.0:
             self.get_logger().warn(
-                f'battery_tier {time.time()-self._battery_tier_ts:.0f}초간 미수신 — '
+                f'battery_tier {time.monotonic()-self._battery_tier_ts:.0f}초간 미수신 — '
                 f'마지막 값({self._battery_tier})으로 계속 주행 중(fail-open). '
                 f'motor_dashboard/I2C 상태 확인 필요',
                 throttle_duration_sec=30.0)
@@ -1473,7 +1476,7 @@ class DiffDriveNode(Node):
             # 매핑 시험에서 35초간 조용히 멈춘 게 실측 확인됨(원인 후보:
             # motor_dashboard와 포트 동시 점유 — 문서화된 금지 조합인데 그날
             # 안 지켜져 있었음). 얼마나 오래 멈췄는지는 알아야 하므로 경고한다.
-            stale_sec = time.time() - now
+            stale_sec = time.monotonic() - now
             if stale_sec > 0.5:
                 self.get_logger().warn(
                     f'엔코더 값이 {stale_sec:.1f}초째 갱신 안 됨 — odom이 멈춰있다 '
@@ -1510,7 +1513,7 @@ class DiffDriveNode(Node):
         # 제자리 회전 명령 중: 전진량 0 (파라미터 주석 참고). 명령이 살아 있을 때만.
         if (self._odom_zero_in_place
                 and abs(self._cmd_v) <= self._turn_in_place_max_v and abs(self._cmd_w) > 1e-3
-                and time.time() - self._last_cmd_time < self._cmd_vel_timeout):
+                and time.monotonic() - self._last_cmd_time < self._cmd_vel_timeout):
             d_center = 0.0
 
         # 전진 거리는 휠 엔코더(미끄러짐 적음), 회전각은 IMU 자이로(미끄러짐 무관).
