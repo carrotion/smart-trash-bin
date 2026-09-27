@@ -978,6 +978,11 @@ class DiffDriveNode(Node):
             if self._yaw_ki > 0:
                 lim = self._yaw_i_limit / self._yaw_ki
                 self._turn_i = max(-lim, min(lim, self._turn_i))
+            # ⚠️ 2026-09-27: 출발 과회전 억제 — 정지마찰에 붙어 있는 동안 적분이 쌓였다가 떨어지는 순간 한꺼번에
+            #   나가 0.29 rad/s 명령이 0.5~0.72 rad/s까지 치솟았다(curve_pattern_test). 실제 회전이 명령을 넘어선
+            #   순간(같은 방향) 쌓인 "더 돌아라" 적분을 비운다.
+            if self._gyro_z * w > 0 and abs(self._gyro_z) > abs(w) and self._turn_i * w > 0:
+                self._turn_i = 0.0
             # 오차를 회전 방향 기준 크기로 바꿔 PWM에 더한다(더 돌아야 하면 +)
             corr = math.copysign(1.0, w) * (self._yaw_kp * err + self._yaw_ki * self._turn_i) / slope
         else:
@@ -1011,8 +1016,14 @@ class DiffDriveNode(Node):
         self._send_pwm4(pwm)
 
     def _ramp_w(self, w, dt):
-        """각속도 명령에 가속 방향으로만 제한을 건다(감속·정지·역전은 즉시)."""
+        """각속도 명령에 가속 방향으로만 제한을 건다(감속·정지는 즉시).
+
+        ⚠️ 2026-09-27: 예전엔 방향 역전도 즉시였다 — +0.45 → −0.45가 한 번에 들어가 도는 중인 차체에 곧바로
+        반대 출력이 걸렸고, Nav2(DWB)가 부호를 자주 뒤집는 패턴에서 순간 1.7~2.3 rad/s가 나왔다
+        (curve_pattern_test). 역전은 먼저 0으로 내린 뒤 새 방향으로 램프를 타고 오른다."""
         cur = self._ramped_w
+        if cur != 0.0 and w != 0.0 and (w > 0) != (cur > 0):
+            cur = 0.0                                  # 역전: 감속(0까지)은 즉시, 새 방향은 아래 램프로
         accelerating = abs(w) > abs(cur) and (cur == 0.0 or (w > 0) == (cur > 0))
         if accelerating and self._angular_accel_limit > 0:
             step = self._angular_accel_limit * dt
