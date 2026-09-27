@@ -28,6 +28,7 @@ import collections
 import gzip
 import json
 import math
+import os
 import signal
 import subprocess
 import threading
@@ -252,7 +253,28 @@ def _start_peripherals():
     return started
 
 
-def _graceful_poweroff():
+BATTERY_LOG_DIR = os.path.expanduser("~/smart-trash-bin/logs/battery")
+
+
+def _battery_log_to_disk(ts, v, avg, tier):
+    """전압을 날짜별 CSV에 남긴다. ⚠️ 2026-09-27: 오전에 배터리 보호로 세 번 꺼졌는데 전압 추이가
+    메모리에만 있어 꺼지면서 사라졌다 — 사후에 "언제부터 얼마나 떨어졌나"를 볼 수 없었다.
+    10초 간격이라 하루 약 8,640줄(약 300 KB). 실패해도 배터리 감시는 계속한다."""
+    try:
+        os.makedirs(BATTERY_LOG_DIR, exist_ok=True)
+        path = os.path.join(BATTERY_LOG_DIR, time.strftime("%Y%m%d", time.localtime(ts)) + ".csv")
+        new_file = not os.path.exists(path)
+        with open(path, "a") as f:
+            if new_file:
+                f.write("time,epoch,v,avg_v,tier\n")
+            f.write(f"{time.strftime('%H:%M:%S', time.localtime(ts))},{ts:.0f},{v:.3f},{avg:.3f},{tier}\n")
+            f.flush()
+            os.fsync(f.fileno())   # 곧 전원이 꺼질 수 있으므로 바로 디스크에
+    except Exception:
+        pass
+
+
+def _graceful_poweroff(avg_v=float('nan'), v=float('nan')):
     """3차 최종 저지선. 하드웨어 BMS가 먼저 강제로 끊으면(실측 확인된 컷오프
     10.5V) 파일시스템이 쓰기 도중에 전원을 잃는다 — 실제 사고 이력: ext4
     저널 abort, 파일시스템 read-only 강제전환, map_autosave 도입 전 지도
@@ -260,7 +282,7 @@ def _graceful_poweroff():
     systemd가 남은 서비스를 정리하고 파일시스템을 언마운트한 뒤에 전원을
     내려서 이 손상을 피한다. Popen으로 던지고 기다리지 않는다 — 이 프로세스
     (motor-dashboard) 자신도 종료 절차에 포함되므로 여기서 블록될 이유가 없다."""
-    print('[battery] 🔴🔴 3차(critical) — 파이 정상 종료(poweroff) 요청', flush=True)
+    print(f'[battery] 🔴🔴 3차(critical) — 파이 정상 종료(poweroff) 요청 (이동평균 {avg_v:.2f}V, 이번 측정 {v:.2f}V)', flush=True)
     try:
         subprocess.Popen(["sudo", "systemctl", "poweroff"])
     except Exception as e:
@@ -329,7 +351,7 @@ def battery_poll_loop():
                 # 모터를 최대한 빨리 세우는(kill_autonomous_processes+cmd_vel 0,
                 # 둘 다 비블로킹) 역할만 하면 충분 — 그래도 순서상 뒤에 남겨둔다
                 # (poweroff가 실패하는 예외적 경우에도 정지 시도는 하도록).
-                _graceful_poweroff()
+                _graceful_poweroff(recent_avg, v)
                 killed, stopped = _stop_peripherals()
                 peripherals_stopped = True
                 print(f'[battery] 🔴🔴 3차(critical) 발동 — 이동평균 {recent_avg:.2f}V '
@@ -367,6 +389,7 @@ def battery_poll_loop():
                 if now - last_hist_append >= BATTERY_HISTORY_APPEND_S:
                     last_hist_append = now
                     battery_history.append({"ts": now, "v": v})
+                    _battery_log_to_disk(now, v, recent_avg, tier)
                 if now - last_predict >= BATTERY_PREDICT_INTERVAL_S:
                     last_predict = now
                     predicted_s = _predict_seconds_to_critical(list(battery_history), now)
