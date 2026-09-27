@@ -29,12 +29,36 @@ class Scan:
                     self.ranges[i] = rear_block
 
 
-def make(rot_off=0.04, turn_scale=1.02, drive_scale=1.01, rear_block=None):
+class WorldScan(dict):
+    """'scan'을 읽을 때마다 세상에 고정된 점들(world)을 현재 자세 P에서 본 스캔으로 만든다."""
+    def __init__(self, P, world, **kw):
+        super().__init__(**kw); self.P, self.world = P, world
+
+    def __getitem__(self, k):
+        if k != 'scan':
+            return super().__getitem__(k)
+        sc = Scan(); c, s = math.cos(self.P['th']), math.sin(self.P['th'])
+        for wx, wy in self.world:
+            dx, dy = wx - self.P['x'], wy - self.P['y']; x, y = c * dx + s * dy - 0.054, -s * dx + c * dy
+            r = math.hypot(x, y); i = int((math.atan2(y, x) - sc.angle_min) / sc.angle_increment) % 455
+            sc.ranges[i] = min(sc.ranges[i], r)
+        return sc
+
+
+def bottle(cx, cy, rad=0.033):
+    return [(cx + rad * math.cos(k * math.pi / 8), cy + rad * math.sin(k * math.pi / 8)) for k in range(16)]
+
+
+def make(rot_off=0.04, turn_scale=1.02, drive_scale=1.01, rear_block=None, world=None):
     nav = StepNavigator.__new__(StepNavigator)
     nav.step_m, nav.xy_tol, nav.yaw_tol, nav.turn_tol = 0.4, 0.05, math.radians(5), math.radians(5)
     nav.settle_s, nav.blocked_max, nav.clear_margin, nav.back_max, nav.side_margin = 0.5, 3, 0.25, 0.15, 0.05
-    nav.log = []; P = {'x': 0.0, 'y': 0.0, 'th': 0.0, 'turned': 0.0}
-    nav.S = {'scan': Scan(rear_block), 'pose': None, 'v': 0.0, 'gz': 0.0}
+    nav.rot_radius = 0.22
+    nav.log = []; P = {'x': 0.0, 'y': 0.0, 'th': 0.0, 'turned': 0.0, 'turn_clear': []}
+    if world is not None:
+        nav.S = WorldScan(P, world, pose=None, v=0.0, gz=0.0)
+    else:
+        nav.S = {'scan': Scan(rear_block), 'pose': None, 'v': 0.0, 'gz': 0.0}
     nav.settle = lambda: None; nav.spin = lambda t: None
     nav.map_pose = lambda: (P['x'], P['y'], P['th'])
     nav.plan = lambda here, goal: ([(here[0] + (goal[0] - here[0]) * k / 40, here[1] + (goal[1] - here[1]) * k / 40) for k in range(41)], '')
@@ -42,6 +66,8 @@ def make(rot_off=0.04, turn_scale=1.02, drive_scale=1.01, rear_block=None):
     nav.pub = types.SimpleNamespace(publish=lambda m: None)
 
     def turn_by(d):
+        if world:   # 돌기 시작할 때 로봇 중심에서 가장 가까운 장애물 거리
+            P['turn_clear'].append(min(math.hypot(wx - P['x'], wy - P['y']) for wx, wy in world))
         d2 = d * turn_scale
         cx, cy = P['x'] - rot_off * math.cos(P['th']), P['y'] - rot_off * math.sin(P['th'])   # 회전 중심(뒤로 rot_off)
         c, s = math.cos(d2), math.sin(d2); rx, ry = P['x'] - cx, P['y'] - cy
@@ -106,6 +132,19 @@ def main():
             builtins.print = quiet
             check(f'옆면 {side_gap * 100:.0f} cm 물체', (room < 0.3) == want_block, f'앞 여유 {room:.2f} m → {"막힘" if room < 0.3 else "통과"}')
             builtins.print = lambda *a, **k: None
+        # 6. 병이 오른쪽 옆면 7 cm(중심 0.21 m)에 붙은 채 90° 왼쪽 목표 → 떨어진 뒤 회전, 돌 때 장애물 > 0.20 m
+        nav, P = make(world=bottle(0.03, -0.21)); r = nav.go((0.0, 1.0, None))
+        kinds = [x['kind'] for x in nav.log]
+        builtins.print = quiet
+        check('옆 병 → 떨어진 뒤 회전', r['ok'] and 'rot_clear' in kinds and min(P['turn_clear']) > 0.20,
+              f'돌 때 최소 거리 {min(P["turn_clear"]) * 100:.1f} cm, {kinds[:5]}, 도착 {r["final_err_m"] * 100:.1f} cm')
+        builtins.print = lambda *a, **k: None
+        # 7. 앞·뒤·옆이 다 막힘 → 돌지 않고 막힘 보고
+        wall = bottle(0.2, 0.0) + bottle(-0.24, 0.0) + bottle(0.03, -0.2) + bottle(0.03, 0.2) + bottle(0.2, 0.12) + bottle(-0.2, -0.12)
+        nav, P = make(world=wall); r = nav.go((0.0, 1.0, None))
+        builtins.print = quiet
+        check('사방 막힘 → 돌지 않음', not r['ok'] and not P['turn_clear'], f'{r["msg"]}, 회전 {len(P["turn_clear"])}회')
+        builtins.print = lambda *a, **k: None
         # 4. 균등 분할
         nav, P = make(rot_off=0.0, drive_scale=1.0); r = nav.go((1.28, 0.0, None))
         builtins.print = quiet
