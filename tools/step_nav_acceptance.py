@@ -67,6 +67,32 @@ def course_obstacles(scan, course, margin=0.35, lidar_x=0.054):
     return out
 
 
+def slam_near_robot(n, here, radius=0.25, timeout=5.0):
+    """/map에서 로봇 중심 radius 안(차체 사각형 ±0.11 제외)의 점유(≥ 50) 칸 — 로봇 기준 (x, y)."""
+    from nav_msgs.msg import OccupancyGrid
+    from rclpy.qos import QoSProfile, DurabilityPolicy
+    M = {}
+    sub = n.create_subscription(OccupancyGrid, '/map', lambda m: M.update(m=m), QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    t0 = time.time()
+    while 'm' not in M and time.time() - t0 < timeout:
+        rclpy.spin_once(n, timeout_sec=0.1)
+    n.destroy_subscription(sub)
+    if 'm' not in M:
+        return []
+    g = M['m']; I = g.info; res = I.resolution; c, s = math.cos(here[2]), math.sin(here[2]); out = []
+    k = int(radius / res) + 1
+    i0 = int((here[0] - I.origin.position.x) / res); j0 = int((here[1] - I.origin.position.y) / res)
+    for j in range(j0 - k, j0 + k + 1):
+        for i in range(i0 - k, i0 + k + 1):
+            if not (0 <= i < I.width and 0 <= j < I.height) or g.data[j * I.width + i] < 50:
+                continue
+            wx, wy = I.origin.position.x + (i + 0.5) * res - here[0], I.origin.position.y + (j + 0.5) * res - here[1]
+            x, y = c * wx + s * wy, -s * wx + c * wy
+            if math.hypot(x, y) <= radius and not (abs(x) <= 0.11 and abs(y) <= 0.11):
+                out.append((round(x, 2), round(y, 2)))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--course', choices=list(COURSES), default='loop')
@@ -108,6 +134,12 @@ def main():
     bad = course_obstacles(nav.S['scan'], a.course)
     if bad:
         print(f'❌ 코스 공간에 물체 {len(bad)}점(로봇 기준 앞 x, 왼쪽 y): {bad[:6]} — 로봇 방향·주변을 확인하세요'); return 1
+    # ⚠️ 09-27 20:35: 스택 기동 순간 로봇 뒤에 있던 것(사람 발 추정)이 SLAM 지도에 찍혀 안 지워짐 — 뒤 약 25°는 자기 케이블에
+    #   가려 라이다가 못 봐서 지울 수 없다 → 출발 칸이 고비용, planner "빈 경로" 3회. 출발 전 로봇 주변 지도 확인
+    here = nav.map_pose(); ghost = slam_near_robot(n, here)
+    if ghost:
+        print(f'❌ SLAM 지도에 로봇 주변(0.25 m 안) 점유 칸 {len(ghost)}개(로봇 기준 앞 x, 왼쪽 y): {ghost[:6]} — '
+              '사람이 로봇 곁에 있는 채 스택을 켰나? 로봇에서 떨어진 뒤 스택을 다시 켤 것'); return 1
     p0 = nav.map_pose(); scan0 = nav.S['scan']; enc0 = list(G['enc'])
     c0, s0 = math.cos(p0[2]), math.sin(p0[2])
 
