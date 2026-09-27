@@ -37,11 +37,14 @@ from speed_floor_sweep import corridor_clearance
 class StepNavigator:
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
-                 clear_margin=0.25, back_max=0.15):
+                 clear_margin=0.25, back_max=0.15, side_margin=0.05):
         self.n = node
         self.step_m, self.xy_tol, self.yaw_tol = step_m, xy_tol, math.radians(yaw_tol_deg)
         self.turn_tol, self.settle_s, self.blocked_max, self.clear_margin = math.radians(turn_tol_deg), settle_s, blocked_max, clear_margin
-        self.back_max = back_max
+        # 통로 옆 여유: 10 cm(09-24, 직진이 휘던 시절 값) → 5 cm. ⚠️ 09-27 장애물 코스: planner 경로가 병 옆을 지나
+        #   병이 옆면 7 cm에 오자 "앞 여유 0" 3회로 중단. 근거: 직진 59회 옆밀림 최대 3.3 cm(95% 1.4 cm),
+        #   3층 collision_monitor 직진 정지 구역이 옆 3 cm → 주행기가 그보다 한 겹 넓게
+        self.back_max, self.side_margin = back_max, side_margin
         self.S = {'pose': None, 'v': 0.0, 'gz': 0.0, 'scan': None}
         node.create_subscription(Odometry, odom_topic, self._on_odom, 20)
         if gyro_from_odom:
@@ -71,7 +74,8 @@ class StepNavigator:
     def _clear_now(self, sgn):
         """직진 중 매 주기: 가는 쪽 통로 0.2 m 안 장애물 여부(collision_monitor와 별개의 한 겹).
         한 장 잡음 걸러내기(0.15초 지속)는 1층 drive_distance 안에서 한다(09-27 층 정리)."""
-        return self.S['scan'] is not None and corridor_clearance(self.S['scan'], sgn > 0, 0.0 if sgn > 0 else 0.1) > 0.2
+        return self.S['scan'] is not None and corridor_clearance(self.S['scan'], sgn > 0, 0.0 if sgn > 0 else 0.1,
+                                                                 self.side_margin) > 0.2
 
     def _corridor_pts(self, room, lidar_x=0.054, half=0.11, corridor=0.10):
         """앞 통로(corridor_clearance와 같은 범위)에서 차체 앞끝으로부터 room + 5 cm 안의 점 (x, y, 거리) — 진단 기록용."""
@@ -208,11 +212,11 @@ class StepNavigator:
                 if not r['ok']:
                     return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
                 self.settle()
-            room = corridor_clearance(self.S['scan'], True)
+            room = corridor_clearance(self.S['scan'], True, 0.0, self.side_margin)
             if room < seg + self.clear_margin:
                 # ⚠️ 09-27: 병 옆 통과 뒤 "앞 여유 0"으로 멈췄는데 무엇이 막았는지 남기지 않아 원인을 못 가렸다
                 #   (사용자: 그 자리엔 아무것도 없었음, 병은 20~30 cm 옆). 막은 점들을 base_link 좌표로 기록
-                blocked += 1; self._note(step, 'blocked', dict(room=round(room, 2), pts=self._corridor_pts(room)), None)
+                blocked += 1; self._note(step, 'blocked', dict(room=round(room, 2), pts=self._corridor_pts(room, corridor=self.side_margin)), None)
                 if blocked >= self.blocked_max:
                     return self._done(False, f'앞 여유 부족 {blocked}회({room:.2f} m)', step, t0, goal)
                 self.spin(1.0); continue
@@ -232,7 +236,7 @@ class StepNavigator:
 
     def _straight(self, step, d, kind):
         """돌지 않고 앞(+)/뒤(−)로 d m. 가는 쪽 여유가 |d| + clear_margin 이상일 때만. 실행했으면 True."""
-        room = corridor_clearance(self.S['scan'], d > 0, 0.0 if d > 0 else 0.1)
+        room = corridor_clearance(self.S['scan'], d > 0, 0.0 if d > 0 else 0.1, self.side_margin)
         if room < abs(d) + self.clear_margin:
             self._note(step, kind + '_blocked', dict(d=round(d, 3), room=round(room, 2)), None)
             return False

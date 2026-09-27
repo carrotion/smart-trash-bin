@@ -30,8 +30,8 @@ HALF = 0.11            # 차체 반폭/반길이 (footprint ±0.11)
 CORRIDOR = 0.10        # 좌우로 더 보는 여유 — 직진 중 휘는 것 감안
 
 
-def corridor_clearance(msg, forward=True, ignore_within=0.0):
-    """주행 방향 통로(차체 폭 + 좌우 CORRIDOR) 안에서 차체 끝부터 가장 가까운 점까지.
+def corridor_clearance(msg, forward=True, ignore_within=0.0, corridor=CORRIDOR):
+    """주행 방향 통로(차체 폭 + 좌우 corridor) 안에서 차체 끝부터 가장 가까운 점까지.
 
     각도 부채꼴로 보면 차체 안 구조물(케이블 등, 0.13m)이나 옆쪽 물체가 걸려
     오판한다(2026-09-24 첫 시도: 후방 0.13m로 중단 — 대부분 차체 안쪽이었다).
@@ -44,7 +44,7 @@ def corridor_clearance(msg, forward=True, ignore_within=0.0):
         x, y = LIDAR_X + r * math.cos(a), r * math.sin(a)
         if abs(x) <= HALF + 0.005 and abs(y) <= HALF + 0.005:
             continue   # 차체 안 = 자기 구조물
-        if abs(y) > HALF + CORRIDOR:
+        if abs(y) > HALF + corridor:
             continue
         gap = (x - HALF) if forward else (-HALF - x)
         if gap > ignore_within:

@@ -32,7 +32,7 @@ class Scan:
 def make(rot_off=0.04, turn_scale=1.02, drive_scale=1.01, rear_block=None):
     nav = StepNavigator.__new__(StepNavigator)
     nav.step_m, nav.xy_tol, nav.yaw_tol, nav.turn_tol = 0.4, 0.05, math.radians(5), math.radians(5)
-    nav.settle_s, nav.blocked_max, nav.clear_margin, nav.back_max = 0.5, 3, 0.25, 0.15
+    nav.settle_s, nav.blocked_max, nav.clear_margin, nav.back_max, nav.side_margin = 0.5, 3, 0.25, 0.15, 0.05
     nav.log = []; P = {'x': 0.0, 'y': 0.0, 'th': 0.0, 'turned': 0.0}
     nav.S = {'scan': Scan(rear_block), 'pose': None, 'v': 0.0, 'gz': 0.0}
     nav.settle = lambda: None; nav.spin = lambda t: None
@@ -93,6 +93,19 @@ def main():
               and len(nav.log) <= 8,
               f'{[x["kind"] for x in nav.log]}, 남은 {math.hypot(P["x"], P["y"]) * 100:.1f} cm')
         builtins.print = lambda *a, **k: None
+        # 5. 옆 물체: 옆면에서 7 cm(09-27 병 사건)면 직진 허용, 3 cm면 막힘 — 통로 옆 여유 5 cm
+        from speed_floor_sweep import corridor_clearance
+        for side_gap, want_block in ((0.07, False), (0.03, True)):
+            sc = Scan(); y = -(0.11 + side_gap)
+            for i in range(455):
+                a = sc.angle_min + i * sc.angle_increment
+                for x in (0.12, 0.15, 0.18):   # 차체 앞끝 바로 옆, 병 크기
+                    if abs(math.atan2(y, x - 0.054) - a) < sc.angle_increment / 2:
+                        sc.ranges[i] = math.hypot(x - 0.054, y)
+            room = corridor_clearance(sc, True, 0.0, 0.05)
+            builtins.print = quiet
+            check(f'옆면 {side_gap * 100:.0f} cm 물체', (room < 0.3) == want_block, f'앞 여유 {room:.2f} m → {"막힘" if room < 0.3 else "통과"}')
+            builtins.print = lambda *a, **k: None
         # 4. 균등 분할
         nav, P = make(rot_off=0.0, drive_scale=1.0); r = nav.go((1.28, 0.0, None))
         builtins.print = quiet
