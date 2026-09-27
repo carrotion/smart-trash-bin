@@ -1,0 +1,51 @@
+{
+ "floor": true,
+ "results": [
+  {
+   "name": "정적 검사(pyflakes, 핵심 파일)",
+   "ok": true,
+   "secs": 0.3,
+   "tail": []
+  },
+  {
+   "name": "④ 각도 회전 로직 가상 시험",
+   "ok": true,
+   "secs": 64.3,
+   "tail": [
+    "   (참고, 판정 제외) ✅ 요청  +90° {'coast': 0.35}: 실제   +87.8°(오차 -2.2) 보정 1회 6.6초, 명령 가속 최대 0.30 rad/s²",
+    "✅ 구동 이상 중단: 1.5초 동안 0.0°만 돎 — 자이로/구동 이상 (1.7초)",
+    "통과"
+   ]
+  },
+  {
+   "name": "④ 각도 회전(바닥)",
+   "ok": false,
+   "secs": 57.1,
+   "tail": [
+    " -180°: EKF 오차 0.7°✅ 라이다 오차 0.2°✅(잔차 2.1cm) 최대 1.13(×1.42❌) 5.8초✅ 보정 0회(첫 회전 뒤 +0.9°)",
+    "항목별 통과율: err_icp 100%(기준 95%), err_ekf 100%(기준 90%), peak_ratio 75%(기준 95%), time_over 100%(기준 80%)",
+    "④ 각도 회전: ❌ 불합격 | 저장 /home/carrotian/smart-trash-bin/docs/calibration/turn_angle_20260927_1654_suite.json"
+   ]
+  },
+  {
+   "name": "②' 직진 거리(바닥)",
+   "ok": false,
+   "secs": 16.7,
+   "tail": [
+    "+0.50 m: 라이다 거리 +0.029 m(오차 47.1 cm❌) 방향 +0.1°✅ 옆 +0.1 cm✅ 자이로 최대 0.17✅ 0.4초✅ | EKF 오차 49.4 cm, 첫 주행 뒤 +0.0 cm, 보정 0회, 잔차 1.7 cm ❌ 진행 방향 장애물 — 정지",
+    "항목별 통과율: err_icp 67%(기준 90%), head_icp 100%(기준 90%), lat_icp 100%(기준 90%), gyro_peak 100%(기준 95%), time_over 100%(기준 80%)",
+    "직진 거리: ❌ 불합격 | 저장 /home/carrotian/smart-trash-bin/docs/calibration/drive_distance_20260927_1654_suite.json"
+   ]
+  },
+  {
+   "name": "조합: 정사각형 좌회전(바닥)",
+   "ok": true,
+   "secs": 62.6,
+   "tail": [
+    "② EKF가 믿는 복귀 오차:   2.6 cm, -1.5°",
+    "③ 위치 추정 오차(②−①):  8.5 cm, -8.0°",
+    "저장: /home/carrotian/smart-trash-bin/docs/calibration/square_test.json"
+   ]
+  }
+ ]
+}

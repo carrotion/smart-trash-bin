@@ -1,0 +1,103 @@
+{
+ "criteria": {
+  "err_icp": 0.02,
+  "head_icp": 1.5,
+  "lat_icp": 0.02,
+  "gyro_peak": 0.3,
+  "time_over": 0.0
+ },
+ "rate": {
+  "err_icp": 0.9,
+  "head_icp": 0.9,
+  "lat_icp": 0.9,
+  "gyro_peak": 0.95,
+  "time_over": 0.8
+ },
+ "rows": [
+  {
+   "dist": 0.3,
+   "icp_dx": 0.2812446224164975,
+   "icp_dy": 0.0014972836656241776,
+   "icp_dth": 0.27761805523719896,
+   "ekf_dx": 0.28740368685375844,
+   "ekf_dy": 0.00045263537750118987,
+   "ekf_dth": -1.2298506808578213,
+   "err_ekf": 0.012521602355682726,
+   "err_icp": 0.018755377583502486,
+   "head_icp": 0.27761805523719896,
+   "lat_icp": 0.0014972836656241776,
+   "icp_resid_cm": 1.7646925202242838,
+   "gyro_peak": 0.18694809693060813,
+   "secs": 3.5935299396514893,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_drive": true,
+   "main_err_cm": -1.2521602355682726,
+   "dir_ok": true,
+   "pass": {
+    "err_icp": true,
+    "head_icp": true,
+    "lat_icp": true,
+    "gyro_peak": true,
+    "time_over": true
+   }
+  },
+  {
+   "dist": -0.3,
+   "icp_dx": -0.30172393269654263,
+   "icp_dy": -0.006756069458265834,
+   "icp_dth": 0.2113188388471975,
+   "ekf_dx": -0.31008158346014814,
+   "ekf_dy": -0.0011024482962638804,
+   "ekf_dth": -0.6235259646391125,
+   "err_ekf": 0.01174361498088361,
+   "err_icp": 0.0017239326965426405,
+   "head_icp": 0.2113188388471975,
+   "lat_icp": 0.006756069458265834,
+   "icp_resid_cm": 1.8170239903258267,
+   "gyro_peak": 0.12780316526411398,
+   "secs": 3.914839029312134,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_drive": true,
+   "main_err_cm": 1.174361498088361,
+   "dir_ok": true,
+   "pass": {
+    "err_icp": true,
+    "head_icp": true,
+    "lat_icp": true,
+    "gyro_peak": true,
+    "time_over": true
+   }
+  },
+  {
+   "dist": 0.5,
+   "icp_dx": 0.02939657895402706,
+   "icp_dy": 0.000632530052572252,
+   "icp_dth": 0.1483095143900607,
+   "ekf_dx": 0.02973594002366698,
+   "ekf_dy": 0.00013064395388512166,
+   "ekf_dth": -0.0851322513605419,
+   "err_ekf": 0.49357893828713373,
+   "err_icp": 0.47060342104597297,
+   "head_icp": 0.1483095143900607,
+   "lat_icp": 0.000632530052572252,
+   "icp_resid_cm": 1.738673310808137,
+   "gyro_peak": 0.17366302657068583,
+   "secs": 0.44521307945251465,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_drive": false,
+   "main_err_cm": 0,
+   "dir_ok": true,
+   "pass": {
+    "err_icp": false,
+    "head_icp": true,
+    "lat_icp": true,
+    "gyro_peak": true,
+    "time_over": true
+   }
+  }
+ ],
+ "aborted": true
+}
