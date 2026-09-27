@@ -37,10 +37,11 @@ from speed_floor_sweep import corridor_clearance
 class StepNavigator:
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
-                 clear_margin=0.25):
+                 clear_margin=0.25, back_max=0.15):
         self.n = node
         self.step_m, self.xy_tol, self.yaw_tol = step_m, xy_tol, math.radians(yaw_tol_deg)
         self.turn_tol, self.settle_s, self.blocked_max, self.clear_margin = math.radians(turn_tol_deg), settle_s, blocked_max, clear_margin
+        self.back_max = back_max
         self.S = {'pose': None, 'v': 0.0, 'gz': 0.0, 'scan': None}
         node.create_subscription(Odometry, odom_topic, self._on_odom, 20)
         if gyro_from_odom:
@@ -149,7 +150,7 @@ class StepNavigator:
 
     def go(self, goal, max_steps=40, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
-        t0 = time.time(); blocked = 0
+        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0
         for step in range(max_steps):
             if time.time() - t0 > timeout:
                 return self._done(False, '시간 초과', step, t0, goal)
@@ -163,6 +164,15 @@ class StepNavigator:
                     dyaw = wrap(goal[2] - here[2])
                     if abs(dyaw) > self.yaw_tol:
                         r = self.turner.turn_by(dyaw); self._note(step, 'final_turn', math.degrees(dyaw), r)
+                        # ⚠️ 09-27 합격 시험: 제자리 회전 중심이 base_link와 달라 마지막 150~175° 회전이 위치를 민다
+                        #   — 실제 복귀 오차가 거의 앞뒤 성분(−10.3, −3.9, +5.1, −4.0, −3.7 cm). 방향은 이미 맞았으니
+                        #   옆 오차가 작으면 돌지 않고 앞뒤 직진으로만 보정한다(1회)
+                        self.settle(); here = self.map_pose() or here
+                        along, lat = self._goal_in_body(goal, here)
+                        if final_fix < 1 and math.hypot(along, lat) > self.xy_tol and abs(lat) <= self.xy_tol:
+                            final_fix += 1
+                            if self._straight(step, along, 'final_fix'):
+                                continue
                 return self._done(True, '도착', step, t0, goal)
             path, why = self.plan(here, goal)
             if path is None:
@@ -174,7 +184,26 @@ class StepNavigator:
             seg = min(self.step_m + 0.01, math.hypot(c[0] - here[0], c[1] - here[1]))   # 균등 분할 걸음은 step_m 이하(반올림 여유 1 cm)
             head = math.atan2(c[1] - here[1], c[0] - here[0])
             dyaw = wrap(head - here[2])
+            # 가까운 목표(back_max 안)가 뒤쪽이면 돌지 말고 후진 — ⚠️ 09-27: 5 cm 뒤 목표에 174° 돌고 5 cm 가고 다시 돎
+            if abs(dyaw) > math.pi / 2 and dist <= self.back_max:
+                rdyaw = wrap(dyaw - math.pi)
+                if abs(rdyaw) > self.turn_tol:
+                    r = self.turner.turn_by(rdyaw); self._note(step, 'turn', math.degrees(rdyaw), r)
+                    if not r['ok']:
+                        return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
+                    self.settle()
+                if self._straight(step, -seg, 'back'):
+                    continue
+                # 뒤가 막혔으면 아래 보통 경로(돌아서 전진)로
             if abs(dyaw) > self.turn_tol:
+                # ⚠️ 가상 시험(09-27)에서 잡은 진동: 가까운 목표에 크게 돌면 회전 중심 어긋남이 로봇을 목표 너머로 밀어
+                #   (180°면 회전 중심 거리의 2배) 목표가 다시 뒤로 가고 또 돈다 — 뒤가 막혀 후진도 못 하면 무한 반복
+                if dist <= self.back_max and abs(dyaw) > math.pi / 2:
+                    if near_turns >= 1 and dist <= 2 * self.xy_tol:
+                        return self._done(True, '도착(근접 허용)', step, t0, goal)
+                    if near_turns >= 2:
+                        return self._done(False, f'가까운 목표 주변 진동({dist * 100:.0f} cm)', step, t0, goal)
+                    near_turns += 1
                 r = self.turner.turn_by(dyaw); self._note(step, 'turn', math.degrees(dyaw), r)
                 if not r['ok']:
                     return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
@@ -195,6 +224,20 @@ class StepNavigator:
             else:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
+
+    def _goal_in_body(self, goal, here):
+        """목표까지 로봇 기준 (앞, 왼쪽) 거리."""
+        dx, dy = goal[0] - here[0], goal[1] - here[1]; c, s = math.cos(here[2]), math.sin(here[2])
+        return c * dx + s * dy, -s * dx + c * dy
+
+    def _straight(self, step, d, kind):
+        """돌지 않고 앞(+)/뒤(−)로 d m. 가는 쪽 여유가 |d| + clear_margin 이상일 때만. 실행했으면 True."""
+        room = corridor_clearance(self.S['scan'], d > 0, 0.0 if d > 0 else 0.1)
+        if room < abs(d) + self.clear_margin:
+            self._note(step, kind + '_blocked', dict(d=round(d, 3), room=round(room, 2)), None)
+            return False
+        r = self.driver.drive_by(d); self._note(step, kind, round(d, 3), r)
+        return True
 
     def _note(self, step, kind, arg, r):
         e = dict(step=step, kind=kind, arg=arg, t=round(time.time(), 2))
