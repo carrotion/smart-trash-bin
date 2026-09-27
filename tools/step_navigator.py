@@ -36,7 +36,7 @@ from speed_floor_sweep import corridor_clearance
 
 class StepNavigator:
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
-                 step_m=0.4, xy_tol=0.10, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
+                 step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
                  clear_margin=0.25):
         self.n = node
         self.step_m, self.xy_tol, self.yaw_tol = step_m, xy_tol, math.radians(yaw_tol_deg)
@@ -106,13 +106,19 @@ class StepNavigator:
         return (path if len(path) >= 2 else None), ('' if len(path) >= 2 else '빈 경로')
 
     def carrot(self, path, here):
-        """경로에서 here와 가장 가까운 점부터 step_m 앞 지점."""
+        """경로에서 here와 가장 가까운 점부터 한 걸음 앞 지점. 걸음 = 남은 경로를 step_m 이하로 **균등 분할**한 길이.
+        ⚠️ 09-27 합격 시험: step_m(0.4)로 자르면 1.28 m 복귀가 0.4×3 뒤 8 cm 남기고 xy_tol(10 cm) 안이라 멈춤
+        — 3회 모두 실제 복귀 9.7~11.0 cm(SLAM도 7.8~8.3 cm로 알고 있었음). 균등 분할이면 마지막 걸음이 목표에 떨어진다."""
         i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
+        segs = [math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) for i in range(i0, len(path) - 1)]
+        step = self.step_m
+        if sum(segs) > 0:
+            step = sum(segs) / math.ceil(sum(segs) / self.step_m - 1e-9)
         acc = 0.0
-        for i in range(i0, len(path) - 1):
-            seg = math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1])
-            if acc + seg >= self.step_m:
-                f = (self.step_m - acc) / seg if seg > 0 else 0
+        for k, seg in enumerate(segs):
+            i = i0 + k
+            if acc + seg >= step:
+                f = (step - acc) / seg if seg > 0 else 0
                 return (path[i][0] + f * (path[i + 1][0] - path[i][0]), path[i][1] + f * (path[i + 1][1] - path[i][1]))
             acc += seg
         return path[-1]
@@ -152,7 +158,7 @@ class StepNavigator:
                     return self._done(False, f'경로 실패 {blocked}회: {why}', step, t0, goal)
                 self.spin(1.0); continue
             c = self.carrot(path, here)
-            seg = min(self.step_m, math.hypot(c[0] - here[0], c[1] - here[1]))
+            seg = min(self.step_m + 0.01, math.hypot(c[0] - here[0], c[1] - here[1]))   # 균등 분할 걸음은 step_m 이하(반올림 여유 1 cm)
             head = math.atan2(c[1] - here[1], c[0] - here[0])
             dyaw = wrap(head - here[2])
             if abs(dyaw) > self.turn_tol:
