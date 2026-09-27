@@ -1,0 +1,30 @@
+{
+ "criteria": {
+  "err_icp": 0.02,
+  "head_icp": 1.0,
+  "lat_icp": 0.02,
+  "gyro_peak": 0.3,
+  "time_over": 0.0
+ },
+ "rate": {
+  "err_icp": 0.9,
+  "head_icp": 0.9,
+  "lat_icp": 0.9,
+  "gyro_peak": 0.95,
+  "time_over": 0.8
+ },
+ "rows": [
+  {
+   "dist": 0.3,
+   "err_ekf": 0.017686146430468785,
+   "err_icp": 0.01843269174893869,
+   "head_icp": 1.522169635301172,
+   "lat_icp": 0.0005628856819914606,
+   "icp_resid_cm": 1.954557575927629,
+   "gyro_peak": 0.2177535109156715,
+   "secs": 3.4255638122558594,
+   "time_over": 0.0,
+   "fixes": 0,
+   "ok_drive": true,
+   "main_err_cm": -1.7686146430468785,
+   "dir_ok": 
