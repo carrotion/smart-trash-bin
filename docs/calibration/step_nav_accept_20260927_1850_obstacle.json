@@ -1,0 +1,56 @@
+{
+ "course": "obstacle",
+ "reps": 3,
+ "battery_v": "11.636",
+ "start": [
+  7.628485718978797,
+  2.2268400030015467,
+  2.3372720572500305
+ ],
+ "legs": [
+  {
+   "rep": 1,
+   "leg": 1,
+   "wp": [
+    1.4,
+    0.0,
+    null
+   ],
+   "ok": false,
+   "msg": "앞 여유 부족 3회(0.42 m)",
+   "secs": 4.4,
+   "err_cm": 140.0,
+   "yaw_err_deg": null,
+   "steps": 2,
+   "turns": 0,
+   "hesitations": 3,
+   "peak_rad_s": 0.0,
+   "events": [
+    {
+     "step": 0,
+     "kind": "blocked",
+     "arg": 0.42,
+     "t": 1790502627.56
+    },
+    {
+     "step": 1,
+     "kind": "blocked",
+     "arg": 0.42,
+     "t": 1790502629.14
+    },
+    {
+     "step": 2,
+     "kind": "blocked",
+     "arg": 0.42,
+     "t": 1790502630.73
+    }
+   ]
+  }
+ ],
+ "returns": [],
+ "stop": "1회 1구간 실패: 앞 여유 부족 3회(0.42 m)",
+ "arrive_ratio": 0.0,
+ "return_ratio": 0.0,
+ "peak_rad_s": 0.0,
+ "passed": false
+}
