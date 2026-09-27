@@ -37,10 +37,11 @@ class TurnToAngle:
     """get_yaw(): EKF 방향(rad), get_gyro(): 최신 자이로 z(rad/s), spin(t): t초 동안 콜백 처리."""
 
     # 기본값: 2026-09-27 ④ 비교(docs/motion_foundation.md) D 설정 — w_max 0.8(차체 자연 회전 속도, 낮추면 오히려 튐 증가),
-    #   명령 가속 0.3 rad/s²(튐 7/8 기준 내), kp 3·w_min 0.25·settle 0.2(시간 단축). 가속 제한은 구동 노드가 아니라
+    #   명령 가속 0.3 rad/s²(튐 7/8 기준 내), kp 3·w_min 0.25·settle 0.2(시간 단축). coast 0.17: 능동 제동 뒤
+#   0.23이면 첫 회전 평균 −3°(덜 돎), 0.12면 +2.6°(더 돎) → 0.17에서 −1.7~+2.4°로 치우침 없음(09-27). 가속 제한은 구동 노드가 아니라
     #   여기서 건다 — 대시보드 수동 조종 반응은 그대로 두기 위해(사용자 결정).
     def __init__(self, pub, spin, get_yaw, get_gyro, kp=3.0, w_min=0.25, w_max=0.8,
-                 coast_s=0.23, tol_deg=3.0, max_fix=1, settle_gyro=0.03, settle_s=0.2, accel=0.3):
+                 coast_s=0.17, tol_deg=3.0, max_fix=1, settle_gyro=0.03, settle_s=0.2, accel=0.3):
         self.pub, self.spin, self.get_yaw, self.get_gyro = pub, spin, get_yaw, get_gyro
         self.kp, self.w_min, self.w_max, self.coast_s = kp, w_min, w_max, coast_s
         self.accel = accel
@@ -111,10 +112,12 @@ class TurnToAngle:
         limit = abs(delta_rad) / self.w_min + 3.0
         self._phase = 'main'
         ok, msg, total = self._drive(delta_rad, self.w_max, limit)
-        fixes = 0
+        fixes = 0; main_err = None
         while ok:
             total += self._settle_track()
             rem = delta_rad - total
+            if main_err is None:
+                main_err = -math.degrees(rem)          # 첫 회전 뒤 오차(+ = 넘침) — 관성 추정 조정용
             if abs(rem) <= self.tol or fixes >= self.max_fix:
                 break
             fixes += 1
@@ -122,4 +125,4 @@ class TurnToAngle:
             ok, msg, t = self._drive(rem, self.w_min, abs(rem) / self.w_min + 3.0)
             total += t
         rem = delta_rad - total
-        return dict(ok=ok, msg=msg, err_deg=-math.degrees(rem), fixes=fixes, secs=time.time() - t0)
+        return dict(ok=ok, msg=msg, err_deg=-math.degrees(rem), fixes=fixes, secs=time.time() - t0, main_err_deg=main_err)
