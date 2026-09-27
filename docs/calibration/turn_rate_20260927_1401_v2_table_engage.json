@@ -1,0 +1,107 @@
+{
+ "criteria": {
+  "mean_err": 0.1,
+  "peak_ratio": 1.3,
+  "reversal": 0,
+  "rise_s": 0.7
+ },
+ "rows": [
+  {
+   "w": 0.3,
+   "mean": 0.3011553017322384,
+   "mean_err": 0.0038510057741281134,
+   "peak": 0.444787104577179,
+   "peak_ratio": 1.48262368192393,
+   "reversal": 0,
+   "rise_s": 0.15971016883850098,
+   "pass": {
+    "mean_err": true,
+    "peak_ratio": false,
+    "reversal": true,
+    "rise_s": true
+   },
+   "ok": false
+  },
+  {
+   "w": -0.3,
+   "mean": 0.24607219105497574,
+   "mean_err": 0.17975936315008084,
+   "peak": 0.653205296393945,
+   "peak_ratio": 2.1773509879798167,
+   "reversal": 0,
+   "rise_s": 0.4145681858062744,
+   "pass": {
+    "mean_err": false,
+    "peak_ratio": false,
+    "reversal": true,
+    "rise_s": true
+   },
+   "ok": false
+  },
+  {
+   "w": 0.5,
+   "mean": 0.5016812293291131,
+   "mean_err": 0.003362458658226153,
+   "peak": 0.9244275250503855,
+   "peak_ratio": 1.848855050100771,
+   "reversal": 0,
+   "rise_s": 0.5601651668548584,
+   "pass": {
+    "mean_err": true,
+    "peak_ratio": false,
+    "reversal": true,
+    "rise_s": true
+   },
+   "ok": false
+  },
+  {
+   "w": -0.5,
+   "mean": 0.5500985656850694,
+   "mean_err": 0.10019713137013886,
+   "peak": 1.0526508914690973,
+   "peak_ratio": 2.1053017829381946,
+   "reversal": 0,
+   "rise_s": 0.5634913444519043,
+   "pass": {
+    "mean_err": false,
+    "peak_ratio": false,
+    "reversal": true,
+    "rise_s": true
+   },
+   "ok": false
+  },
+  {
+   "w": 0.8,
+   "mean": 0.7700820322907789,
+   "mean_err": 0.037397459636526464,
+   "peak": 0.9575262123407843,
+   "peak_ratio": 1.1969077654259803,
+   "reversal": 0,
+   "rise_s": 1.0000791549682617,
+   "pass": {
+    "mean_err": true,
+    "peak_ratio": true,
+    "reversal": true,
+    "rise_s": false
+   },
+   "ok": false
+  },
+  {
+   "w": -0.8,
+   "mean": 0.7815104605808122,
+   "mean_err": 0.023111924273984813,
+   "peak": 1.1248505345400266,
+   "peak_ratio": 1.406063168175033,
+   "reversal": 0,
+   "rise_s": 0.9445168972015381,
+   "pass": {
+    "mean_err": true,
+    "peak_ratio": false,
+    "reversal": true,
+    "rise_s": false
+   },
+   "ok": false
+  }
+ ],
+ "aborted": false
+}
