@@ -277,6 +277,8 @@
   - 먼저 의심한 `min_speed_xy`(0.05)는 0으로 바꿔도 그대로 실패 → 원인 아님(0.05 유지)
 - 수정(`xy_goal_tolerance: 0.10`, 시뮬 재기동으로 적용 — DWB는 기동 때만 읽음): 1 m 목표 앞/옆/옆 3개 7~13초 성공, 뒤쪽은 1회 실패 뒤 재시도 26.8초 성공(제자리 180° 약 10초) → **5회 중 4회 성공**(수정 전 0/4)
 
+- **탐색기 비교(같은 시뮬 4분)**: explore_lite 35 m²·목표 2/5·2분 만에 "모든 경계 시도함"으로 중단 vs **frontier 75.7 m²·목표 15/16·계속 탐색** → 실물 `autonomous_mapping.launch.py`에 `explorer` 인자 추가, **기본 frontier**(explore_lite는 `explorer:=explore_lite`). 단일 목표 시험 도구 `tools/nav_goal_test.py`
+
 ### 16. 자율탐색 재시도
 - #1·#2·#10·#12 뒤. 탐색기는 `frontier_exploration_ros2` 권장(시뮬 비교 결과, `docs/pc_tasks.md`)
 
