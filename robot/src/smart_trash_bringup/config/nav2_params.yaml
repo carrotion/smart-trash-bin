@@ -82,6 +82,10 @@ controller_server:
       angular_granularity: 0.025
       transform_tolerance: 0.3
       trans_stopped_velocity: 0.05
+      # ⚠️ 2026-09-27: 이 값(DWB 쪽, RotateToGoal 등이 씀)을 안 적어서 기본 0.25였다 — goal_checker는 0.10
+      #   (08-16에 그것만 줄임). 목표 25 cm 안에 들면 직진을 멈추고 회전만 하는데 도착 판정은 10 cm라
+      #   영원히 도착 못 함 → "Failed to make progress" → 후진 복구 반복(시뮬 재현). goal_checker와 같게.
+      xy_goal_tolerance: 0.10
       short_circuit_trajectory_evaluation: true
       stateful: true
       # 2026-08-21: Twirling 추가 — 이동거리 대비 불필요한 회전에 페널티를
