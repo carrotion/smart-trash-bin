@@ -25,8 +25,9 @@ REAR = (2, 3)
 ENCODER_SIGN = [-1, 1, 1, -1]
 # 드라이버에 원시 $pwm을 직접 보낼 때 "전진"이 되는 부호 (오른쪽 극성 반전 배선)
 PWM_SIGN = [1, -1, 1, -1]
-# 앞 370: 857.2(주행 보정값) / 뒤 520: 2475.6(손 10회전 raw, 주행 보정 전)
-COUNTS_PER_REV = [857.2, 857.2, 2475.6, 2475.6]
+# 2026-09-27 줄자 실측 보정(diff_drive_node와 같아야 함): 앞 370 857.2→891.5(1.040배 길게 읽었음),
+#   뒤 520 2475.6→2506.5(후진 1.0125배). 근거 docs/calibration/tape_runs_20260927.json, todo #5
+COUNTS_PER_REV = [891.5, 891.5, 2506.5, 2506.5]
 METERS_PER_COUNT = [(2.0 * math.pi * WHEEL_RADIUS) / c for c in COUNTS_PER_REV]
 
 
