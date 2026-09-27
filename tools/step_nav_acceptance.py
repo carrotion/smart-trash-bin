@@ -47,6 +47,26 @@ def peak_rate(samples, win=0.2):
     return best
 
 
+def course_obstacles(scan, course, margin=0.35, lidar_x=0.054):
+    """코스 사각형(목표점들의 범위 + 뒤·옆 margin) 안 스캔 점 (x, y). 장애물 코스는 앞 0.3~0.9 m·좌우 0.15 m 안(병)만 허용.
+    차체 다각형 안(자기 구조물)은 제외."""
+    xs = [0.0] + [w[0] for w in COURSES[course]]; ys = [0.0] + [w[1] for w in COURSES[course]]
+    x0, x1, y0, y1 = min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin
+    out = []
+    for i, r in enumerate(scan.ranges):
+        if not (scan.range_min <= r <= scan.range_max):
+            continue
+        a = scan.angle_min + i * scan.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+        if abs(x) <= 0.13 and abs(y) <= 0.13 or (x < -0.11 and x > -0.21 and abs(y) <= 0.11):
+            continue   # 차체·뒤 부착물
+        if not (x0 <= x <= x1 and y0 <= y <= y1):
+            continue
+        if course == 'obstacle' and 0.3 <= x <= 0.9 and abs(y) <= 0.15:
+            continue   # 놓아 둔 병
+        out.append((round(x, 2), round(y, 2)))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--course', choices=list(COURSES), default='loop')
@@ -80,6 +100,11 @@ def main():
         print('❌ /cmd_vel_nav 구독자(collision_monitor) 없음 — 명령이 바퀴까지 안 간다'); return 1
 
     nav.settle(); nav.spin(0.5)
+    # ⚠️ 09-27 20:23: 회전 측정 30여 회로 로봇 방향이 바뀐 채 출발 → 코스가 소파 쪽, 소파 밑(라이다 높이 아래는 빈 공간)으로
+    #   들어가려 해 사용자가 꺼냄. 출발 전 코스 사각형(여유 포함)이 비었는지 확인하고, 아니면 출발 거부
+    bad = course_obstacles(nav.S['scan'], a.course)
+    if bad:
+        print(f'❌ 코스 공간에 물체 {len(bad)}점(로봇 기준 앞 x, 왼쪽 y): {bad[:6]} — 로봇 방향·주변을 확인하세요'); return 1
     p0 = nav.map_pose(); scan0 = nav.S['scan']; enc0 = list(G['enc'])
     c0, s0 = math.cos(p0[2]), math.sin(p0[2])
 
