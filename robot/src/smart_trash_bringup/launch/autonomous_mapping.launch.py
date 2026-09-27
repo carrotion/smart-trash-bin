@@ -4,6 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch.substitutions import PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -39,6 +40,12 @@ def generate_launch_description():
     # 로봇이 절대 안 움직임. 설정/코스트맵 검증을 안전하게 하기 위한 스위치.
     declare_enable_explore_cmd = DeclareLaunchArgument(
         'enable_explore', default_value='true')
+    # 2026-09-27: 기본 탐색기를 frontier_exploration_ros2로. 같은 시뮬(Stage cave, 새 Nav2 설정) 4분 비교:
+    #   explore_lite — 35 m², 목표 성공 2/5, "모든 경계 시도함"으로 2분 만에 스스로 중단
+    #   frontier     — 75.7 m²(계속 탐색 중), 목표 성공 15/16. 08월 시뮬 비교 결론(docs/pc_tasks.md)과 같음
+    declare_explorer_cmd = DeclareLaunchArgument(
+        'explorer', default_value='frontier',
+        description="'frontier'(frontier_exploration_ros2, 기본) 또는 'explore_lite'")
 
     mapping_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -86,12 +93,27 @@ def generate_launch_description():
         name='explore_node', output='screen',
         parameters=[explore_params_file],
         remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
-        condition=IfCondition(LaunchConfiguration('enable_explore')))
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
+            LaunchConfiguration('explorer'), "' == 'explore_lite'"])))
+    # 시뮬 런치(sim_autonomous_mapping.launch.py)와 같은 파라미터 — 시뮬에서 검증한 값을 그대로
+    frontier_node = Node(
+        package='frontier_exploration_ros2', executable='frontier_explorer',
+        name='frontier_explorer', output='screen',
+        parameters=[{
+            'robot_base_frame': 'base_link',
+            'frontier_selection_min_distance': 0.35,
+            'frontier_candidate_min_goal_distance_m': 0.35,
+        }],
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
+            LaunchConfiguration('explorer'), "' == 'frontier'"])))
 
     ld = LaunchDescription()
     ld.add_action(declare_nav2_params_cmd)
     ld.add_action(declare_explore_params_cmd)
     ld.add_action(declare_enable_explore_cmd)
+    ld.add_action(declare_explorer_cmd)
     ld.add_action(mapping_launch)
     ld.add_action(controller_server)
     ld.add_action(planner_server)
@@ -100,4 +122,5 @@ def generate_launch_description():
     ld.add_action(collision_monitor)
     ld.add_action(lifecycle_manager)
     ld.add_action(explore_node)
+    ld.add_action(frontier_node)
     return ld
