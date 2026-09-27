@@ -32,6 +32,8 @@ r=h.get_result_async(); t0=time.time()
 last=0
 while not r.done() and time.time()-t0<float(sys.argv[3] if len(sys.argv)>3 else 90):
     rclpy.spin_once(n,timeout_sec=0.1)
+    if S.get('fw_err') is None and S['nav'] and S['nav'][-1][0] > 0.1 and S['odom']:   # 전진 시작 순간 방향 오차
+        gdir=math.atan2(y0+dy-S['odom'][1], x0+dx-S['odom'][0]); S['fw_err']=math.degrees((gdir-S['yaw']+math.pi)%(2*math.pi)-math.pi); S['fw_t']=time.time()-t0
     if time.time()-last>=1.0 and S['odom']:
         last=time.time(); c=S['nav'][-1] if S['nav'] else (0,0)
         TR.append(f"  {time.time()-t0:5.1f}s 남은 거리 {math.hypot(x0+dx-S['odom'][0],y0+dy-S['odom'][1]):.2f} m | 명령 v {c[0]:+.3f} w {c[1]:+.2f}")
@@ -43,4 +45,7 @@ if not r.done():   # 제한 시간 초과 → 목표 취소 + 정지(목표가 �
     print('⏱ 제한 시간 초과 — 목표 취소함')
 x1,y1=S['odom']; st=r.result().status if r.done() else 'timeout'
 v=[a for a,b in S['cmd'] if abs(a)>1e-3]; vn=[a for a,b in S['nav'] if abs(a)>1e-3]
-print('\n'.join(TR)); print(f'결과 상태 {st}(4=성공) {time.time()-t0:.1f}초 | 이동 ({x1-x0:+.2f},{y1-y0:+.2f}) m, 목표 ({dx:+.2f},{dy:+.2f}) | cmd_vel_nav {len(S["nav"])}개(최대 {max(vn,default=0):.2f}) → /cmd_vel {len(S["cmd"])}개(최대 {max(v,default=0):.2f})')
+print('\n'.join(TR))
+yaw_err=math.degrees((S['yaw']-th+math.pi)%(2*math.pi)-math.pi)
+print(f"전진 시작 {S.get('fw_t',float('nan')):.1f}초, 그때 목표 방향과 {S.get('fw_err',float('nan')):+.0f}° 어긋남 | 도착 방향 오차 {yaw_err:+.1f}° | 도착 거리 오차 {math.hypot(x0+dx-S['odom'][0],y0+dy-S['odom'][1])*100:.0f} cm")
+print(f'결과 상태 {st}(4=성공) {time.time()-t0:.1f}초 | 이동 ({x1-x0:+.2f},{y1-y0:+.2f}) m, 목표 ({dx:+.2f},{dy:+.2f}) | cmd_vel_nav {len(S["nav"])}개(최대 {max(vn,default=0):.2f}) → /cmd_vel {len(S["cmd"])}개(최대 {max(v,default=0):.2f})')
