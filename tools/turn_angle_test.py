@@ -108,7 +108,8 @@ def main():
                 avg = [sum(x for tt, x in win if t - 0.2 < tt <= t) / max(1, sum(1 for tt, x in win if t - 0.2 < tt <= t))
                        for t, _ in win if t >= 0.2]
                 peak = max(avg, default=0.0)
-                m = dict(angle=sgn * ang, err_ekf=abs(turned_ekf - sgn * ang), err_icp=abs(real - sgn * ang),
+                # 부호 있는 값도 남김(09-27: 절댓값만 있어 EKF/자이로 배율을 방향별로 못 구했다)
+                m = dict(angle=sgn * ang, turned_ekf=turned_ekf, turned_icp=real, err_ekf=abs(turned_ekf - sgn * ang), err_icp=abs(real - sgn * ang),
                          icp_resid_cm=resid * 100, peak=peak, peak_ratio=peak / w_max,
                          secs=secs, time_over=max(0.0, secs - time_limit(ang)),
                          fixes=r['fixes'], ok_turn=r['ok'], main_err=r.get('main_err_deg'))

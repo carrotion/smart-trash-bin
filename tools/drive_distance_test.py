@@ -99,7 +99,8 @@ def main():
                         first = False
                     tx, ty, th, resid = icp_motion(scan0, S['scan'], g)
                     gp = max((abs(x) for t, x in S['g']), default=0.0)
-                    m = dict(dist=d, err_ekf=abs(r['err_m']), err_icp=abs(abs(tx) - dist), head_icp=abs(th), lat_icp=abs(ty),
+                    m = dict(dist=d, icp_dx=tx, icp_dy=ty, icp_dth=th, ekf_dx=g[0], ekf_dy=g[1], ekf_dth=math.degrees(g[2]),
+                             err_ekf=abs(r['err_m']), err_icp=abs(abs(tx) - dist), head_icp=abs(th), lat_icp=abs(ty),
                              icp_resid_cm=resid * 100, gyro_peak=gp, secs=secs,
                              time_over=max(0.0, secs - (dist / 0.1 + 3.0)), fixes=r['fixes'], ok_drive=r['ok'],
                              main_err_cm=(r['main_err_m'] or 0) * 100, dir_ok=bool(tx * sgn > 0))
