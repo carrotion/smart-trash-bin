@@ -62,6 +62,7 @@ class StepNavigator:
         self.turner = TurnToAngle(self.pub, self.spin, lambda: self.S['pose'][2], lambda: self.S['gz'])
         self.driver = DriveDistance(self.pub, self.spin, lambda: self.S['pose'], lambda: self.S['v'], clear_fn=self._clear_now)
         self.log = []
+        self.cancel = False   # 밖(액션 서버)에서 True로 두면 go()가 다음 단계 경계에서 '취소'로 끝낸다
 
     def _on_odom(self, m):
         p = m.pose.pose
@@ -161,6 +162,8 @@ class StepNavigator:
         for step in range(max_steps):
             if time.time() - t0 > timeout:
                 return self._done(False, '시간 초과', step, t0, goal)
+            if self.cancel:
+                return self._done(False, '취소', step, t0, goal)
             self.settle()
             here = self.map_pose()
             if here is None:
