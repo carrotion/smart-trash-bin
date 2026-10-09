@@ -151,6 +151,17 @@ def main():
         check('1.28 m 균등 분할', r['ok'] and abs(P['x'] - 1.28) <= 0.03,
               f'{(P["x"] - 1.28) * 100:+.1f} cm, 걸음 {[x["arg"] for x in nav.log if x["kind"] == "drive"]}')
         builtins.print = lambda *a, **k: None
+        # 6b. 앞 여유 0.55 m(병 표면이 통로 가장자리 0.66 m 앞) + 걸음 0.4 → 걸음을 줄여 간다(10-09 시뮬에서 31번 막혔던 상황)
+        #     가짜 플래너는 직선이라 줄인 걸음 뒤에는 정말 막힌다 — 확인할 것: 줄인 걸음이 실행되고, 병 앞 0.24 m 안으로는 안 간다
+        #     (병 중심 y −0.17: 표면이 통로 폭 ±0.16 안쪽에 확실히 걸리게 — −0.19는 가상 스캔 각도 양자화로 가장자리에 걸려 멀어지면 사라졌다)
+        w = bottle(0.693, -0.17)
+        nav, P = make(world=w); r = nav.go((0.8, 0.0, None))
+        kinds = [x['kind'] for x in nav.log]
+        gap = min(math.hypot(wx - P['x'], wy - P['y']) for wx, wy in w)
+        builtins.print = quiet
+        check('앞 여유 부족 → 걸음을 줄임', 'shorten' in kinds and 0.25 <= P['x'] <= 0.31 and not r['ok'] and gap > 0.36,
+              f'{kinds[:4]}, 이동 {P["x"] * 100:.0f} cm, 병까지 중심 {gap * 100:.0f} cm, {r["msg"]}')
+        builtins.print = lambda *a, **k: None
         # 5. 취소(액션 서버가 cancel을 세움) — 움직이지 않고 '취소'로 끝난다. ⚠️ 10-09: cancel을 __init__에서만 만들어
         #   이 가상 시험(객체를 __init__ 없이 만듦)이 통째로 죽었는데, 실패한 채 커밋됐다
         nav, P = make(rot_off=0.0); nav.cancel = True; r = nav.go((1.0, 0.0, None))
