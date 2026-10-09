@@ -8,7 +8,7 @@
 하드웨어를 건드리는 항목은 `docs/hardware_change_procedure.md`를 따른다.
 시험 전엔 항상 `python3 tools/hw_preflight.py`.
 
-최종 갱신: 2026-09-26 (다음 초점: 자율주행 재개 준비 — #13 → Nav2 속도 재설정 → #10 → #12 → #16)
+최종 갱신: 2026-10-09 (4층 주행기 합격 시험 loop·obstacle 통과 — `docs/motion_foundation.md`. 다음 초점: 회전 전 떨어지기 동작 실물 확인 → #11a 소파·침대 밑 대책 → 주행기 위에 프론티어 탐색(#16))
 
 
 ---

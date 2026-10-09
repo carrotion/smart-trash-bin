@@ -6,7 +6,7 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 
 - 아래층(센서 → 기본 동작 → 위치 추정 → 안전 → 주행 방식)부터 **숫자로 된 합격 기준**으로 검증하고, 합격한 동작만 위층에서 조합한다. 위층에서 문제가 나면 거기서 땜질하지 말고 아래층 기준으로 돌아간다
 - 무엇을 고치든 `python3 tools/motion_suite.py`(오프라인) / `--floor`(바닥 실물)로 회귀 확인
-- 현재: ④ 각도 회전(`tools/turn_to_angle.py`)·②' 거리 직진(`tools/drive_distance.py`) 합격, 4층 멈춤-확인-이동(`tools/step_navigator.py`) 실물 3/3 도착. ③ 속도 회전은 차체 두 회전 상태 때문에 불합격 → 위층은 ④ 사용
+- 현재: ④ 각도 회전(`tools/turn_to_angle.py`)·②' 거리 직진(`tools/drive_distance.py`) 합격, 4층 멈춤-확인-이동(`tools/step_navigator.py`) 합격 시험 loop(09-27)·장애물 코스(10-09) 통과. ③ 속도 회전은 차체 두 회전 상태 때문에 불합격 → 위층은 ④ 사용
 
 ## ✅ 구동 기본값 `control_mode: velocity` (2026-09-26, 사용자 승인)
 
