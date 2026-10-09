@@ -38,6 +38,9 @@ class StepNavigator:
     # 밖(액션 서버)에서 True로 두면 go()가 다음 단계 경계에서 '취소'로 끝낸다. 클래스 기본값으로 둔다 —
     #   가상 시험은 __init__을 건너뛰고 객체를 만들어서, 인스턴스 속성으로 두면 회귀 시험이 깨진다(10-09)
     cancel = False
+    # 앞 여유가 걸음 + clear_margin에 모자라면 포기하지 않고 여유가 허락하는 만큼(room − clear_margin)으로 줄여 간다.
+    #   그 길이가 min_step 미만이면 막힘. 클래스 기본값인 이유는 위 cancel과 같다(가상 시험은 __init__을 건너뜀)
+    min_step = 0.10
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -234,6 +237,11 @@ class StepNavigator:
                     return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
                 self.settle()
             room = corridor_clearance(self.S['scan'], True, 0.0, self.side_margin)
+            if room < seg + self.clear_margin and room - self.clear_margin - 0.01 >= self.min_step:
+                # ⚠️ 10-09 our_home 시뮬: 앞 여유 0.55 m인데 걸음 0.345 + 여유 0.25 = 0.595가 안 돼 같은 자리에서 막힘 31번 반복
+                #   (탐색기가 같은 목표를 계속 다시 보냄, 지도 300초 뒤 정지). 걸음을 줄이면 그 걸음은 안전하다(여유 0.25 유지)
+                seg = room - self.clear_margin - 0.01
+                self._note(step, 'shorten', dict(room=round(room, 2), seg=round(seg, 3)), None)
             if room < seg + self.clear_margin:
                 # ⚠️ 09-27: 병 옆 통과 뒤 "앞 여유 0"으로 멈췄는데 무엇이 막았는지 남기지 않아 원인을 못 가렸다
                 #   (사용자: 그 자리엔 아무것도 없었음, 병은 20~30 cm 옆). 막은 점들을 base_link 좌표로 기록
