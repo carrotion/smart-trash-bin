@@ -150,6 +150,13 @@ def main():
         builtins.print = quiet
         check('1.28 m 균등 분할', r['ok'] and abs(P['x'] - 1.28) <= 0.03,
               f'{(P["x"] - 1.28) * 100:+.1f} cm, 걸음 {[x["arg"] for x in nav.log if x["kind"] == "drive"]}')
+        builtins.print = lambda *a, **k: None
+        # 5. 취소(액션 서버가 cancel을 세움) — 움직이지 않고 '취소'로 끝난다. ⚠️ 10-09: cancel을 __init__에서만 만들어
+        #   이 가상 시험(객체를 __init__ 없이 만듦)이 통째로 죽었는데, 실패한 채 커밋됐다
+        nav, P = make(rot_off=0.0); nav.cancel = True; r = nav.go((1.0, 0.0, None))
+        builtins.print = quiet
+        check('취소 요청 → 움직이지 않고 끝', not r['ok'] and r['msg'] == '취소' and not [x for x in nav.log if x['kind'] == 'drive'],
+              f'{r["msg"]}, 직진 {len([x for x in nav.log if x["kind"] == "drive"])}회')
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')

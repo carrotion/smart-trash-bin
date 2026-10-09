@@ -12,3 +12,12 @@ if [ -n "$out" ]; then
     echo "$out"
     exit 1
 fi
+# 2026-10-09: 주행기를 고친 커밋이 가상 시험 실패(2/3)인 채 들어갔다 — 시험 결과를 `| tail`로 넘겨 실패 코드가 가려졌다.
+# 주행기 쪽 파일이 바뀌면 1초짜리 가상 시험을 여기서 돌린다(전체 회귀는 tools/motion_suite.py).
+if echo "$files" | grep -qE 'tools/(step_navigator|step_nav_action_server|test_step_navigator_sim|drive_distance|turn_to_angle)\.py'; then
+    if ! out=$(python3 "$(git rev-parse --show-toplevel)/tools/test_step_navigator_sim.py" 2>&1); then
+        echo "❌ pre-commit: 4층 주행기 가상 시험 실패"
+        echo "$out" | tail -15
+        exit 1
+    fi
+fi

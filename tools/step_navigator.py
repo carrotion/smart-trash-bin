@@ -35,6 +35,10 @@ from speed_floor_sweep import corridor_clearance
 
 
 class StepNavigator:
+    # 밖(액션 서버)에서 True로 두면 go()가 다음 단계 경계에서 '취소'로 끝낸다. 클래스 기본값으로 둔다 —
+    #   가상 시험은 __init__을 건너뛰고 객체를 만들어서, 인스턴스 속성으로 두면 회귀 시험이 깨진다(10-09)
+    cancel = False
+
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
                  clear_margin=0.25, back_max=0.15, side_margin=0.05, rot_radius=0.22):
@@ -62,7 +66,6 @@ class StepNavigator:
         self.turner = TurnToAngle(self.pub, self.spin, lambda: self.S['pose'][2], lambda: self.S['gz'])
         self.driver = DriveDistance(self.pub, self.spin, lambda: self.S['pose'], lambda: self.S['v'], clear_fn=self._clear_now)
         self.log = []
-        self.cancel = False   # 밖(액션 서버)에서 True로 두면 go()가 다음 단계 경계에서 '취소'로 끝낸다
 
     def _on_odom(self, m):
         p = m.pose.pose
