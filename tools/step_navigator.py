@@ -41,6 +41,9 @@ class StepNavigator:
     # 앞 여유가 걸음 + clear_margin에 모자라면 포기하지 않고 여유가 허락하는 만큼(room − clear_margin)으로 줄여 간다.
     #   그 길이가 min_step 미만이면 막힘. 클래스 기본값인 이유는 위 cancel과 같다(가상 시험은 __init__을 건너뜀)
     min_step = 0.10
+    #   떨어진 뒤 그 자리에서 다시 계획할지. ⚠️ 10-10 지도 가상 시험: True면 문틈에서 "물러남 → 직진 → 물러남" 고리(40회) —
+    #   경로가 꺾이는 자리가 회전 반경 안이라 생기는 문제라 재계획으로는 안 풀림. 판정 전까지 False
+    replan_after_escape = False
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -133,8 +136,9 @@ class StepNavigator:
         path = [(ps.pose.position.x, ps.pose.position.y) for ps in r.result().result.path.poses]
         return (path if len(path) >= 2 else None), ('' if len(path) >= 2 else '빈 경로')
 
-    def carrot(self, path, here):
-        """경로에서 here와 가장 가까운 점부터 한 걸음 앞 지점. 걸음 = 남은 경로를 step_m 이하로 **균등 분할**한 길이.
+    def carrot(self, path, here, ahead=None):
+        """경로에서 here와 가장 가까운 점부터 한 걸음 앞 지점. 걸음 = 남은 경로를 step_m 이하로 **균등 분할**한 길이
+        (ahead를 주면 그 거리 앞 지점 — 좁은 곳에서 경로를 더 바짝 따라갈 때).
         ⚠️ 09-27 합격 시험: step_m(0.4)로 자르면 1.28 m 복귀가 0.4×3 뒤 8 cm 남기고 xy_tol(10 cm) 안이라 멈춤
         — 3회 모두 실제 복귀 9.7~11.0 cm(SLAM도 7.8~8.3 cm로 알고 있었음). 균등 분할이면 마지막 걸음이 목표에 떨어진다."""
         i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
@@ -142,6 +146,8 @@ class StepNavigator:
         step = self.step_m
         if sum(segs) > 0:
             step = sum(segs) / math.ceil(sum(segs) / self.step_m - 1e-9)
+        if ahead is not None:
+            step = min(step, ahead)
         acc = 0.0
         for k, seg in enumerate(segs):
             i = i0 + k
@@ -164,7 +170,7 @@ class StepNavigator:
 
     def go(self, goal, max_steps=40, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
-        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0
+        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol
         for step in range(max_steps):
             if time.time() - t0 > timeout:
                 return self._done(False, '시간 초과', step, t0, goal)
@@ -175,7 +181,7 @@ class StepNavigator:
             if here is None:
                 return self._done(False, 'map→base_link TF 없음', step, t0, goal)
             dist = math.hypot(goal[0] - here[0], goal[1] - here[1])
-            if dist <= self.xy_tol:
+            if dist <= arrive_tol:
                 if goal[2] is not None:
                     dyaw = wrap(goal[2] - here[2])
                     if abs(dyaw) > self.yaw_tol:
@@ -191,7 +197,7 @@ class StepNavigator:
                             final_fix += 1
                             if self._straight(step, along, 'final_fix'):
                                 continue
-                return self._done(True, '도착', step, t0, goal)
+                return self._done(True, '도착' if arrive_tol == self.xy_tol else '도착(근접 허용)', step, t0, goal)
             path, why = self.plan(here, goal)
             if path is None:
                 blocked += 1; self._note(step, 'plan_fail', why, None)
@@ -206,7 +212,9 @@ class StepNavigator:
             if abs(dyaw) > math.pi / 2 and dist <= self.back_max:
                 rdyaw = wrap(dyaw - math.pi)
                 if abs(rdyaw) > self.turn_tol:
-                    r = self._turn(step, rdyaw, 'turn')
+                    r = self._turn(step, rdyaw, 'turn', replan_after_escape=self.replan_after_escape)
+                    if r.get('moved'):
+                        continue
                     if r.get('blocked'):
                         blocked += 1
                         if blocked >= self.blocked_max:
@@ -218,6 +226,22 @@ class StepNavigator:
                 if self._straight(step, -seg, 'back'):
                     continue
                 # 뒤가 막혔으면 아래 보통 경로(돌아서 전진)로
+            # 돌기 전에 그 방향 통로를 지금 스캔으로 미리 본다. 막히면 더 가까운 경로 지점(걸음의 1/2, 1/4)을 향한다 —
+            #   가까운 지점일수록 경로를 그대로 따라가므로, 좁은 틈 앞에서 먼저 경로 위로 올라선 뒤 똑바로 들어간다.
+            #   ⚠️ 10-09 our_home 시뮬 (4.8, −1.2): 폭 0.40~0.45 m 문틈을 문설주 밑에서 0.35 m 앞 지점으로 질러가려다
+            #   −26° 돌고 막힘 → +23° 돌고 막힘 → 다시 −24° … 3회 포기. 돌아 본 뒤에야 막힌 걸 알던 헛회전도 없앤다
+            for ahead in (None, self.step_m / 2, self.step_m / 4):
+                c2 = c if ahead is None else self.carrot(path, here, ahead)
+                seg2 = min(self.step_m + 0.01, math.hypot(c2[0] - here[0], c2[1] - here[1]))
+                if seg2 < 0.03:
+                    continue
+                dyaw2 = wrap(math.atan2(c2[1] - here[1], c2[0] - here[0]) - here[2])
+                room2 = self._room_dir(dyaw2)
+                if room2 >= seg2 + self.clear_margin or room2 - self.clear_margin - 0.01 >= self.min_step:
+                    if ahead is not None:
+                        self._note(step, 'lookahead', dict(ahead=round(ahead, 2), dyaw=round(math.degrees(dyaw2), 1), room=round(room2, 2)), None)
+                        c, seg, dyaw = c2, seg2, dyaw2
+                    break
             if abs(dyaw) > self.turn_tol:
                 # ⚠️ 가상 시험(09-27)에서 잡은 진동: 가까운 목표에 크게 돌면 회전 중심 어긋남이 로봇을 목표 너머로 밀어
                 #   (180°면 회전 중심 거리의 2배) 목표가 다시 뒤로 가고 또 돈다 — 뒤가 막혀 후진도 못 하면 무한 반복
@@ -227,7 +251,9 @@ class StepNavigator:
                     if near_turns >= 2:
                         return self._done(False, f'가까운 목표 주변 진동({dist * 100:.0f} cm)', step, t0, goal)
                     near_turns += 1
-                r = self._turn(step, dyaw, 'turn')
+                r = self._turn(step, dyaw, 'turn', replan_after_escape=self.replan_after_escape)
+                if r.get('moved'):
+                    continue
                 if r.get('blocked'):
                     blocked += 1
                     if blocked >= self.blocked_max:
@@ -242,6 +268,13 @@ class StepNavigator:
                 #   (탐색기가 같은 목표를 계속 다시 보냄, 지도 300초 뒤 정지). 걸음을 줄이면 그 걸음은 안전하다(여유 0.25 유지)
                 seg = room - self.clear_margin - 0.01
                 self._note(step, 'shorten', dict(room=round(room, 2), seg=round(seg, 3)), None)
+            if room < seg + self.clear_margin and dist <= 2 * self.xy_tol and arrive_tol == self.xy_tol:
+                # ⚠️ 10-10 지도 가상 시험 무작위 40쌍: 실패 2건이 모두 목표 9 cm 앞(합격 기준 10 cm 안)에서 "앞 여유 0.26 m"로
+                #   3번 막혀 실패 보고 — 목표가 벽 가까이라 마지막 9 cm가 "간 뒤 0.25 m 남기기"에 걸림. 안전 여유를 줄여
+                #   벽으로 밀어 넣지 않고, 이미 2×xy_tol(10 cm) 안이면 도착으로 인정(방향 지정이 있으면 위에서 마지막 회전)
+                arrive_tol = 2 * self.xy_tol
+                self._note(step, 'near_accept', dict(dist=round(dist, 3), room=round(room, 2)), None)
+                continue
             if room < seg + self.clear_margin:
                 # ⚠️ 09-27: 병 옆 통과 뒤 "앞 여유 0"으로 멈췄는데 무엇이 막았는지 남기지 않아 원인을 못 가렸다
                 #   (사용자: 그 자리엔 아무것도 없었음, 병은 20~30 cm 옆). 막은 점들을 base_link 좌표로 기록
@@ -258,6 +291,24 @@ class StepNavigator:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
 
+    def _room_dir(self, dyaw, lidar_x=0.054, half=0.11):
+        """dyaw만큼 돈 뒤의 앞 통로 여유(m)를 지금 스캔으로 미리 계산 — 점들을 차체 중심에서 −dyaw 돌려 corridor_clearance와
+        같은 규칙(차체 폭 + 옆 side_margin, 차체 앞끝부터)으로 본다. 실제 판정은 돈 뒤에 한 번 더 한다(회전 중심 어긋남·새 스캔)."""
+        m = self.S['scan']; c, s = math.cos(-dyaw), math.sin(-dyaw); best = float('inf')
+        for i, r in enumerate(m.ranges):
+            if not (m.range_min <= r <= m.range_max):
+                continue
+            a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+            if abs(x) <= half + 0.005 and abs(y) <= half + 0.005:
+                continue   # 차체 안 = 자기 구조물
+            xr, yr = c * x - s * y, s * x + c * y
+            if abs(yr) > half + self.side_margin:
+                continue
+            gap = xr - half
+            if gap > 0:
+                best = min(best, gap)
+        return best
+
     def _near_pts(self, r_max, lidar_x=0.054, half=0.115):
         """스캔 점 중 base_link에서 r_max 안(차체 사각형 제외) — 로봇 기준 (x, y)."""
         m = self.S['scan']; out = []
@@ -271,7 +322,7 @@ class StepNavigator:
                 out.append((x, y))
         return out
 
-    def _turn(self, step, dyaw, kind):
+    def _turn(self, step, dyaw, kind, replan_after_escape=False):
         """제자리 회전. 먼저 반경 rot_radius 안이 비었는지 보고, 막혔으면 앞/뒤로 가장 짧게(5~25 cm) 떨어진 뒤 돈다.
         떨어질 수 없으면 돌지 않고 dict(ok=False, blocked=True)."""
         R = self.rot_radius
@@ -290,6 +341,10 @@ class StepNavigator:
             self.settle()
             if self._near_pts(R):
                 return dict(ok=False, blocked=True, msg='떨어진 뒤에도 회전 반경 안 장애물')
+            if replan_after_escape:
+                # ⚠️ 10-10 지도 가상 시험(문틈): 떨어지느라 위치가 10~20 cm 바뀌었는데 떨어지기 전에 정한 각도로 돌아
+                #   앞이 막힘(헛회전 2회). 위치가 바뀌었으면 돌지 말고 경로·방향부터 다시 정한다
+                return dict(ok=True, moved=True, msg='')
         r = self.turner.turn_by(dyaw); self._note(step, kind, math.degrees(dyaw), r)
         return r
 
