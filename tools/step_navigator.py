@@ -47,6 +47,8 @@ class StepNavigator:
     #   가장 최근 경로의 남은 길이(m)와 그때 위치 — 액션 서버가 feedback(distance_remaining)을 만들 때 읽는다
     path_remaining = None
     path_pose = None
+    #   마지막으로 계획이 된 자리(지도 좌표 x, y) — 목표를 넘어 유지한다. 계획이 안 되는 자리에 들어섰을 때 되돌아갈 곳
+    last_good = None
     #   떨어진 뒤 그 자리에서 다시 계획할지. ⚠️ 10-10 지도 가상 시험: True면 문틈에서 "물러남 → 직진 → 물러남" 고리(40회) —
     #   경로가 꺾이는 자리가 회전 반경 안이라 생기는 문제라 재계획으로는 안 풀림. 판정 전까지 False
     replan_after_escape = False
@@ -183,7 +185,7 @@ class StepNavigator:
 
     def go(self, goal, max_steps=40, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
-        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol
+        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0
         self.path_remaining = None; self.path_pose = None
         for step in range(max_steps):
             if time.time() - t0 > timeout:
@@ -227,10 +229,21 @@ class StepNavigator:
                 if path is not None:
                     self._note(step, 'plan_shift', dict(d=shift[0], deg=round(shift[1])), None)
             if path is None:
-                blocked += 1; self._note(step, 'plan_fail', why, None)
+                # ⚠️ 10-10 Stage 스냅샷: SLAM 지도가 어긋나 문틈에 유령 벽이 그려지면 로봇이 "지도상 벽 속"에 서게 되고, 어떤 planner도
+                #   (NavFn·Smac 2D·Theta* 전부) 거기서 출발하는 경로를 못 낸다. 그 자리에 남으면 다음 목표들도 줄줄이 실패(35개 연속).
+                #   → 마지막으로 계획이 됐던 자리로 되돌아간다(방금 지나온 곳). 같은 목표에서 두 번 되돌아가면 포기 — 계획되는 자리에 남는다
+                self._note(step, 'plan_fail', why, None)
+                if self.last_good is not None and 0.03 < math.hypot(self.last_good[0] - here[0], self.last_good[1] - here[1]) <= 0.6 \
+                        and self._retreat(step, here):
+                    retreats += 1
+                    if retreats >= 2:
+                        return self._done(False, f'경로 실패: {why}(계획되는 자리로 {retreats}번 되돌아감)', step, t0, goal)
+                    continue
+                blocked += 1
                 if blocked >= self.blocked_max:
                     return self._done(False, f'경로 실패 {blocked}회: {why}', step, t0, goal)
                 self.spin(1.0); continue
+            self.last_good = (here[0], here[1])
             i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
             self.path_remaining = sum(math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) for i in range(i0, len(path) - 1))
             self.path_pose = (here[0], here[1])
@@ -347,6 +360,20 @@ class StepNavigator:
                 if path is not None:
                     return path, (d, math.degrees(wrap(a)))
         return None, None
+
+    def _retreat(self, step, here):
+        """last_good(마지막으로 계획이 된 자리)로 곧게 되돌아간다. 그 자리가 거의 바로 뒤(±25°)면 후진, 아니면 그쪽으로 돌아 전진.
+        가는 쪽 통로는 스캔으로 확인(_straight). 움직였으면 True."""
+        dx, dy = self.last_good[0] - here[0], self.last_good[1] - here[1]; d = math.hypot(dx, dy)
+        dyaw = wrap(math.atan2(dy, dx) - here[2])
+        if abs(wrap(dyaw - math.pi)) <= math.radians(25):
+            return self._straight(step, -d, 'retreat', margin=0.05)
+        if abs(dyaw) > self.turn_tol:
+            r = self._turn(step, dyaw, 'turn')
+            if not r['ok']:
+                return False
+            self.settle()
+        return self._straight(step, d, 'retreat', margin=0.05)
 
     def _near_unknown(self):
         """원시 스캔 최근 몇 장에서 기준(자기 구조물) 밖 방향에 12 cm 안 반사가 새로 있는 2° 칸 목록 — 합이 6° 넘을 때만(아니면 빈 목록)."""
