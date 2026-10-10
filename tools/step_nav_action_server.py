@@ -19,6 +19,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.parameter import Parameter
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import OccupancyGrid
 from nav2_msgs.action import NavigateToPose
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,6 +44,8 @@ def main():
     ap.add_argument('--cmd-topic', default='/cmd_vel_nav'); ap.add_argument('--step', type=float, default=0.4)
     ap.add_argument('--sim-time', action='store_true', help='use_sim_time(시뮬) — TF 조회 시각을 /clock에 맞춘다')
     ap.add_argument('--label', default='')
+    ap.add_argument('--dump-maps', default=os.environ.get('STEP_NAV_DUMP_MAPS', ''),
+                    help='목표를 받을 때마다 그 순간의 SLAM 지도·위치·목표를 이 폴더에 떠 둔다(planner 비교용, tools/planfail_replay.py)')
     a = ap.parse_args()
     rclpy.init()
     sim = [Parameter('use_sim_time', Parameter.Type.BOOL, True)] if a.sim_time else []
@@ -57,6 +60,43 @@ def main():
         nav.spin(0.2)
         if time.time() - t0 > 60:
             print('❌ 60초 동안 map→base_link TF·odom·scan이 안 옴 — SLAM/Nav2 스택이 떠 있나?'); return 1
+
+    # 계획 실패 진단용: 최신 SLAM 지도를 들고 있다가 '빈 경로'로 끝난 목표마다 지도·출발·목표를 떠 둔다(같은 목표는 한 번만).
+    #   ⚠️ 10-10: Stage에서 특정 목표들이 '빈 경로'로 실패하는데, 탐색 도중의 불완전한 SLAM 지도에서만 나서 완성 지도로는
+    #   재현이 안 됐다 → 그 순간의 지도가 있어야 planner 설정·다른 planner를 같은 상황에서 비교할 수 있다
+    from rclpy.qos import QoSProfile, DurabilityPolicy
+    latest_map = {}
+    srv_node.create_subscription(OccupancyGrid, '/map', lambda m: latest_map.update(m=m),
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    dumped = set()
+
+    def dump_planfail(k, goal, start, out_dir=None):
+        m = latest_map.get('m')
+        if m is None or start is None:
+            return None
+        if out_dir is None:
+            key = (round(goal[0], 1), round(goal[1], 1))
+            if key in dumped or len(dumped) >= 12:
+                return None
+            dumped.add(key)
+            d = os.path.join(REPO, 'docs/calibration', f'planfail_{time.strftime("%Y%m%d_%H%M%S")}{("_" + a.label) if a.label else ""}')
+        else:
+            d = os.path.join(out_dir, f'goal_{k:03d}')
+        os.makedirs(d, exist_ok=True)
+        W, H, res = m.info.width, m.info.height, m.info.resolution
+        # map_server가 읽는 PGM(trinary): 점유 0, 빈 칸 254, 모름 205. 행은 위(y 큰 쪽)부터
+        px = bytearray(W * H)
+        for j in range(H):
+            row = m.data[(H - 1 - j) * W:(H - j) * W]
+            for i, v in enumerate(row):
+                px[j * W + i] = 205 if v < 0 else (0 if v >= 65 else (254 if v <= 25 else 205))
+        with open(os.path.join(d, 'map.pgm'), 'wb') as f:
+            f.write(f'P5\n{W} {H}\n255\n'.encode()); f.write(bytes(px))
+        with open(os.path.join(d, 'map.yaml'), 'w') as f:
+            f.write(f'image: map.pgm\nmode: trinary\nresolution: {res}\norigin: [{m.info.origin.position.x}, {m.info.origin.position.y}, 0.0]\n'
+                    'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n')
+        json.dump(dict(k=k, goal=goal, start=start, map_stamp=m.header.stamp.sec), open(os.path.join(d, 'case.json'), 'w'))
+        return d
 
     def on_goal(req):
         if busy.is_set() or req.pose.header.frame_id not in ('map', ''):
@@ -126,6 +166,8 @@ def main():
             k += 1; nav.cancel = False; nlog = len(nav.log)
             here = nav.map_pose()
             print(f'[목표 {k}] ({x:+.2f},{y:+.2f})' + (f' ← 지금 ({here[0]:+.2f},{here[1]:+.2f}), {math.hypot(x - here[0], y - here[1]):.2f} m' if here else ''), flush=True)
+            if a.dump_maps:
+                dump_planfail(k, (x, y), here, out_dir=a.dump_maps)
             try:
                 r = nav.go((x, y, None)) if here else dict(ok=False, msg='map→base_link TF 없음', steps=0, secs=0.0, final_err_m=float('nan'))
             except Exception as e:   # 주행기가 죽어도 목표를 준 쪽이 영영 기다리지 않게 실패로 돌려준다
@@ -133,6 +175,10 @@ def main():
                     break
                 r = dict(ok=False, msg=f'주행기 예외: {e!r}', steps=-1, secs=0.0, final_err_m=float('nan'))
             print(f'   → {"✅" if r["ok"] else "❌"} {r["msg"]} | 단계 {r["steps"]}, {r["secs"]:.1f} s, 오차 {r["final_err_m"] * 100:.1f} cm', flush=True)
+            if not r['ok'] and '빈 경로' in r['msg']:
+                dd = dump_planfail(k, (x, y), nav.map_pose())
+                if dd:
+                    print(f'   계획 실패 스냅샷: {dd}', flush=True)
             with open(out, 'a') as f:
                 f.write(json.dumps(dict(k=k, t=round(time.time(), 1), goal=(x, y), start=here, result=r, log=nav.log[nlog:]),
                                    ensure_ascii=False, default=str) + '\n')

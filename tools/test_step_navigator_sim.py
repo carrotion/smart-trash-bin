@@ -178,6 +178,18 @@ def main():
         builtins.print = quiet
         check('자기 구조물 방향(54~66°)만 가까우면 평소대로', r['ok'], r['msg'])
         builtins.print = lambda *a, **k: None
+        # 10. 계획이 안 되는 자리(10-10: SLAM 유령 벽 속)에 들어섰을 때 — 마지막으로 계획된 자리로 되돌아가고, 두 번이면 그 목표는 포기.
+        #     그 뒤 다른 목표는 정상(되돌아간 자리에서 계획이 됨). x > 0.55 구역에선 계획이 전부 실패하는 가상 planner
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0)
+        straight = nav.plan
+        nav.plan = lambda here, goal: (None, '빈 경로') if here[0] > 0.55 else straight(here, goal)
+        r = nav.go((2.0, 0.0, None)); kinds = [x['kind'] for x in nav.log]
+        r2 = nav.go((0.0, 1.0, None))
+        builtins.print = quiet
+        check('계획 안 되는 자리 → 되돌아감, 2번이면 포기, 다음 목표는 정상',
+              not r['ok'] and kinds.count('retreat') == 2 and '되돌아감' in r['msg'] and r2['ok'],
+              f'{r["msg"]} | 되돌아감 {kinds.count("retreat")}회, 다음 목표 {r2["msg"]} {r2["final_err_m"] * 100:.1f} cm')
+        builtins.print = lambda *a, **k: None
         # 4. 균등 분할
         nav, P = make(rot_off=0.0, drive_scale=1.0); r = nav.go((1.28, 0.0, None))
         builtins.print = quiet
