@@ -7,6 +7,7 @@ test_step_navigator_sim(직선 경로·장난감 장애물)과 Stage 시뮬(10�
 현재 자세에서 본 것(각도 칸마다 가장 가까운 점). 충돌 판정: 직진·회전 경로를 잘게 나눠 차체 사각형(±0.11 m) 안에 점유 칸이 들어오는지.
 
 사례(월드 좌표, our_home.world 로봇 시작 (−2.7, 3.43)이 SLAM 지도 원점):
+  wallstart: 10-10 Stage의 '빈 경로' 연쇄 — 출발 칸이 벽에 닿는 거리로 표시된 자리에서 출발(가까운 빈 점에서 다시 계획하는 복구 확인)
   door  : 10-09 Stage 2차의 (4.8, −1.2) 막힘 — 폭 0.40~0.45 m 문틈을 벽 0.2 m 아래 오른쪽 문설주 밑에서 비스듬히 진입
           (⚠️ 이 문은 실제 77 cm다 — 08-23 지도가 절반 폭으로 그려져 있었음. 좁은 틈 통과 시험으로 narrow 지도에 남김)
 
@@ -26,7 +27,11 @@ from nav2_msgs.action import ComputePathToPose
 from geometry_msgs.msg import PoseStamped
 from test_step_navigator_sim import make
 
-CASES = {'door': dict(start=(1.83, 0.79, 130.0), goal=(2.19, 2.27))}
+CASES = {'door': dict(start=(1.83, 0.79, 130.0), goal=(2.19, 2.27)),
+         # 10-10 Stage: 문 안에서 문설주 0.15 m 옆에 섰더니 planner '빈 경로' → 이후 목표 35개 연속 실패. NavFn은 출발 칸이
+         #   벽에 닿는 거리(중심 0.11 m 안에 벽 칸)면 경로를 못 만든다. 문설주 0.07 m(지도상)에서 출발해 그 상황을 만든다
+         #   (실제 문 폭 지도에서 — 좁은 문 지도에선 출발 자세 자체가 반대쪽 문설주와도 너무 가까워 빠져나올 자리가 없다)
+         'wallstart': dict(map='real', start=(2.14, 1.06, 80.0), goal=(0.46, -1.71))}
 RES, OX, OY = 0.05, -7.45, -4.925
 HALF = 0.11
 
@@ -197,30 +202,38 @@ def main():
     cases = CASES if a.x is None else {'custom': dict(start=(a.x, a.y, a.yaw or 0.0), goal=(a.gx, a.gy))}
     if a.random:
         cases = dict(CASES if map_name == 'narrow' else {}, **random_cases(world, a.random, a.seed, goal_clear=a.goal_clear))
-    print(f'지도: {map_name} ({MAPS[map_name]})', flush=True)
-    procs = start_planner(map_name=map_name); ok_all = True; stat = []
+    ok_all = True; stat = []; procs = []
+    groups = {}
+    for name, c in cases.items():
+        groups.setdefault(c.get('map', map_name), {})[name] = c
     try:
         rclpy.init(); node = rclpy.create_node('step_nav_map_sim'); ac = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
-        if not ac.wait_for_server(timeout_sec=25):
-            print('❌ planner_server 안 뜸'); return 1
-        time.sleep(3.0)
-        for name, c in cases.items():
-            r, nav, P, hits, track = run_case(node, ac, world, c['start'], c['goal'], quiet=not a.verbose)
-            kinds = [e['kind'] for e in nav.log]
-            ok = r['ok'] and hits['n'] == 0; ok_all &= ok
-            stat.append(dict(name=name, ok=r['ok'], msg=r['msg'], hits=hits['n'], steps=r['steps'], blocked=kinds.count('blocked'),
-                             turns=kinds.count('turn'), min_gap=hits['min_gap'], start=c['start'], goal=c['goal']))
-            if a.random and not a.verbose:
-                if not ok:
-                    print(f'❌ {name}: {r["msg"]} | 충돌 {hits["n"]} | 출발 ({c["start"][0]:.2f},{c["start"][1]:.2f},{c["start"][2]:.0f}°) → 목표 ({c["goal"][0]:.2f},{c["goal"][1]:.2f})', flush=True)
-                continue
-            print(f'{"✅" if ok else "❌"} {name}: {r["msg"]} | 남은 {r["final_err_m"] * 100:.1f} cm, 단계 {r["steps"]}, 회전 {kinds.count("turn")}, '
-                  f'막힘 {kinds.count("blocked")}, 충돌 {hits["n"]}, 차체-장애물 최소 {hits["min_gap"] * 100:.1f} cm')
-            print('   지나간 점:', ' → '.join(f'({x:.2f},{y:.2f})' for x, y in track))
+        for gmap, gcases in groups.items():
+            print(f'지도: {gmap} ({MAPS[gmap]})', flush=True)
+            gworld = world if gmap == map_name else load_world(gmap)
+            procs = start_planner(map_name=gmap)
+            if not ac.wait_for_server(timeout_sec=25):
+                print('❌ planner_server 안 뜸'); return 1
+            time.sleep(3.0)
+            for name, c in gcases.items():
+                r, nav, P, hits, track = run_case(node, ac, gworld, c['start'], c['goal'], quiet=not a.verbose)
+                kinds = [e['kind'] for e in nav.log]
+                ok = r['ok'] and hits['n'] == 0; ok_all &= ok
+                stat.append(dict(name=name, ok=r['ok'], msg=r['msg'], hits=hits['n'], steps=r['steps'], blocked=kinds.count('blocked'),
+                                 turns=kinds.count('turn'), shifts=kinds.count('plan_shift'), min_gap=hits['min_gap'], start=c['start'], goal=c['goal']))
+                if a.random and not a.verbose:
+                    if not ok:
+                        print(f'❌ {name}: {r["msg"]} | 충돌 {hits["n"]} | 출발 ({c["start"][0]:.2f},{c["start"][1]:.2f},{c["start"][2]:.0f}°) → 목표 ({c["goal"][0]:.2f},{c["goal"][1]:.2f})', flush=True)
+                    continue
+                print(f'{"✅" if ok else "❌"} {name}: {r["msg"]} | 남은 {r["final_err_m"] * 100:.1f} cm, 단계 {r["steps"]}, 회전 {kinds.count("turn")}, '
+                      f'막힘 {kinds.count("blocked")}, 출발점 옮겨 계획 {kinds.count("plan_shift")}, 충돌 {hits["n"]}, 차체-장애물 최소 {hits["min_gap"] * 100:.1f} cm')
+                print('   지나간 점:', ' → '.join(f'({x:.2f},{y:.2f})' for x, y in track))
+            stop_planner(procs); procs = []; time.sleep(2.0)
         if a.random:
             n = len(stat); arr = sum(x['ok'] for x in stat); col = sum(x['hits'] > 0 for x in stat)
             print(f'=== {n}건: 도착 {arr} ({arr / n:.0%}), 충돌 있는 건 {col}, 단계 평균 {np.mean([x["steps"] for x in stat]):.1f}, '
-                  f'막힘 합 {sum(x["blocked"] for x in stat)}, 회전 합 {sum(x["turns"] for x in stat)}, 차체-장애물 최소 {min(x["min_gap"] for x in stat) * 100:.1f} cm')
+                  f'막힘 합 {sum(x["blocked"] for x in stat)}, 회전 합 {sum(x["turns"] for x in stat)}, 출발점 옮겨 계획 {sum(x["shifts"] for x in stat)}, '
+                  f'차체-장애물 최소 {min(x["min_gap"] for x in stat) * 100:.1f} cm')
             import json
             json.dump(stat, open(f'/tmp/step_nav_map_sim_{int(time.time())}.json', 'w'), default=float)
     finally:

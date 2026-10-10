@@ -220,6 +220,13 @@ class StepNavigator:
                 return self._done(True, '도착' if arrive_tol == self.xy_tol else '도착(근접 허용)', step, t0, goal)
             path, why = self.plan(here, goal)
             if path is None:
+                # ⚠️ 10-10 Stage: 로봇이 문 A 안(문설주에서 0.15 m)에 섰을 때 "빈 경로" → 그 자리에서 이후 목표 35개가 전부 실패,
+                #   지도 58 m²에서 정지. NavFn은 출발 칸이 "벽에 닿는 거리"(중심 0.11 m 안에 벽 칸)면 경로를 못 만든다 — SLAM 벽이
+                #   한 칸만 가깝게 그려져도 걸린다(지도 가상 시험: 벽 0.06 m에서 재현). 스캔으로 비어 있음이 확인된 가까운 점에서 다시 계획
+                path, shift = self._plan_from_nearby(here, goal)
+                if path is not None:
+                    self._note(step, 'plan_shift', dict(d=shift[0], deg=round(shift[1])), None)
+            if path is None:
                 blocked += 1; self._note(step, 'plan_fail', why, None)
                 if blocked >= self.blocked_max:
                     return self._done(False, f'경로 실패 {blocked}회: {why}', step, t0, goal)
@@ -313,6 +320,33 @@ class StepNavigator:
             else:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
+
+    def _free_dir(self, bearing, half_width=math.radians(15), lidar_x=0.054, half=0.115):
+        """로봇 기준 방향 bearing(rad)으로 차체 중심에서 가장 가까운 스캔 점까지 거리(±15° 부채꼴, 차체 안 제외)."""
+        m = self.S['scan']; best = float('inf')
+        for i, r in enumerate(m.ranges):
+            if not (m.range_min <= r <= m.range_max):
+                continue
+            a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+            if abs(x) <= half and abs(y) <= half:
+                continue
+            if abs(wrap(math.atan2(y, x) - bearing)) <= half_width:
+                best = min(best, math.hypot(x, y))
+        return best
+
+    def _plan_from_nearby(self, here, goal):
+        """지금 자리에서 계획이 안 될 때: 가까운 점(0.10·0.15·0.20 m, 8방향)을 출발점으로 다시 계획. 그 방향이 스캔상 점까지
+        d + 0.10 m 넘게 비어 있을 때만(벽 너머 점을 출발점으로 삼지 않게), 더 열린 방향부터. 반환 (경로, (d, 방향°)) 또는 (None, None)."""
+        dirs = sorted(((self._free_dir(k * math.pi / 4), k * math.pi / 4) for k in range(8)), reverse=True)
+        for d in (0.10, 0.15, 0.20):
+            for free, a in dirs:
+                if free < d + 0.10:
+                    continue
+                ang = here[2] + a
+                path, _ = self.plan((here[0] + d * math.cos(ang), here[1] + d * math.sin(ang), here[2]), goal)
+                if path is not None:
+                    return path, (d, math.degrees(wrap(a)))
+        return None, None
 
     def _near_unknown(self):
         """원시 스캔 최근 몇 장에서 기준(자기 구조물) 밖 방향에 12 cm 안 반사가 새로 있는 2° 칸 목록 — 합이 6° 넘을 때만(아니면 빈 목록)."""
