@@ -2,7 +2,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.substitutions import PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -25,7 +25,6 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     bringup_share = get_package_share_directory('smart_trash_bringup')
-    explore_share = get_package_share_directory('explore_lite')
 
     nav2_params_file = LaunchConfiguration('nav2_params_file')
     explore_params_file = LaunchConfiguration('explore_params_file')
@@ -43,6 +42,11 @@ def generate_launch_description():
     # 2026-09-27: 기본 탐색기를 frontier_exploration_ros2로. 같은 시뮬(Stage cave, 새 Nav2 설정) 4분 비교:
     #   explore_lite — 35 m², 목표 성공 2/5, "모든 경계 시도함"으로 2분 만에 스스로 중단
     #   frontier     — 75.7 m²(계속 탐색 중), 목표 성공 15/16. 08월 시뮬 비교 결론(docs/pc_tasks.md)과 같음
+    # 2026-10-10: 움직임 방식. 'step' = 4층 멈춤-확인-이동 주행기(합격 시험 통과: loop 09-27, 장애물 코스 10-10).
+    #   'nav2' = Nav2 연속 주행(DWB) — 09-27 실물에서 발진·방향 오차로 기반 재설계의 계기가 된 방식, 비교용으로 남김
+    declare_navigator_cmd = DeclareLaunchArgument(
+        'navigator', default_value='step',
+        description="'step'(멈춤-확인-이동 주행기, 기본) 또는 'nav2'(연속 주행)")
     declare_explorer_cmd = DeclareLaunchArgument(
         'explorer', default_value='frontier',
         description="'frontier'(frontier_exploration_ros2, 기본) 또는 'explore_lite'")
@@ -97,23 +101,47 @@ def generate_launch_description():
             "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
             LaunchConfiguration('explorer'), "' == 'explore_lite'"])))
     # 시뮬 런치(sim_autonomous_mapping.launch.py)와 같은 파라미터 — 시뮬에서 검증한 값을 그대로
+    frontier_common = {
+        'robot_base_frame': 'base_link',
+        'frontier_selection_min_distance': 0.35,
+        'frontier_candidate_min_goal_distance_m': 0.35,
+    }
     frontier_node = Node(
         package='frontier_exploration_ros2', executable='frontier_explorer',
         name='frontier_explorer', output='screen',
-        parameters=[{
-            'robot_base_frame': 'base_link',
-            'frontier_selection_min_distance': 0.35,
-            'frontier_candidate_min_goal_distance_m': 0.35,
-        }],
+        parameters=[frontier_common],
         condition=IfCondition(PythonExpression([
             "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
-            LaunchConfiguration('explorer'), "' == 'frontier'"])))
+            LaunchConfiguration('explorer'), "' == 'frontier' and '",
+            LaunchConfiguration('navigator'), "' == 'nav2'"])))
+    # navigator:=step(기본) — 탐색기의 목표를 4층 주행기 액션으로 보낸다. 값은 tools/sim_frontier_step.yaml(10-09/10-10 시뮬)과 같다:
+    #   실패 3회면 그 구역을 잠시 제외(같은 목표를 4초마다 다시 보내 31번 막힌 10-09 시뮬 1차), 진행 없음 감시 30초
+    #   (주행기 서버가 남은 거리를 보냄; 직진 없는 가장 긴 구간 실물 12.9초·시뮬 11.3초)
+    frontier_step_node = Node(
+        package='frontier_exploration_ros2', executable='frontier_explorer',
+        name='frontier_explorer', output='screen',
+        parameters=[dict(frontier_common,
+                         navigate_to_pose_action_name='step_navigate_to_pose',
+                         frontier_suppression_enabled=True,
+                         frontier_suppression_attempt_threshold=3,
+                         frontier_suppression_no_progress_timeout_s=30.0)],
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
+            LaunchConfiguration('explorer'), "' == 'frontier' and '",
+            LaunchConfiguration('navigator'), "' == 'step'"])))
+    # 4층 주행기 액션 서버(파이썬 도구) — enable_explore:=false여도 뜬다(손으로 목표를 줄 수 있게). 움직임은 목표가 와야 시작
+    repo_tools = os.path.normpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', '..', '..', '..', 'tools'))
+    step_server = ExecuteProcess(
+        cmd=['python3', '-u', os.path.join(repo_tools, 'step_nav_action_server.py')],
+        output='screen',
+        condition=IfCondition(PythonExpression(["'", LaunchConfiguration('navigator'), "' == 'step'"])))
 
     ld = LaunchDescription()
     ld.add_action(declare_nav2_params_cmd)
     ld.add_action(declare_explore_params_cmd)
     ld.add_action(declare_enable_explore_cmd)
     ld.add_action(declare_explorer_cmd)
+    ld.add_action(declare_navigator_cmd)
     ld.add_action(mapping_launch)
     ld.add_action(controller_server)
     ld.add_action(planner_server)
@@ -123,4 +151,6 @@ def generate_launch_description():
     ld.add_action(lifecycle_manager)
     ld.add_action(explore_node)
     ld.add_action(frontier_node)
+    ld.add_action(frontier_step_node)
+    ld.add_action(step_server)
     return ld

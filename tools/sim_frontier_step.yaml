@@ -5,5 +5,6 @@ frontier_explorer:
     navigate_to_pose_action_name: step_navigate_to_pose
     frontier_suppression_enabled: true
     frontier_suppression_attempt_threshold: 3
-    # 주행기 액션 서버는 feedback(distance_remaining)을 안 보낸다 → 기본 20초 무진전 취소가 정상 목표(최대 100초대)를 끊지 않게 크게
-    frontier_suppression_no_progress_timeout_s: 600.0
+    # 진행 없음 감시: 주행기 서버가 남은 거리(경로 길이 기준)를 0.5초마다 보낸다(10-10). 멈춤-확인-이동은 큰 회전 동안 거리가
+    #   안 준다 — 기록상 직진 없는 가장 긴 구간이 실물 12.9초(73구간)·시뮬 11.3초(367구간), 20초 초과 0 → 기본 20초에 여유를 둬 30초
+    frontier_suppression_no_progress_timeout_s: 30.0
