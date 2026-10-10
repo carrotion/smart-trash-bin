@@ -158,6 +158,26 @@ def main():
         builtins.print = quiet
         check('돌기 전 미리 본 여유 = 돈 뒤 여유', worst <= 0.03, f'최대 차이 {worst * 100:.1f} cm(7방향)')
         builtins.print = lambda *a, **k: None
+        # 9. 바로 옆 미확인 물체(10-10: 라이다는 13.5 cm보다 가까운 것을 0.08 m로 읽어 자기 필터가 지움) — 원시 스캔의 기준 밖 방향에
+        #    0.08 m 반사가 있으면 한 걸음도·한 번도 돌지 않고 실패 보고. 기준 안 방향(자기 구조물)만 있으면 평소대로
+        import collections
+        def raw_with(deg_lo, deg_hi):
+            sc = Scan()
+            for i in range(455):
+                d = math.degrees(sc.angle_min + i * sc.angle_increment) % 360
+                if deg_lo <= d <= deg_hi:
+                    sc.ranges[i] = 0.082
+            return collections.deque([sc] * 5, maxlen=5)
+        base = {52, 54, 56, 58, 60, 62, 64, 66, 68, 168, 170, 172, 186, 188, 236, 238, 240, 242, 244, 292, 294, 296, 298, 300, 302, 304, 306}
+        nav, P = make(); nav._raw = raw_with(98, 118); nav._near_base = base; r = nav.go((0.0, 1.0, None))
+        kinds = [x['kind'] for x in nav.log]
+        builtins.print = quiet
+        check('옆에 붙은 물체(원시 0.08 m, 98~118°) → 움직이지 않음', not r['ok'] and P['turned'] == 0 and 'drive' not in kinds and '미확인' in r['msg'], r['msg'])
+        builtins.print = lambda *a, **k: None
+        nav, P = make(); nav._raw = raw_with(54, 66); nav._near_base = base; r = nav.go((1.0, 0.0, None))
+        builtins.print = quiet
+        check('자기 구조물 방향(54~66°)만 가까우면 평소대로', r['ok'], r['msg'])
+        builtins.print = lambda *a, **k: None
         # 4. 균등 분할
         nav, P = make(rot_off=0.0, drive_scale=1.0); r = nav.go((1.28, 0.0, None))
         builtins.print = quiet
