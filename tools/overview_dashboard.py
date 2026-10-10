@@ -382,6 +382,9 @@ header.warn{border-left-color:var(--warn)} header.danger{border-left-color:var(-
 #act{font-size:24px;font-weight:700;letter-spacing:-.01em;line-height:1.2}
 #sub{color:var(--mute);margin-top:2px} header.warn #sub{color:var(--warn)} header.danger #sub{color:var(--bad)}
 #clock{color:var(--mute);font-size:13px;white-space:nowrap;text-align:right}
+#nav{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;max-width:46%}
+#nav a{color:var(--line);text-decoration:none;font-size:13px;padding:5px 10px;border:1px solid var(--rule);border-radius:4px;white-space:nowrap}
+#nav a:first-child{font-weight:700} #nav a:hover{background:var(--film)} #nav a:focus-visible{outline:2px solid var(--line);outline-offset:1px}
 #estop{align-self:stretch;min-height:46px;border:0;background:var(--bad);color:#fff;font:700 17px/1 inherit;padding:0 24px;cursor:pointer;border-radius:4px;white-space:nowrap}
 #estop:hover{filter:brightness(1.1)} #estop:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 
@@ -432,13 +435,17 @@ li time{color:var(--mute);margin-right:6px}
 @media (max-width:900px){
   #parts{grid-template-columns:repeat(2,minmax(0,1fr))}
   #main,#colC{grid-template-columns:minmax(0,1fr)} #colC{grid-column:auto}
-  header{flex-wrap:wrap} #clock{display:none}
+  header{flex-wrap:wrap} #clock{display:none} #nav{max-width:100%;order:3;justify-content:flex-start}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head><body>
 <div id="app">
 <header id="hdr">
   <div class="say"><div id="act">연결 중…</div><div id="sub"></div></div>
+  <nav id="nav" aria-label="다른 대시보드">
+    <a href="#" data-port="8764">← 시스템 대시보드(홈)</a>
+    <a href="#" data-port="8766">모터</a><a href="#" data-port="8767">센서</a><a href="#" data-port="8768">지도·금지 구역</a><a href="#" data-port="8765">전원</a>
+  </nav>
   <div id="clock"></div>
   <button id="estop" title="자율주행·시험 도구를 모두 종료하고 정지 명령을 보냅니다">비상정지</button>
 </header>
@@ -587,6 +594,7 @@ function render(){
 async function poll(){try{D=await (await fetch('/api/overview')).json();render()}catch(e){$('act').textContent='관제 서버와 연결이 끊겼습니다';$('sub').textContent='파이 전원과 WiFi를 확인하세요';$('hdr').className='danger'}}
 async function pollMap(){try{const m=await (await fetch('/api/map')).json();if(m&&m.connected)MAP=m;else MAP=null}catch(e){}}
 $('estop').onclick=async()=>{$('estop').textContent='정지 보내는 중…';try{const r=await (await fetch('/api/estop',{method:'POST'})).json();$('estop').textContent=r&&r.ok?`정지함 (${(r.killed||[]).length}개 종료)`:'실패 — 모터 대시보드 확인'}catch(e){$('estop').textContent='실패 — 연결 확인'}setTimeout(()=>$('estop').textContent='비상정지',4000)};
+$('nav').addEventListener('click',ev=>{const p=ev.target.dataset.port;if(p){ev.preventDefault();location.href=location.protocol+'//'+location.hostname+':'+p+'/'}});
 poll();pollMap();setInterval(poll,500);setInterval(pollMap,2000);addEventListener('resize',()=>D&&render());
 </script></body></html>
 """
