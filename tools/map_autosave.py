@@ -15,6 +15,8 @@ import argparse
 import os
 import time
 
+import shutil
+
 import rclpy
 from nav_msgs.msg import OccupancyGrid
 from rclpy.executors import ExternalShutdownException
@@ -30,13 +32,46 @@ class MapAutoSaver(Node):
         self.last_save = 0.0
         self.saved_count = 0
         self.create_subscription(OccupancyGrid, 'map', self._on_map, 1)
+        # 위치 잡기용 자료(SLAM 자세 그래프)와 금지 구역도 주기적으로 떠 둔다(10-10): 그림(pgm)만 있으면 전원이 끊긴 뒤
+        #   그 지도를 이어 쓸 방법이 줄고, 구역은 그 지도 좌표에서만 뜻이 있다. 그림보다 무거워 5분에 한 번
+        self.graph_interval = 300.0
+        self.last_graph = time.time()
+        try:
+            from slam_toolbox.srv import SerializePoseGraph
+            self._ser_type = SerializePoseGraph
+            self._ser = self.create_client(SerializePoseGraph, '/slam_toolbox/serialize_map')
+        except ImportError:
+            self._ser = None
         self.get_logger().info(f'맵 자동 저장 시작 — {self.out_dir}, {interval}초 간격')
+
+    def _save_graph(self):
+        if self._ser is None or not self._ser.service_is_ready():
+            return
+        req = self._ser_type.Request(); req.filename = os.path.join(self.out_dir, 'latest')
+        fut = self._ser.call_async(req)
+
+        def done(f):
+            try:
+                ok = f.result().result == 0
+            except Exception:
+                ok = False
+            zones = os.path.expanduser('~/maps/keepout_zones.json')
+            if ok and os.path.isfile(zones):
+                try:
+                    shutil.copyfile(zones, os.path.join(self.out_dir, 'latest.keepout.json'))
+                except OSError:
+                    pass
+            self.get_logger().info('위치 잡기용 자료 저장 ' + ('완료' if ok else '실패'))
+        fut.add_done_callback(done)
 
     def _on_map(self, msg: OccupancyGrid):
         now = time.time()
         if now - self.last_save < self.interval:
             return
         self.last_save = now
+        if now - self.last_graph >= self.graph_interval:
+            self.last_graph = now
+            self._save_graph()
 
         w, h = msg.info.width, msg.info.height
         if w == 0 or h == 0:

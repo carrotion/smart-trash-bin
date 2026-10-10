@@ -4,6 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch_ros.parameter_descriptions import ParameterValue
 from launch.substitutions import PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -101,7 +102,10 @@ def generate_launch_description():
             "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
             LaunchConfiguration('explorer'), "' == 'explore_lite'"])))
     # 시뮬 런치(sim_autonomous_mapping.launch.py)와 같은 파라미터 — 시뮬에서 검증한 값을 그대로
+    # 탐색기는 멈춘 채로 뜬다(10-10 결정): 지도 대시보드에서 금지 구역을 먼저 그리고 [탐색 시작]을 눌러야 움직인다.
+    #   런치만으로 로봇이 스스로 출발하지 않게 하는 뜻도 있다. 바로 출발시키려면 explore_autostart:=true
     frontier_common = {
+        'autostart': ParameterValue(LaunchConfiguration('explore_autostart'), value_type=bool),
         'robot_base_frame': 'base_link',
         'frontier_selection_min_distance': 0.35,
         'frontier_candidate_min_goal_distance_m': 0.35,
@@ -140,7 +144,12 @@ def generate_launch_description():
     keepout_server = ExecuteProcess(
         cmd=['python3', '-u', os.path.join(repo_tools, 'keepout_server.py')], output='screen')
 
+    declare_explore_autostart_cmd = DeclareLaunchArgument(
+        'explore_autostart', default_value='false',
+        description='true면 탐색기가 뜨자마자 탐색 시작. 기본 false — 지도 대시보드의 [탐색 시작]으로 시작(frontier 탐색기만 해당)')
+
     ld = LaunchDescription()
+    ld.add_action(declare_explore_autostart_cmd)
     ld.add_action(declare_nav2_params_cmd)
     ld.add_action(declare_explore_params_cmd)
     ld.add_action(declare_enable_explore_cmd)

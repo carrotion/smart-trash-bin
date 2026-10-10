@@ -37,6 +37,17 @@ from tf2_ros import Buffer, TransformListener
 
 import keepout
 
+# 탐색기(frontier_exploration_ros2)의 제어 서비스와 SLAM의 지도 저장 서비스 — 패키지가 없어도 대시보드는 떠야 한다
+try:
+    from frontier_exploration_ros2.srv import ControlExploration
+except ImportError:
+    ControlExploration = None
+try:
+    from slam_toolbox.srv import SerializePoseGraph
+except ImportError:
+    SerializePoseGraph = None
+EXPLORE_STATE = {0: "멈춤", 1: "탐색 중", 2: "시작 예약", 3: "멈춤 예약", 4: "멈추는 중", 5: "종료 중"}
+
 state_lock = threading.Lock()
 state = {"connected": False, "last_ts": 0.0}
 STALE_S = 5.0
@@ -78,6 +89,38 @@ class MapBridge(Node):
         self.create_subscription(String, '/keepout_zones', self._on_zones, map_qos)
         self._tfb = Buffer(); self._tfl = TransformListener(self._tfb, self)
         self.create_timer(0.5, self._pose_tick)
+        self._explore_cli = self.create_client(ControlExploration, 'control_exploration') if ControlExploration else None
+        self._ser_cli = self.create_client(SerializePoseGraph, '/slam_toolbox/serialize_map') if SerializePoseGraph else None
+
+    def _call(self, cli, req, timeout):
+        """서비스 호출을 HTTP 처리 스레드에서 기다린다(노드는 다른 스레드가 돌린다). 응답 또는 None."""
+        if cli is None or not cli.service_is_ready():
+            return None
+        fut = cli.call_async(req); t0 = time.time()
+        while not fut.done() and time.time() - t0 < timeout:
+            time.sleep(0.02)
+        return fut.result() if fut.done() else None
+
+    def explore(self, action=None):
+        """탐색기 상태 조회(action None) 또는 시작('start')·멈춤('stop'). 탐색기가 없으면 available False.
+        상태만 물을 땐 지원하지 않는 동작 번호 0을 보낸다 — 탐색기는 아무것도 바꾸지 않고 지금 상태만 답한다."""
+        if ControlExploration is None:
+            return dict(available=False)
+        req = ControlExploration.Request()
+        req.action = {None: 0, 'start': ControlExploration.Request.ACTION_START, 'stop': ControlExploration.Request.ACTION_STOP}[action]
+        r = self._call(self._explore_cli, req, 3.0)
+        if r is None:
+            return dict(available=False)
+        return dict(available=True, state=int(r.state), label=EXPLORE_STATE.get(int(r.state), str(r.state)),
+                    accepted=bool(r.accepted) if action else None, message=r.message if action else "")
+
+    def serialize(self, path_noext):
+        """SLAM의 위치 잡기용 자료(자세 그래프)를 path_noext.posegraph / .data로 저장. 성공 여부."""
+        if SerializePoseGraph is None:
+            return False
+        req = SerializePoseGraph.Request(); req.filename = path_noext
+        r = self._call(self._ser_cli, req, 20.0)
+        return bool(r is not None and r.result == 0 and os.path.isfile(path_noext + ".posegraph"))
 
     def _on_zones(self, msg):
         try:
@@ -201,7 +244,7 @@ def keepout_restore():
     return True, None
 
 
-MAPS_DIR = os.path.expanduser("~/maps")
+MAPS_DIR = os.environ.get("MAPS_DIR") or os.path.expanduser("~/maps")       # 시뮬·시험은 MAPS_DIR로 다른 폴더
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -284,7 +327,10 @@ def list_maps():
         except ValueError:
             res = 0.0
         info = {"name": name, "bytes": os.path.getsize(pgm),
-                "mtime": os.path.getmtime(pgm), "resolution": res}
+                "mtime": os.path.getmtime(pgm), "resolution": res,
+                # 저장된 지도에서 위치를 잡으려면 자세 그래프가 있어야 한다(10-10부터 함께 저장). 구역은 그 지도 좌표의 것
+                "posegraph": os.path.isfile(os.path.join(MAPS_DIR, name + ".posegraph")),
+                "zones": len(keepout.load(os.path.join(MAPS_DIR, name + ".keepout.json"))["zones"])}
         pg = _read_pgm(pgm)
         if pg:
             w, h, body = pg
@@ -367,13 +413,39 @@ def save_current_map(name):
             f.write("negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n")
     except OSError as e:
         return None, str(e)
+    save_extras(name)
     return name, None
 
 
+def save_extras(name):
+    """그림(pgm) 말고 다음에 이 지도를 **다시 쓰는 데** 필요한 것: SLAM 자세 그래프(위치 잡기용)와 금지 구역(이 지도 좌표).
+    ⚠️ 그림만 저장하면 다음에 그 지도 안에서 위치를 잡을 방법이 줄어든다(slam_toolbox는 자세 그래프가 있어야 이어서 쓴다).
+    반환 dict(posegraph=성공 여부, zones=구역 수) — 화면에 그대로 알린다."""
+    base = _safe_map_path(name, "")
+    out = dict(posegraph=False, zones=0)
+    if not base:
+        return out
+    try:
+        out["posegraph"] = Handler.node.serialize(base)
+    except Exception:
+        pass
+    try:
+        z = keepout.load()["zones"]
+        if keep_state["server"]:        # 구역은 지금 켜진 지도의 것일 때만 함께 묶는다
+            keepout.save(dict(version=0, zones=z, prev=[]), base + ".keepout.json"); out["zones"] = len(z)
+    except OSError:
+        pass
+    last_extras.update(out)
+    return out
+
+
+last_extras = {}
+
+
 def delete_map(name):
-    """맵 하나 삭제. **pgm/yaml 쌍만** 지운다 — 같은 이름의 png/json은 안 건드린다."""
+    """맵 하나 삭제. pgm/yaml 쌍과 함께 저장한 자세 그래프·구역 파일을 지운다 — 같은 이름의 png/json은 안 건드린다."""
     removed = []
-    for ext in (".pgm", ".yaml"):
+    for ext in (".pgm", ".yaml", ".posegraph", ".data", ".keepout.json"):
         p = _safe_map_path(name, ext)
         if p and os.path.isfile(p):
             try:
@@ -478,6 +550,10 @@ __FAVICON__
 <div id="viewBanner" class="banner" style="display:none"></div>
 
 <div class="card">
+  <div class="zonebar" id="exploreBar" style="display:none">
+    <button id="exploreBtn"></button>
+    <span id="exploreState" class="msg"></span>
+  </div>
   <div class="zonebar">
     <button id="drawBtn" disabled>금지 구역 그리기</button>
     <button id="delBtn" disabled>선택한 구역 지우기</button>
@@ -685,6 +761,27 @@ document.getElementById('prevBox').addEventListener('click', async ev => {
   try { K = await (await fetch(url, {method: 'POST', body: '{}'})).json(); } catch (e) { return; }
   dirty = false; loadKeepout();
 });
+// ---------------- 탐색 시작·멈춤 ----------------
+// 탐색기는 켜질 때 멈춰 있다(런치 explore_autostart 기본 false) — 지도를 보고 금지 구역을 먼저 그린 뒤 시작한다.
+// 멈춤은 비상정지가 아니다: 지금 걸음(최대 0.4 m)을 마치고 선다. 급하면 위의 빨간 비상정지.
+let E = null;
+function renderExplore() {
+  const bar = document.getElementById('exploreBar'), btn = document.getElementById('exploreBtn'), st = document.getElementById('exploreState');
+  bar.style.display = (E && E.available) ? 'flex' : 'none';
+  if (!E || !E.available) return;
+  const running = E.state === 1 || E.state === 2;
+  btn.textContent = running ? '탐색 멈춤' : '탐색 시작'; btn.classList.toggle('on', running); btn.dataset.act = running ? 'stop' : 'start';
+  st.textContent = running ? '탐색 중입니다. 멈춤을 누르면 지금 걸음을 마치고 섭니다(급하면 비상정지).'
+    : (E.state === 4 ? '멈추는 중…' : '탐색이 멈춰 있습니다. 금지 구역을 먼저 그리고 시작하세요. 시작하면 로봇이 스스로 움직입니다.');
+}
+async function loadExplore() { try { E = await (await fetch('/api/explore')).json(); } catch (e) { return; } renderExplore(); }
+document.getElementById('exploreBtn').onclick = async ev => {
+  const act = ev.target.dataset.act;
+  if (act === 'start' && !confirm('탐색을 시작합니다. 로봇이 스스로 움직입니다.\n로봇 주변이 비어 있고 금지 구역을 그렸는지 확인하세요.')) return;
+  try { E = await (await fetch('/api/explore/' + act, {method: 'POST', body: '{}'})).json(); } catch (e) { return; }
+  renderExplore(); setTimeout(loadExplore, 1000);
+};
+setInterval(() => { if (!document.hidden) loadExplore(); }, 2000); loadExplore();
 addEventListener('resize', () => { fitMap(); drawOverlay(); });
 setInterval(() => { if (!document.hidden && !(document.activeElement && document.activeElement.hasAttribute('data-name'))) loadKeepout(); }, 1000);
 loadKeepout();
@@ -762,6 +859,7 @@ async function loadMapList() {
       <td>${wh}</td>
       <td>${area}</td>
       <td>${fmtTime(m.mtime)}</td>
+      <td>${m.posegraph ? '위치 잡기 가능' : '그림만'}${m.zones ? ` · 구역 ${m.zones}` : ''}</td>
       <td>
         <button class="mini" data-view="${m.name}">보기</button>
         <button class="mini danger" data-del="${m.name}">삭제</button>
@@ -828,7 +926,8 @@ document.getElementById('saveBtn').onclick = async () => {
   msg.textContent = '저장 중...';
   const r = await (await fetch('/api/maps/save', {
     method: 'POST', body: JSON.stringify({name})})).json();
-  msg.textContent = r.ok ? `저장됨: ${r.name}` : (r.error || '저장 실패');
+  msg.textContent = r.ok ? `저장됨: ${r.name}` + (r.extras ? ` (위치 잡기용 자료 ${r.extras.posegraph ? '포함' : '없음 — SLAM이 꺼져 있음'}, 금지 구역 ${r.extras.zones}개)` : '')
+    : (r.error || '저장 실패');
   if (r.ok) { document.getElementById('saveName').value = ''; loadMapList(); }
 };
 
@@ -895,6 +994,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
         elif self.path == "/api/keepout":
             self._send(200, json.dumps(keepout_payload(), ensure_ascii=False).encode("utf-8"), "application/json")
+        elif self.path == "/api/explore":
+            self._send(200, json.dumps(Handler.node.explore(), ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path == "/api/maps":
             self._send(200, json.dumps(list_maps()).encode("utf-8"),
                        "application/json")
@@ -929,6 +1030,8 @@ class Handler(BaseHTTPRequestHandler):
                 # cmd_vel_timeout으로 정지는 보장된다. UI에 경고로 표시.
                 "zero_published": zero_ok,
             }).encode("utf-8"), "application/json")
+        elif self.path in ("/api/explore/start", "/api/explore/stop"):
+            self._send(200, json.dumps(Handler.node.explore(self.path.rsplit("/", 1)[1]), ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path in ("/api/keepout", "/api/keepout/restore", "/api/keepout/drop_prev"):
             try:
                 ln = int(self.headers.get("Content-Length", "0") or 0)
@@ -953,7 +1056,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.endswith("/save"):
                 saved, err = save_current_map(name)
                 self._send(200 if saved else 400,
-                           json.dumps({"ok": bool(saved), "name": saved,
+                           json.dumps({"ok": bool(saved), "name": saved, "extras": dict(last_extras) if saved else None,
                                        "error": err}).encode("utf-8"),
                            "application/json")
             else:
