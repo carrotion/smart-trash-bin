@@ -7,7 +7,7 @@ from rclpy.action import ActionClient
 from nav2_msgs.action import ComputePathToPose
 from geometry_msgs.msg import PoseStamped
 R = sys.argv[1]
-im = np.array(Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../robot/src/stage_ros2/world/bitmaps/our_home.png')))[::-1, :]          # 행 0 = 아래(y 최소)
+im = np.array(Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../robot/sim_worlds/bitmaps/our_home.png')))[::-1, :]          # 행 0 = 아래(y 최소)
 occ = im < 128; res = 0.05; ox, oy = -7.45, -4.925
 H, W = occ.shape
 oj, oi = np.nonzero(occ); O = np.stack([oi, oj], 1).astype(np.float32)

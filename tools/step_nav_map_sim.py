@@ -8,6 +8,7 @@ test_step_navigator_sim(직선 경로·장난감 장애물)과 Stage 시뮬(10�
 
 사례(월드 좌표, our_home.world 로봇 시작 (−2.7, 3.43)이 SLAM 지도 원점):
   door  : 10-09 Stage 2차의 (4.8, −1.2) 막힘 — 폭 0.40~0.45 m 문틈을 벽 0.2 m 아래 오른쪽 문설주 밑에서 비스듬히 진입
+          (⚠️ 이 문은 실제 77 cm다 — 08-23 지도가 절반 폭으로 그려져 있었음. 좁은 틈 통과 시험으로 narrow 지도에 남김)
 
     python3 tools/step_nav_map_sim.py            # 모든 사례
     python3 tools/step_nav_map_sim.py --x 1.83 --y 0.79 --yaw 130 --gx 2.19 --gy 2.27
@@ -30,8 +31,16 @@ RES, OX, OY = 0.05, -7.45, -4.925
 HALF = 0.11
 
 
-def load_world():
-    im = np.array(Image.open(os.path.join(HERE, '../robot/src/stage_ros2/world/bitmaps/our_home.png')))[::-1, :]
+MAPS = {'real': 'our_home.png',                   # 문 폭 실제값(A·B 0.75, C 0.85 m — 10-10 사용자 실측 77/77/87 cm)
+        'narrow': 'our_home_narrowdoors.png'}     # 08-23 원본: 문 세 곳이 0.45 m로 그려짐 → 좁은 틈 통과 시험용으로 남김
+
+
+def map_path(name):
+    return os.path.abspath(os.path.join(HERE, '../robot/sim_worlds/bitmaps', MAPS[name]))
+
+
+def load_world(name):
+    im = np.array(Image.open(map_path(name)))[::-1, :]
     jj, ii = np.nonzero(im < 128)
     return np.stack([OX + (ii + 0.5) * RES, OY + (jj + 0.5) * RES], 1)
 
@@ -42,7 +51,7 @@ def others_running():
     return [ln.strip()[:90] for ln in out if any(f'/{n} ' in ln + ' ' for n in ('planner_server', 'map_server', 'controller_server', 'async_slam_toolbox_node'))]
 
 
-def start_planner(radius='0.35'):
+def start_planner(radius='0.35', map_name='real'):
     # ⚠️ 10-10: 실물 시험 스택이 켜진 채 이 도구를 돌렸더니, 끝날 때 이름으로 정리하며 **실물 스택의 planner_server·
     #   lifecycle_manager까지 죽였다**(로봇 정지 중이라 무사). → ① 다른 Nav2가 떠 있으면 시작하지 않는다 ② 자기가 띄운
     #   프로세스 묶음(세션)만 죽인다
@@ -50,7 +59,9 @@ def start_planner(radius='0.35'):
     if run:
         raise SystemExit('❌ 이미 Nav2 프로세스가 떠 있다 — 실물 시험 스택/다른 시뮬을 먼저 내릴 것:\n   ' + '\n   '.join(run[:4]))
     d = os.path.join(HERE, 'inflation_probe'); p = f'/tmp/step_nav_map_sim_{radius}.yaml'
-    s = open(os.path.join(d, 'params.template.yaml')).read().replace('RADIUS', radius).replace('yaml_filename: map.yaml', f'yaml_filename: {d}/map.yaml')
+    my = f'/tmp/step_nav_map_sim_{map_name}.yaml'
+    open(my, 'w').write(open(os.path.join(d, 'map.yaml')).read().replace('image: ../../robot/sim_worlds/bitmaps/our_home.png', f'image: {map_path(map_name)}'))
+    s = open(os.path.join(d, 'params.template.yaml')).read().replace('RADIUS', radius).replace('yaml_filename: map.yaml', f'yaml_filename: {my}')
     open(p, 'w').write(s)
     env = dict(os.environ); procs = []
     for cmd in (['ros2', 'run', 'tf2_ros', 'static_transform_publisher', '--frame-id', 'map', '--child-frame-id', 'base_link'],
@@ -170,6 +181,7 @@ def main():
     ap.add_argument('--random', type=int, default=0, help='무작위 n쌍 일괄 측정')
     ap.add_argument('--seed', type=int, default=11)
     ap.add_argument('--goal-clear', type=float, default=0.26, help='목표의 장애물 여유(m)')
+    ap.add_argument('--map', choices=list(MAPS), default=None, help='기본: 사례만 돌리면 narrow(좁은 문틈 시험), --random/직접 지정이면 real')
     ap.add_argument('--nav-file', help='비교용: 다른 step_navigator.py(예: git show HEAD:… 로 꺼낸 파일)')
     ap.add_argument('--set', nargs='*', default=[], help='StepNavigator 클래스 값 덮어쓰기 예: replan_after_escape=True')
     a = ap.parse_args()
@@ -180,11 +192,13 @@ def main():
         T.StepNavigator = mod.StepNavigator
     for kv in a.set:
         k, v = kv.split('='); setattr(T.StepNavigator, k, eval(v))
-    world = load_world()
+    map_name = a.map or ('narrow' if (a.x is None and not a.random) else 'real')
+    world = load_world(map_name)
     cases = CASES if a.x is None else {'custom': dict(start=(a.x, a.y, a.yaw or 0.0), goal=(a.gx, a.gy))}
     if a.random:
-        cases = dict(CASES, **random_cases(world, a.random, a.seed, goal_clear=a.goal_clear))
-    procs = start_planner(); ok_all = True; stat = []
+        cases = dict(CASES if map_name == 'narrow' else {}, **random_cases(world, a.random, a.seed, goal_clear=a.goal_clear))
+    print(f'지도: {map_name} ({MAPS[map_name]})', flush=True)
+    procs = start_planner(map_name=map_name); ok_all = True; stat = []
     try:
         rclpy.init(); node = rclpy.create_node('step_nav_map_sim'); ac = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
         if not ac.wait_for_server(timeout_sec=25):
