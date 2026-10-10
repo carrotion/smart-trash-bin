@@ -1,0 +1,54 @@
+# 사용자가 GIMP로 실제 집 도면(NAVER 부동산 평면도, 34평/전용 84㎡)을 직접
+# 손으로 트레이싱한 벽 구조 (2026-08-23). home_real.world(SLAM 스냅샷 기반, 회전
+# 오차로 생긴 유령 벽이 섞여있어 폐기됨)와 달리 이건 **오차 없는 정확한 벽**이다.
+#
+# 트레이싱 방식: 원본 도면 위에 GIMP 투명 레이어로 벽만 따라 그림. 진입 금지
+# 구역(욕실 2곳, 발코니, 현관, 다용도실, 팬트리, 대피공간, 주방 조리대)은 아예
+# 경계 밖으로 파서 그려서 별도 방 모델링이 필요 없다 — 문(3개: 안방/침실1/침실2)
+# 만 벽에 틈으로 존재. 바깥 경계가 새는 곳 없이 완전히 닫혀있음을 플러드필로 검증함.
+#
+# 축척: 거실 폭 332px = 4.5m(GIMP Measure 도구로 실측) 기준, 0.05m/px로 리샘플.
+# 크기 14.9 x 9.85m.
+
+include "include/robots.inc"
+
+resolution 0.02
+interval_sim 100
+
+define floorplan model
+(
+  color "gray30"
+  boundary 1
+  gui_nose 0
+  gui_grid 0
+  gui_outline 0
+  gripper_return 0
+  fiducial_return 0
+  laser_return 1
+)
+
+window
+(
+  size [ 635.000 666.000 ]
+  scale 20.0
+  center [ 0.0  0.0 ]
+  rotate [ 0  0 ]
+  show_data 1
+)
+
+floorplan
+(
+  name "our_home"
+  size [14.9 9.85 0.800]
+  pose [0 0 0 0]
+  bitmap "bitmaps/our_home.png"
+  gui_move 0
+)
+
+pioneer2dx_with_laser
+(
+  name "robot_0"
+  # 거실 안, 0.5m 반경 완전 개방 지점(스크립트로 탐색·검증)
+  color "red"
+  pose [ -2.7 3.43 0 0 ]
+)
