@@ -136,6 +136,10 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(PythonExpression(["'", LaunchConfiguration('navigator'), "' == 'step'"])))
 
+    # 금지 구역 서버(파이썬 도구) — 항상 뜬다. 켜질 때 지난 구역을 치워 둔다(SLAM이 새 원점으로 새 지도를 그리므로)
+    keepout_server = ExecuteProcess(
+        cmd=['python3', '-u', os.path.join(repo_tools, 'keepout_server.py')], output='screen')
+
     ld = LaunchDescription()
     ld.add_action(declare_nav2_params_cmd)
     ld.add_action(declare_explore_params_cmd)
@@ -153,4 +157,5 @@ def generate_launch_description():
     ld.add_action(frontier_node)
     ld.add_action(frontier_step_node)
     ld.add_action(step_server)
+    ld.add_action(keepout_server)
     return ld

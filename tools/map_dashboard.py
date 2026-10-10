@@ -16,6 +16,7 @@ import argparse
 import base64
 import gzip
 import json
+import math
 import os
 import re
 import signal
@@ -31,10 +32,18 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
                        QoSReliabilityPolicy)
+from std_msgs.msg import String
+from tf2_ros import Buffer, TransformListener
+
+import keepout
 
 state_lock = threading.Lock()
 state = {"connected": False, "last_ts": 0.0}
 STALE_S = 5.0
+# 금지 구역(tools/keepout.py) 화면용 상태: 구역 서버가 실제로 적용한 version, 서버 생존, 지도 위 로봇 자세
+keep_state = {"applied_version": None, "applied_n": 0, "server": False, "pose": None}
+_last_pose = {"pose": None, "t": 0.0}     # 마지막으로 안 자세 — 지도 변환이 잠깐 끊긴 순간에도 "로봇 옆 금지"를 검사하려고
+ROBOT_KEEP_CLEAR = 0.25     # 로봇에서 이 거리 안에는 구역을 새로 만들거나 옮겨 놓지 못한다(구역 선은 벽 — 로봇이 갇힌다)
 
 # 비상정지 대상: 로봇에 cmd_vel을 만들어 보낼 수 있는 프로세스들.
 # 2026-08-16: 전부 carrotian 소유라 같은 유저인 대시보드가 권한 없이 신호를 보낼 수 있다.
@@ -65,6 +74,34 @@ class MapBridge(Node):
         self.create_subscription(OccupancyGrid, 'map', self._on_map, map_qos)
         # 비상정지용 — 자율주행이 계속 새 명령을 낼 수도 있으니 여러 번 강제로 0 발행.
         self._cmd_pub = self.create_publisher(Twist, 'cmd_vel', 1)
+        # 금지 구역: 서버가 적용한 내용을 되받아 화면에 "적용됨"을 정직하게 표시(파일에 썼다고 적용된 게 아니다)
+        self.create_subscription(String, '/keepout_zones', self._on_zones, map_qos)
+        self._tfb = Buffer(); self._tfl = TransformListener(self._tfb, self)
+        self.create_timer(0.5, self._pose_tick)
+
+    def _on_zones(self, msg):
+        try:
+            d = json.loads(msg.data)
+            keep_state.update(applied_version=d.get("version"), applied_n=len(d.get("zones") or []))
+        except ValueError:
+            pass
+
+    def _pose_tick(self):
+        pose = None
+        try:
+            t = self._tfb.lookup_transform('map', 'base_link', rclpy.time.Time()).transform
+            st = self._tfb.lookup_transform('map', 'odom', rclpy.time.Time()).header.stamp
+            age = self.get_clock().now().nanoseconds * 1e-9 - (st.sec + st.nanosec * 1e-9)
+            if age < 3.0:       # SLAM이 꺼지면 마지막 변환이 남는다 — 오래된 자세는 버린다
+                q = t.rotation
+                pose = [round(t.translation.x, 3), round(t.translation.y, 3),
+                        round(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)), 4)]
+        except Exception:
+            pass
+        keep_state["pose"] = pose
+        if pose:
+            _last_pose.update(pose=pose, t=time.time())
+        keep_state["server"] = self.count_publishers('/keepout_zones') > 0
 
     def emergency_stop(self):
         """0 속도를 여러 번 발행. **호출자는 이게 멈출 수 있다고 가정해야 한다.**
@@ -132,6 +169,37 @@ def staleness_watchdog():
 #    **.pgm과 .yaml이 쌍으로 있는 것만** 맵으로 본다.
 # ⚠️ 사용자 입력이 파일 경로에 들어가므로 이름을 화이트리스트로 제한하고,
 #    최종 경로가 MAPS_DIR 밖을 가리키면 거부한다(심볼릭 링크 포함).
+
+def keepout_payload():
+    d = keepout.load()
+    return dict(keep_state, version=d["version"], zones=d["zones"], prev=d["prev"], robot_clear=ROBOT_KEEP_CLEAR)
+
+
+def keepout_save(zones):
+    """화면에서 온 구역 목록을 검사해 파일에 쓴다. 반환 (ok, 오류 문장)."""
+    try:
+        zones = keepout.clean_zones(zones)
+    except ValueError as e:
+        return False, str(e)
+    d = keepout.load()
+    old = {json.dumps(z["poly"]) for z in d["zones"]}
+    # ⚠️ 10-10 시뮬 화면 시험: 부하가 큰 순간 자세가 잠깐 비어 이 검사를 건너뛰고 로봇 위에 구역이 만들어졌다 → 최근 10초의 자세를 쓴다
+    pose = keep_state["pose"] or (_last_pose["pose"] if time.time() - _last_pose["t"] < 10.0 else None)
+    if pose:
+        for z in zones:      # 새로 그렸거나 모양을 바꾼 구역만 본다(이미 있던 구역 옆에 로봇이 서 있어도 다른 구역은 고칠 수 있게)
+            if json.dumps(z["poly"]) not in old and keepout.dist(pose[0], pose[1], z["poly"]) < ROBOT_KEEP_CLEAR:
+                return False, f"로봇이 그 구역 안이나 바로 옆({ROBOT_KEEP_CLEAR * 100:.0f} cm 안)에 있습니다"
+    keepout.save(dict(d, zones=zones))
+    return True, None
+
+
+def keepout_restore():
+    d = keepout.load()
+    if not d["prev"]:
+        return False, "보관된 구역이 없습니다"
+    keepout.save(dict(d, zones=d["zones"] + d["prev"], prev=[]))
+    return True, None
+
 
 MAPS_DIR = os.path.expanduser("~/maps")
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -334,7 +402,8 @@ __FAVICON__
                    border:1px solid var(--border); background:transparent;
                    color:inherit; }
   button.mini { padding:.35rem .7rem; font-size:.85rem; border-radius:6px;
-                cursor:pointer; }
+                cursor:pointer; white-space:nowrap; }
+  .scrollx { overflow-x:auto; }
   button.danger { color:#c33; }
   .msg { font-size:.85rem; color:var(--text-secondary); }
   #mapTable td { padding:.35rem .5rem; border-bottom:1px solid var(--border);
@@ -364,13 +433,28 @@ __FAVICON__
   }
   body { background: var(--page); color: var(--text-primary);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    max-width: 720px; margin: 24px auto; padding: 0 16px; }
+    max-width: 1100px; margin: 24px auto; padding: 0 16px; }
   h1 { font-size: 1.3rem; display: flex; align-items: center; gap: 8px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; }
   .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
     padding: 16px; margin: 16px 0; }
-  #mapCanvas { display: block; margin: 0 auto; background: #808080;
-    image-rendering: pixelated; max-width: 100%; border: 1px solid var(--border); }
+  #mapWrap { position: relative; margin: 0 auto; width: fit-content; max-width: 100%; }
+  #mapCanvas { display: block; background: #808080; image-rendering: pixelated; border: 1px solid var(--border); }
+  #ovl { position: absolute; left: 0; top: 0; width: 100%; height: 100%; touch-action: pan-y; cursor: default; }
+  #ovl.draw { cursor: crosshair; touch-action: none; } #ovl.sel { touch-action: none; }
+  .zonebar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .6rem; }
+  .zonebar button { padding: .5rem .9rem; font-size: .95rem; border-radius: 8px; cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface-1); color: inherit; }
+  .zonebar button.on { background: var(--critical); color: #fff; border-color: var(--critical); }
+  .zonebar button:disabled { opacity: .45; cursor: not-allowed; }
+  #zoneState { font-size: .9rem; color: var(--text-secondary); flex: 1 1 14rem; }
+  #zoneState.ok { color: var(--good); font-weight: 600; } #zoneState.bad { color: var(--critical); font-weight: 600; }
+  #zoneHint { font-size: .85rem; color: var(--text-secondary); margin: .5rem 0 0; line-height: 1.5; }
+  #zoneList { margin-top: .6rem; } #zoneList td { white-space: nowrap; padding: .3rem .5rem .3rem 0; border-bottom: 1px solid var(--border); font-size: .9rem;
+    font-variant-numeric: tabular-nums; }
+  #zoneList tr.sel td { background: rgba(208,59,59,.10); }
+  #zoneList input { width: 9rem; max-width: 34vw; padding: .25rem .4rem; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: inherit; }
+  #prevBox { margin-top: .7rem; padding: .6rem .75rem; border: 1px dashed var(--text-muted); border-radius: 8px; font-size: .88rem; line-height: 1.5; }
   .status-row { display: flex; justify-content: space-between; font-size: 0.85rem;
     color: var(--text-secondary); margin-top: 8px; font-variant-numeric: tabular-nums; }
   .empty { text-align: center; color: var(--text-muted); padding: 60px 0; }
@@ -394,7 +478,15 @@ __FAVICON__
 <div id="viewBanner" class="banner" style="display:none"></div>
 
 <div class="card">
-  <canvas id="mapCanvas" width="10" height="10"></canvas>
+  <div class="zonebar">
+    <button id="drawBtn" disabled>금지 구역 그리기</button>
+    <button id="delBtn" disabled>선택한 구역 지우기</button>
+    <span id="zoneState"></span>
+  </div>
+  <div id="mapWrap"><canvas id="mapCanvas" width="10" height="10"></canvas><canvas id="ovl"></canvas></div>
+  <p id="zoneHint"></p>
+  <table id="zoneList"></table>
+  <div id="prevBox" style="display:none"></div>
   <div id="emptyMsg" class="empty">맵 데이터 없음 — SLAM Toolbox(mapping.launch.py)를 실행하면 여기 실시간으로 채워집니다.</div>
   <div class="status-row">
     <span id="dimText"></span>
@@ -409,7 +501,7 @@ __FAVICON__
     <button id="saveBtn" class="mini">현재 맵 저장</button>
     <span id="saveMsg" class="msg"></span>
   </div>
-  <table id="mapTable"></table>
+  <div class="scrollx"><table id="mapTable"></table></div>
 </div>
 
 <script>
@@ -427,31 +519,211 @@ function occColor(v) {
 // let은 TDZ가 있어 tick()보다 먼저 선언돼야 한다.
 let viewing = null;
 
+// ---------------- 금지 구역 편집 (2026-10-10) ----------------
+// 로봇청소기 앱처럼: [금지 구역 그리기]를 누르고 지도 위를 끌어 상자를 만든다. 상자를 누르면 선택 — 모서리를 끌어 모양을
+// 고치고, 안쪽을 끌어 옮긴다. 손을 떼면 바로 저장되고, 구역 서버가 되돌려 준 version이 같아지면 "적용됨"으로 표시한다.
+// 좌표는 전부 지도 좌표(m). 화면 좌표 ↔ 지도 좌표는 G(지금 그려진 격자의 크기·원점)로 바꾼다.
+const ovl = document.getElementById('ovl'), octx = ovl.getContext('2d');
+let G = null;                 // {w,h,res,ox,oy,live,stale}
+let K = null;                 // /api/keepout 응답(파일의 구역 + 서버 상태 + 로봇 자세)
+let zones = [], sel = null, mode = 'idle', drag = null, dirty = false, zoneErr = '', seq = 0;
+const HANDLE = 14;            // 모서리 손잡이를 잡는 반경(px)
+
+function fitMap() {           // 격자를 카드 폭과 화면 높이 70%에 맞춰 키우거나 줄인다(작은 지도도 크게, 긴 지도는 화면 안에)
+  if (!G) return;
+  const availW = document.getElementById('mapWrap').parentElement.clientWidth - 2;
+  const sc = Math.min(availW / G.w, innerHeight * 0.7 / G.h, 12);
+  canvas.style.width = (G.w * sc) + 'px'; canvas.style.height = (G.h * sc) + 'px';
+  const dpr = devicePixelRatio || 1, W = Math.round(G.w * sc * dpr), H = Math.round(G.h * sc * dpr);
+  if (ovl.width !== W || ovl.height !== H) { ovl.width = W; ovl.height = H; }
+}
+const scale = () => ovl.getBoundingClientRect().width / G.w;              // px / 칸
+const toPx = (x, y) => [(x - G.ox) / G.res * scale(), (G.h - (y - G.oy) / G.res) * scale()];
+function toMap(ev) { const r = ovl.getBoundingClientRect(), k = scale();
+  return [G.ox + (ev.clientX - r.left) / k * G.res, G.oy + (G.h - (ev.clientY - r.top) / k) * G.res]; }
+function inPoly(x, y, p) { let c = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+  if ((p[i][1] > y) !== (p[j][1] > y) && x < (p[j][0] - p[i][0]) * (y - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]) c = !c; } return c; }
+function sizeText(p) { const xs = p.map(q => q[0]), ys = p.map(q => q[1]);
+  return `${(Math.max(...xs) - Math.min(...xs)).toFixed(1)} × ${(Math.max(...ys) - Math.min(...ys)).toFixed(1)} m`; }
+const canEdit = () => G && G.live && viewing === null && K && K.server;
+
+function drawOverlay() {
+  if (!G) return;
+  const dpr = devicePixelRatio || 1; octx.setTransform(dpr, 0, 0, dpr, 0, 0); octx.clearRect(0, 0, ovl.width, ovl.height);
+  if (!G.live || viewing !== null) return;                                // 저장된 지도는 좌표가 달라 구역·로봇을 겹치지 않는다
+  const path = p => { octx.beginPath(); p.forEach((q, i) => { const [x, y] = toPx(q[0], q[1]); i ? octx.lineTo(x, y) : octx.moveTo(x, y); }); octx.closePath(); };
+  for (const z of ((K && K.prev) || [])) {                                // 지난 지도의 구역: 흐린 점선(지금 지도와 맞는지 눈으로 보라고)
+    path(z.poly); octx.setLineDash([6, 5]); octx.strokeStyle = 'rgba(82,81,78,.8)'; octx.lineWidth = 1.5; octx.stroke(); octx.setLineDash([]);
+  }
+  zones.forEach((z, i) => {
+    path(z.poly); octx.fillStyle = i === sel ? 'rgba(208,59,59,.38)' : 'rgba(208,59,59,.24)'; octx.fill();
+    octx.strokeStyle = '#d03b3b'; octx.lineWidth = i === sel ? 3 : 2; octx.stroke();
+    const cx = z.poly.reduce((a, q) => a + q[0], 0) / z.poly.length, cy = z.poly.reduce((a, q) => a + q[1], 0) / z.poly.length, [px, py] = toPx(cx, cy);
+    octx.fillStyle = '#7a1414'; octx.font = '600 13px system-ui, sans-serif'; octx.textAlign = 'center';
+    octx.fillText(z.name || `구역 ${z.id}`, px, py + 4); octx.textAlign = 'start';
+    if (i === sel) for (const q of z.poly) { const [x, y] = toPx(q[0], q[1]);
+      octx.fillStyle = '#fff'; octx.strokeStyle = '#d03b3b'; octx.lineWidth = 2; octx.beginPath(); octx.rect(x - 6, y - 6, 12, 12); octx.fill(); octx.stroke(); }
+  });
+  if (drag && drag.type === 'new') { const [x0, y0] = toPx(drag.a[0], drag.a[1]), [x1, y1] = toPx(drag.b[0], drag.b[1]);
+    octx.fillStyle = 'rgba(208,59,59,.25)'; octx.strokeStyle = '#d03b3b'; octx.lineWidth = 2; octx.setLineDash([5, 4]);
+    octx.fillRect(x0, y0, x1 - x0, y1 - y0); octx.strokeRect(x0, y0, x1 - x0, y1 - y0); octx.setLineDash([]); }
+  if (K && K.pose) {                                                      // 로봇: 실제 크기(길이 19 × 폭 21 cm), 너무 작으면 12 px로
+    const [x, y] = toPx(K.pose[0], K.pose[1]), k = scale() / G.res, s = Math.max(1, 12 / (0.21 * k));
+    octx.save(); octx.translate(x, y); octx.rotate(-K.pose[2]); octx.scale(s, s);
+    octx.fillStyle = 'rgba(42,120,214,.85)'; octx.fillRect(-0.095 * k, -0.105 * k, 0.19 * k, 0.21 * k);
+    octx.beginPath(); octx.moveTo(0.16 * k, 0); octx.lineTo(0.095 * k, -0.06 * k); octx.lineTo(0.095 * k, 0.06 * k); octx.closePath(); octx.fill();
+    octx.restore();
+  }
+}
+
+function renderZoneUI() {
+  const st = document.getElementById('zoneState'), drawBtn = document.getElementById('drawBtn'), hint = document.getElementById('zoneHint');
+  const ok = canEdit();
+  drawBtn.disabled = !ok; drawBtn.classList.toggle('on', mode === 'draw'); drawBtn.textContent = mode === 'draw' ? '그리기 취소' : '금지 구역 그리기';
+  document.getElementById('delBtn').disabled = !(ok && sel !== null);
+  ovl.className = mode === 'draw' ? 'draw' : (sel !== null ? 'sel' : '');
+  st.className = '';
+  if (zoneErr) { st.textContent = zoneErr; st.className = 'bad'; }
+  else if (!K) st.textContent = '';
+  else if (viewing !== null) st.textContent = '저장된 지도를 보는 중에는 구역을 고칠 수 없습니다.';
+  else if (!K.server) st.textContent = '자율 스택이 꺼져 있어 금지 구역을 쓸 수 없습니다. 스택을 켜면 지도가 새로 시작되고, 그 지도 위에 그립니다.';
+  else if (K.applied_version !== K.version) st.textContent = '적용하는 중…';
+  else if (!zones.length) st.textContent = '금지 구역이 없습니다. 로봇은 지도에서 빈 곳이면 어디든 갑니다.';
+  else { st.textContent = `금지 구역 ${zones.length}개 적용됨`; st.className = 'ok'; }
+  hint.textContent = !ok ? '' : mode === 'draw' ? '지도 위에서 끌어 상자를 그리세요. 소파·침대처럼 로봇이 밑으로 들어가면 안 되는 곳을 덮으면 됩니다.'
+    : sel !== null ? '모서리를 끌면 모양이 바뀌고, 안쪽을 끌면 옮겨집니다. 구역 선은 벽과 같아서 로봇 몸이 선을 넘지 않습니다.'
+    : (zones.length ? '구역을 누르면 고칠 수 있습니다.' : '');
+  document.getElementById('zoneList').innerHTML = (G && G.live && viewing === null) ? zones.map((z, i) =>
+    `<tr class="${i === sel ? 'sel' : ''}" data-i="${i}"><td>구역 ${z.id}</td><td><input data-name="${i}" value="${(z.name || '').replace(/"/g, '&quot;')}" placeholder="이름(예: 소파)" maxlength="20" ${ok ? '' : 'disabled'}></td>`
+    + `<td>${sizeText(z.poly)}</td><td><button class="mini danger" data-zdel="${i}" ${ok ? '' : 'disabled'}>지우기</button></td></tr>`).join('') : '';
+  const pb = document.getElementById('prevBox'), np = (K && K.prev || []).length;
+  pb.style.display = (np && ok) ? 'block' : 'none';
+  if (np && ok) pb.innerHTML = `지난 지도에서 쓰던 구역 ${np}개가 보관돼 있습니다(지도 위 회색 점선). 지도는 켤 때마다 로봇이 놓인 자리를 기준으로 새로 그려지므로, `
+    + `<b>지난번과 같은 자리·같은 방향에서 시작했을 때만</b> 위치가 맞습니다. 점선이 가구와 맞는지 보고 정하세요. `
+    + `<button class="mini" id="prevUse">다시 쓰기</button> <button class="mini" id="prevDrop">버리기</button>`;
+}
+
+async function loadKeepout() {
+  // ⚠️ 저장 전에 떠난 조회가 저장 뒤에 도착하면 옛 목록으로 덮어써 방금 그린 구역의 선택이 풀렸다(10-10 화면 시험) → 그런 응답은 버린다
+  const s0 = seq; let k;
+  try { k = await (await fetch('/api/keepout')).json(); } catch (e) { return; }
+  if (s0 !== seq || dirty) return;
+  K = k;
+  if (!drag && !dirty) { zones = K.zones.map(z => ({id: z.id, name: z.name, poly: z.poly.map(q => q.slice())})); if (sel !== null && sel >= zones.length) sel = null; }
+  if (!canEdit() && mode === 'draw') mode = 'idle';
+  renderZoneUI(); drawOverlay();
+}
+async function saveZones() {
+  dirty = true; zoneErr = ''; seq++;
+  try {
+    const r = await (await fetch('/api/keepout', {method: 'POST', body: JSON.stringify({zones})})).json();
+    K = r; if (!r.ok) { zoneErr = r.error || '저장 실패'; sel = null; setTimeout(() => { zoneErr = ''; renderZoneUI(); }, 6000); }
+    zones = r.zones.map(z => ({id: z.id, name: z.name, poly: z.poly.map(q => q.slice())}));      // 실패하면 서버의 것으로 되돌아간다
+  } catch (e) { zoneErr = '저장 요청 실패 — 연결을 확인하세요'; }
+  dirty = false; seq++; renderZoneUI(); drawOverlay();
+}
+function nextId() { return zones.reduce((m, z) => Math.max(m, z.id), 0) + 1; }
+
+ovl.addEventListener('pointerdown', ev => {
+  if (!canEdit()) return;
+  const p = toMap(ev), k = scale();
+  if (mode === 'draw') { drag = {type: 'new', a: p, b: p}; }
+  else {
+    let hit = null;
+    if (sel !== null) zones[sel].poly.forEach((q, vi) => { const [x, y] = toPx(q[0], q[1]), r = ovl.getBoundingClientRect();
+      if (Math.hypot(ev.clientX - r.left - x, ev.clientY - r.top - y) <= HANDLE) hit = vi; });
+    if (hit !== null) drag = {type: 'vertex', vi: hit, moved: false};
+    else { let zi = null; zones.forEach((z, i) => { if (inPoly(p[0], p[1], z.poly)) zi = i; });
+      sel = zi; drag = zi === null ? null : {type: 'move', last: p, moved: false}; }
+  }
+  if (drag) { ovl.setPointerCapture(ev.pointerId); ev.preventDefault(); }
+  renderZoneUI(); drawOverlay();
+});
+ovl.addEventListener('pointermove', ev => {
+  if (!drag) return;
+  const p = toMap(ev);
+  if (drag.type === 'new') drag.b = p;
+  else if (drag.type === 'vertex') { zones[sel].poly[drag.vi] = [+p[0].toFixed(3), +p[1].toFixed(3)]; drag.moved = true; }
+  else if (drag.type === 'move') { const dx = p[0] - drag.last[0], dy = p[1] - drag.last[1];
+    if (Math.hypot(dx, dy) * scale() / G.res > 2) { zones[sel].poly = zones[sel].poly.map(q => [+(q[0] + dx).toFixed(3), +(q[1] + dy).toFixed(3)]); drag.last = p; drag.moved = true; } }
+  drawOverlay();
+});
+function endDrag(ev) {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.type === 'new') {
+    const x0 = Math.min(d.a[0], d.b[0]), x1 = Math.max(d.a[0], d.b[0]), y0 = Math.min(d.a[1], d.b[1]), y1 = Math.max(d.a[1], d.b[1]);
+    mode = 'idle';
+    if (x1 - x0 >= 0.15 && y1 - y0 >= 0.15) {
+      zones.push({id: nextId(), name: '', poly: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(q => [+q[0].toFixed(3), +q[1].toFixed(3)])});
+      sel = zones.length - 1; saveZones(); return;
+    }
+    zoneErr = '너무 작습니다. 15 cm보다 크게 끌어 주세요.'; setTimeout(() => { zoneErr = ''; renderZoneUI(); }, 4000);
+  } else if (d.moved) { saveZones(); return; }
+  renderZoneUI(); drawOverlay();
+}
+ovl.addEventListener('pointerup', endDrag); ovl.addEventListener('pointercancel', endDrag);
+document.getElementById('drawBtn').onclick = () => { mode = mode === 'draw' ? 'idle' : 'draw'; sel = null; renderZoneUI(); drawOverlay(); };
+function removeZone(i) { zones.splice(i, 1); sel = null; saveZones(); }
+document.getElementById('delBtn').onclick = () => { if (sel !== null) removeZone(sel); };
+document.addEventListener('keydown', ev => {
+  if (ev.target.tagName === 'INPUT') return;
+  if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel !== null && canEdit()) { ev.preventDefault(); removeZone(sel); }
+  if (ev.key === 'Escape') { mode = 'idle'; sel = null; drag = null; renderZoneUI(); drawOverlay(); }
+});
+document.getElementById('zoneList').addEventListener('click', ev => {
+  const del = ev.target.getAttribute('data-zdel');
+  if (del !== null) { removeZone(+del); return; }
+  const tr = ev.target.closest('tr'); if (tr && ev.target.tagName !== 'INPUT') { sel = +tr.dataset.i; renderZoneUI(); drawOverlay(); }
+});
+document.getElementById('zoneList').addEventListener('change', ev => {
+  const i = ev.target.getAttribute('data-name'); if (i !== null) { zones[+i].name = ev.target.value.trim(); saveZones(); }
+});
+document.getElementById('prevBox').addEventListener('click', async ev => {
+  const url = ev.target.id === 'prevUse' ? '/api/keepout/restore' : ev.target.id === 'prevDrop' ? '/api/keepout/drop_prev' : null;
+  if (!url) return;
+  try { K = await (await fetch(url, {method: 'POST', body: '{}'})).json(); } catch (e) { return; }
+  dirty = false; loadKeepout();
+});
+addEventListener('resize', () => { fitMap(); drawOverlay(); });
+setInterval(() => { if (!document.hidden && !(document.activeElement && document.activeElement.hasAttribute('data-name'))) loadKeepout(); }, 1000);
+loadKeepout();
+
 // 격자 그리기. **라이브 맵과 저장된 맵이 같은 형식**이라 이 함수를 공유한다.
 function renderGrid(d) {
   const bin = atob(d.data_b64);
-  const w = d.width, h = d.height;
+  const W0 = d.width, H0 = d.height, res = d.resolution;
+  // 아는 칸(벽·빈 곳)이 있는 범위만 잘라서 크게 보여 준다 — SLAM 격자는 모르는 여백이 넓어서, 통째로 그리면 정작 볼 곳이
+  // 손톱만 해진다(10-10 실물: 도크에서 켠 직후 지도가 화면의 1/10). 구역과 로봇도 범위에 넣고 사방 1 m 여유를 둔다.
+  let c0 = W0, c1 = -1, r0 = H0, r1 = -1;
+  for (let i = 0; i < W0 * H0; i++) {
+    if (bin.charCodeAt(i) > 100) continue;                 // 255 = 모름
+    const row = (i / W0) | 0, col = i % W0;
+    if (col < c0) c0 = col; if (col > c1) c1 = col; if (row < r0) r0 = row; if (row > r1) r1 = row;
+  }
+  if (c1 < 0) { c0 = 0; c1 = W0 - 1; r0 = 0; r1 = H0 - 1; }
+  const ext = (x, y) => { const c = Math.floor((x - d.origin_x) / res), r = Math.floor((y - d.origin_y) / res);
+    c0 = Math.min(c0, c); c1 = Math.max(c1, c); r0 = Math.min(r0, r); r1 = Math.max(r1, r); };
+  if (!d.saved) { zones.forEach(z => z.poly.forEach(q => ext(q[0], q[1]))); if (K && K.pose) ext(K.pose[0], K.pose[1]); }
+  const pad = Math.round(1.0 / res);
+  c0 = Math.max(0, c0 - pad); r0 = Math.max(0, r0 - pad); c1 = Math.min(W0 - 1, c1 + pad); r1 = Math.min(H0 - 1, r1 + pad);
+  const w = c1 - c0 + 1, h = r1 - r0 + 1;
   canvas.width = w;
   canvas.height = h;
   const imgData = ctx.createImageData(w, h);
-  for (let i = 0; i < w * h; i++) {
-    const raw = bin.charCodeAt(i);           // 0~255 (unsigned로 옴)
-    const v = raw > 100 ? -1 : raw;          // 255였던 -1 복원
-    const g = occColor(v);
+  for (let row = r0; row <= r1; row++) for (let col = c0; col <= c1; col++) {
+    const raw = bin.charCodeAt(row * W0 + col);            // 0~255 (unsigned로 옴)
+    const g = occColor(raw > 100 ? -1 : raw);              // 255였던 -1 복원
     // OccupancyGrid는 (0,0)이 좌하단부터 row-major라 캔버스(좌상단 시작)로 옮길 때 y 뒤집기
-    const row = Math.floor(i / w);
-    const col = i % w;
-    const destRow = h - 1 - row;
-    const destIdx = (destRow * w + col) * 4;
-    imgData.data[destIdx] = g;
-    imgData.data[destIdx + 1] = g;
-    imgData.data[destIdx + 2] = g;
-    imgData.data[destIdx + 3] = 255;
+    const k = ((h - 1 - (row - r0)) * w + (col - c0)) * 4;
+    imgData.data[k] = g; imgData.data[k + 1] = g; imgData.data[k + 2] = g; imgData.data[k + 3] = 255;
   }
   ctx.putImageData(imgData, 0, 0);
+  G = {w, h, res, ox: d.origin_x + c0 * res, oy: d.origin_y + r0 * res, live: !d.saved, stale: !!d.stale};
+  fitMap(); drawOverlay();
 
   document.getElementById('dimText').textContent =
-    `${w}×${h} 셀, 해상도 ${d.resolution.toFixed(3)}m/셀 (약 ${(w*d.resolution).toFixed(1)}×${(h*d.resolution).toFixed(1)}m)`;
+    `지도 격자 ${W0}×${H0} 칸(한 칸 ${(res*100).toFixed(0)} cm) 중 아는 범위 약 ${(w*res).toFixed(1)} × ${(h*res).toFixed(1)} m를 보여 줍니다`;
   document.getElementById('updatedText').textContent =
     (d.saved ? '저장 시각: ' : '마지막 갱신: ')
     + new Date(d.last_ts * 1000).toLocaleTimeString()
@@ -461,6 +733,7 @@ function renderGrid(d) {
 async function tick() {
   // 저장된 맵을 보는 중이면 라이브로 덮어쓰지 않는다.
   if (viewing !== null) return;
+  if (drag) return;            // 끌고 있는 동안에는 지도를 다시 그리지 않는다(보이는 범위가 바뀌면 손 밑의 자리가 움직인다)
   // 탭이 숨겨져 있으면 폴링하지 않는다 — 자율주행 중 CPU 경쟁을 줄인다.
   // 이 프로젝트에서 프리즈의 유력한 방아쇠가 CPU 부하였다.
   if (document.hidden) return;
@@ -503,11 +776,11 @@ function drawPayload(d) {
     d.connected ? 'var(--good)' : 'var(--critical)';
   if (!d.connected || !d.data_b64) {
     document.getElementById('emptyMsg').style.display = 'block';
-    canvas.style.display = 'none';
+    document.getElementById('mapWrap').style.display = 'none'; G = null;
     return;
   }
   document.getElementById('emptyMsg').style.display = 'none';
-  canvas.style.display = 'block';
+  document.getElementById('mapWrap').style.display = 'block';
   renderGrid(d);
 }
 
@@ -620,6 +893,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/map":
             with state_lock:
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
+        elif self.path == "/api/keepout":
+            self._send(200, json.dumps(keepout_payload(), ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path == "/api/maps":
             self._send(200, json.dumps(list_maps()).encode("utf-8"),
                        "application/json")
@@ -654,6 +929,20 @@ class Handler(BaseHTTPRequestHandler):
                 # cmd_vel_timeout으로 정지는 보장된다. UI에 경고로 표시.
                 "zero_published": zero_ok,
             }).encode("utf-8"), "application/json")
+        elif self.path in ("/api/keepout", "/api/keepout/restore", "/api/keepout/drop_prev"):
+            try:
+                ln = int(self.headers.get("Content-Length", "0") or 0)
+                body = json.loads(self.rfile.read(ln) or b"{}")
+            except (ValueError, OSError):
+                body = {}
+            if self.path == "/api/keepout":
+                ok, err = keepout_save(body.get("zones"))
+            elif self.path.endswith("/restore"):
+                ok, err = keepout_restore()
+            else:
+                keepout.save(dict(keepout.load(), prev=[])); ok, err = True, None
+            self._send(200 if ok else 400, json.dumps(dict(keepout_payload(), ok=ok, error=err), ensure_ascii=False).encode("utf-8"),
+                       "application/json")
         elif self.path in ("/api/maps/save", "/api/maps/delete"):
             try:
                 ln = int(self.headers.get("Content-Length", "0") or 0)
@@ -681,9 +970,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8768)
-    args = ap.parse_args()
+    args, ros_args = ap.parse_known_args()      # 나머지(--ros-args -p use_sim_time:=true 등)는 rclpy로 — 시뮬 도메인에서 시험할 때
 
-    rclpy.init()
+    rclpy.init(args=ros_args or None)
     node = MapBridge()
     Handler.node = node
 

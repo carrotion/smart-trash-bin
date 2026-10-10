@@ -8,6 +8,15 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 - 무엇을 고치든 `python3 tools/motion_suite.py`(오프라인) / `--floor`(바닥 실물)로 회귀 확인
 - 현재: ④ 각도 회전(`tools/turn_to_angle.py`)·②' 거리 직진(`tools/drive_distance.py`) 합격, 4층 멈춤-확인-이동(`tools/step_navigator.py`) 합격 시험 loop(09-27)·장애물 코스(10-09) 통과. ③ 속도 회전은 차체 두 회전 상태 때문에 불합격 → 위층은 ④ 사용
 
+## 🚫 금지 구역 (2026-10-10) — 지도에 그리는 "가면 안 되는 곳" → `docs/motion_foundation.md` "금지 구역" 절
+
+- 소파·침대 밑처럼 라이다(높이 8.5 cm)엔 비어 보이지만 로봇이 걸리는 곳을 **지도 대시보드(8768)에서 상자로 그린다**. 파일 `~/maps/keepout_zones.json`, 형식·기하 `tools/keepout.py`
+- 두 겹: 전역 코스트맵 `KeepoutFilter`(planner가 돌아감) + 주행기가 구역 선을 가상의 벽으로 봄(`step_navigator._scan`). 서버 `tools/keepout_server.py`는 자율 스택 런치에 들어 있다
+- ⚠️ **구역은 지금 켜진 SLAM 지도의 좌표** — 스택을 다시 켜면 지난 구역은 보관함으로 치워진다(같은 자리·같은 방향에서 시작했을 때만 화면에서 다시 불러 씀)
+- ⚠️ 주행기는 구역 서버의 말을 못 들으면 움직이지 않는다("금지 구역 정보를 받지 못함"). 시뮬에서 주행기를 쓸 땐 `KEEPOUT_FILE=<시뮬용 파일> python3 tools/keepout_server.py --keep`를 같이 띄운다(`tools/sim_explore_run.sh`는 이미 그렇게 함). **KEEPOUT_FILE 없이 시뮬 도메인에서 서버를 띄우면 실물 구역 파일을 치운다**
+- 판정 도구: `tools/step_nav_map_sim.py --case sofa | --random 60 --keepout | --update-check`, 주행 중 감시 `tools/keepout_watch.py`(선 침범 횟수)
+- 실물 바닥 판정 시험은 아직(10-10 기준) — todo 11a
+
 ## ✅ 구동 기본값 `control_mode: velocity` (2026-09-26, 사용자 승인)
 
 - legacy는 명령과 무관하게 약 0.4 m/s, 회전 PI(370 시절 게인)가 발진해 회전 중 역회전. velocity는 역회전 0,
@@ -1730,7 +1739,7 @@ EXT4-fs (sda2): Remounting filesystem read-only
 | `smart-trash-power-monitor` | 8765 | Pi5 전원/PMIC |
 | `smart-trash-motor-dashboard` | 8766 | 모터 4채널 상태+수동조작(레버로 속도조절) |
 | `smart-trash-imu` + `smart-trash-lidar` + `smart-trash-sensor-dashboard` | 8767 | IMU/LiDAR 실시간 상태(sensor_dashboard.py가 앞 둘의 토픽을 구독해서 서빙) |
-| `smart-trash-map-dashboard` | 8768 | `/map`(SLAM Toolbox 발행) 실시간 시각화 — **SLAM Toolbox가 안 떠있으면 "맵핑 미실행"이 정상 상태**, `mapping.launch.py` 실행하면 자동으로 그리드가 채워짐. Pillow 등 이미지 라이브러리 없이 `<canvas>`에서 직접 렌더링(base64로 그리드 원시 바이트만 전송). |
+| `smart-trash-map-dashboard` | 8768 | **금지 구역 그리기·고치기(10-10, 위 "금지 구역" 절)** + `/map`(SLAM Toolbox 발행) 실시간 시각화(아는 범위만 잘라 크게, 로봇 위치 표시) — **SLAM Toolbox가 안 떠있으면 "맵핑 미실행"이 정상 상태**, `mapping.launch.py` 실행하면 자동으로 그리드가 채워짐. Pillow 등 이미지 라이브러리 없이 `<canvas>`에서 직접 렌더링(base64로 그리드 원시 바이트만 전송). |
 | `smart-trash-overview` | 8769 | **PC용 한 화면 관제(2026-10-10)** — 지도+로봇 위치, 근접 레이더(회전 반경·라이다 근접 한계·가림 방향), 명령/실제 속도, 바퀴·엔코더 오독, 배터리 추이, 자율 프로세스·서비스 상태, 최근 목표·경고, 비상정지(모터 대시보드 `/api/estop` 호출). `tools/overview_dashboard.py`. 다른 대시보드의 API와 ROS 토픽을 모아 보여 줄 뿐 로직은 없다 **10-10 저녁 재배치**: 맨 위 상태 문장 → 부위별 점검 6칸(전원·구동·라이다·위치 추정·자율주행·파이, 판정과 핵심 수치) → 지도/주변/주행/목표·경고·배터리. 고정 높이 배치를 없애 창이 작아도 겹치지 않는다(스크롤). **화면을 고치면 `tools/dash_screenshot.py --check`로 찍어서 본다**(파이에 브라우저가 없어 못 보고 고치다 겹침을 냄 — 헤드리스 브라우저는 `~/.venvs/shot`). |
 
 ⚠️ **`smart-trash-lidar`와 `mapping.launch.py`를 동시에 켜면 `/dev/ttyAMA0` 포트 충돌남** (둘 다 LD06 노드를 띄우려 함) — `mapping.launch.py`로 실제 맵핑 세션 돌릴 땐 먼저 `sudo systemctl stop smart-trash-lidar.service`로 내리고, 끝나면 `start`로 복구할 것. (`smart-trash-map-dashboard`는 `/map` 구독만 하는 별개 프로세스라 이 충돌과 무관, 계속 켜둬도 됨.)
