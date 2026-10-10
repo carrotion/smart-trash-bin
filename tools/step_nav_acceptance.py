@@ -136,6 +136,12 @@ def main():
         print(f'❌ 코스 공간에 물체 {len(bad)}점(로봇 기준 앞 x, 왼쪽 y): {bad[:6]} — 로봇 방향·주변을 확인하세요'); return 1
     # ⚠️ 09-27 20:35: 스택 기동 순간 로봇 뒤에 있던 것(사람 발 추정)이 SLAM 지도에 찍혀 안 지워짐 — 뒤 약 25°는 자기 케이블에
     #   가려 라이다가 못 봐서 지울 수 없다 → 출발 칸이 고비용, planner "빈 경로" 3회. 출발 전 로봇 주변 지도 확인
+    # ⚠️ 10-09: 라이다에 종이테이프가 붙은 채(왼쪽 26°가 스캔의 50~70%에서 막힘) 장애물 코스 합격 판정을 받았다 — 출발 전 검사
+    import lidar_blockage as lb
+    good, msg = lb.check(lb.collect_live('/scan_raw', 3.0))
+    print(('' if good else '❌ ') + msg, flush=True)
+    if not good:
+        return 1
     here = nav.map_pose(); ghost = slam_near_robot(n, here)
     if ghost:
         print(f'❌ SLAM 지도에 로봇 주변(0.25 m 안) 점유 칸 {len(ghost)}개(로봇 기준 앞 x, 왼쪽 y): {ghost[:6]} — '
