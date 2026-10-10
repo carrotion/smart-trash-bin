@@ -1,4 +1,4 @@
-image: ../../robot/src/stage_ros2/world/bitmaps/our_home.png
+image: ../../robot/sim_worlds/bitmaps/our_home.png
 mode: trinary
 resolution: 0.05
 origin: [-7.45, -4.925, 0.0]

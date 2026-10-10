@@ -11,6 +11,7 @@
 # 크기 14.9 x 9.85m.
 
 include "include/robots.inc"
+include "include/smart_trash.inc"
 
 resolution 0.02
 interval_sim 100
@@ -45,7 +46,9 @@ floorplan
   gui_move 0
 )
 
-pioneer2dx_with_laser
+# ⚠️ 2026-10-10: pioneer2dx_with_laser(0.44 × 0.38 m) → smart_trash_bot(0.22 × 0.21 m, 라이다 0.054·360°·12 m).
+#    같은 날 문 세 곳도 실제 폭으로(A·B 0.75, C 0.85 m — 08-23 트레이싱은 0.45 m였다). 그 전 결과와 직접 비교 불가
+smart_trash_bot
 (
   name "robot_0"
   # 거실 안, 0.5m 반경 완전 개방 지점(스크립트로 탐색·검증)
