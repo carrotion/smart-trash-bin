@@ -145,6 +145,19 @@ def main():
         builtins.print = quiet
         check('사방 막힘 → 돌지 않음', not r['ok'] and not P['turn_clear'], f'{r["msg"]}, 회전 {len(P["turn_clear"])}회')
         builtins.print = lambda *a, **k: None
+        # 8. 돌기 전 미리 보기(_room_dir): 지금 스캔으로 계산한 "돈 뒤 앞 여유"가 실제로 돈 뒤(회전 중심 어긋남 없이)의 여유와 같은지
+        from speed_floor_sweep import corridor_clearance as cc
+        worst = 0.0
+        for deg in (-120, -60, -25, 0, 25, 60, 120):
+            nav, P = make(rot_off=0.0, turn_scale=1.0, world=bottle(0.45, 0.10) + bottle(-0.2, 0.5) + bottle(0.3, -0.45))
+            pred = nav._room_dir(math.radians(deg)); P['th'] = math.radians(deg); real = cc(nav.S['scan'], True, 0.0, nav.side_margin)
+            if min(pred, real) < 2.0:      # 가까운 장애물이 있는 방향만(빈 방향은 가상 스캔의 5 m 고리라 의미 없음)
+                worst = max(worst, abs(pred - real))
+            elif (pred < 2.0) != (real < 2.0):
+                worst = 9.9
+        builtins.print = quiet
+        check('돌기 전 미리 본 여유 = 돈 뒤 여유', worst <= 0.03, f'최대 차이 {worst * 100:.1f} cm(7방향)')
+        builtins.print = lambda *a, **k: None
         # 4. 균등 분할
         nav, P = make(rot_off=0.0, drive_scale=1.0); r = nav.go((1.28, 0.0, None))
         builtins.print = quiet
