@@ -36,7 +36,19 @@ def load_world():
     return np.stack([OX + (ii + 0.5) * RES, OY + (jj + 0.5) * RES], 1)
 
 
+def others_running():
+    """이미 떠 있는 Nav2 프로세스(실물 시험 스택·다른 시뮬)."""
+    out = subprocess.run(['ps', '-eo', 'pid,args'], capture_output=True, text=True).stdout.splitlines()
+    return [ln.strip()[:90] for ln in out if any(f'/{n} ' in ln + ' ' for n in ('planner_server', 'map_server', 'controller_server', 'async_slam_toolbox_node'))]
+
+
 def start_planner(radius='0.35'):
+    # ⚠️ 10-10: 실물 시험 스택이 켜진 채 이 도구를 돌렸더니, 끝날 때 이름으로 정리하며 **실물 스택의 planner_server·
+    #   lifecycle_manager까지 죽였다**(로봇 정지 중이라 무사). → ① 다른 Nav2가 떠 있으면 시작하지 않는다 ② 자기가 띄운
+    #   프로세스 묶음(세션)만 죽인다
+    run = others_running()
+    if run:
+        raise SystemExit('❌ 이미 Nav2 프로세스가 떠 있다 — 실물 시험 스택/다른 시뮬을 먼저 내릴 것:\n   ' + '\n   '.join(run[:4]))
     d = os.path.join(HERE, 'inflation_probe'); p = f'/tmp/step_nav_map_sim_{radius}.yaml'
     s = open(os.path.join(d, 'params.template.yaml')).read().replace('RADIUS', radius).replace('yaml_filename: map.yaml', f'yaml_filename: {d}/map.yaml')
     open(p, 'w').write(s)
@@ -45,18 +57,20 @@ def start_planner(radius='0.35'):
                 ['ros2', 'run', 'nav2_map_server', 'map_server', '--ros-args', '--params-file', p],
                 ['ros2', 'run', 'nav2_planner', 'planner_server', '--ros-args', '--params-file', p],
                 ['ros2', 'run', 'nav2_lifecycle_manager', 'lifecycle_manager', '--ros-args', '-r', '__node:=lifecycle_manager_infl', '--params-file', p]):
-        procs.append(subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        procs.append(subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
     return procs
 
 
 def stop_planner(procs):
-    # ⚠️ ros2 run은 파이썬 실행기라 그 PID를 죽여도 노드가 남는다(09-27) → 이름으로 정리(서비스 소속은 killproc이 건너뜀)
-    subprocess.run([sys.executable, os.path.join(HERE, 'killproc.py'), '--kill9', 'map_server', 'planner_server', 'lifecycle_manager'],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("ps -eo pid,args | awk '/[s]tatic_transform_publisher --frame-id map --child-frame-id base_link/ {print $1}' | xargs -r kill",
-                   shell=True)
-    for p in procs:
-        p.terminate()
+    # ros2 run은 파이썬 실행기라 그 PID만 죽이면 노드가 남는다(09-27) → 세션(프로세스 묶음)째로. 이름으로 죽이지 않는다(위 ⚠️)
+    import signal
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        for p in procs:
+            try:
+                os.killpg(p.pid, sig)
+            except ProcessLookupError:
+                pass
+        time.sleep(1.0)
 
 
 def run_case(node, ac, world, start, goal, quiet=False):
