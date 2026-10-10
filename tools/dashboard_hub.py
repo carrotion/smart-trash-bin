@@ -134,6 +134,9 @@ __FAVICON__
 </head>
 <body>
 <h1>__LOGO__스마트 쓰레기통 — 시스템 대시보드</h1>
+<p style="margin:-4px 0 14px"><a id="ovLink" href="#" style="display:inline-block;padding:8px 14px;border:1px solid currentColor;border-radius:6px;color:inherit;text-decoration:none;font-weight:600">PC용 한 화면 관제 열기</a>
+<span style="opacity:.7;margin-left:8px">지도·라이다·주행·전원·서비스를 한 화면에</span></p>
+<script>document.getElementById('ovLink').href = location.protocol + '//' + location.hostname + ':8769/';</script>
 <div class="grid" id="grid"></div>
 <div class="chart-tip" id="chartTip"></div>
 <div class="updated" id="updated"></div>

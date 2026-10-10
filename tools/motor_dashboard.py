@@ -204,6 +204,7 @@ PERIPHERAL_STOP_SERVICES = [
     "smart-trash-sensor-dashboard.service",
     "smart-trash-map-dashboard.service",
     "smart-trash-dashboard-hub.service",
+    "smart-trash-overview.service",         # PC 관제 화면(10-10) — ROS 노드 하나를 더 돌리므로 저전압 땐 같이 내린다
 ]
 
 
