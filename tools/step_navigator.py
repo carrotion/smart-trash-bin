@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from turn_to_angle import TurnToAngle, yaw_of, wrap
 from drive_distance import DriveDistance
 from speed_floor_sweep import corridor_clearance
+import lidar_blockage
 
 
 class StepNavigator:
@@ -41,13 +42,15 @@ class StepNavigator:
     # 앞 여유가 걸음 + clear_margin에 모자라면 포기하지 않고 여유가 허락하는 만큼(room − clear_margin)으로 줄여 간다.
     #   그 길이가 min_step 미만이면 막힘. 클래스 기본값인 이유는 위 cancel과 같다(가상 시험은 __init__을 건너뜀)
     min_step = 0.10
+    #   원시 스캔(최근 몇 장, 자기 필터 전). None이면 바로 옆 미확인 물체 검사를 건너뜀(시뮬·가상 시험엔 /scan_raw가 없다)
+    _raw = None
     #   떨어진 뒤 그 자리에서 다시 계획할지. ⚠️ 10-10 지도 가상 시험: True면 문틈에서 "물러남 → 직진 → 물러남" 고리(40회) —
     #   경로가 꺾이는 자리가 회전 반경 안이라 생기는 문제라 재계획으로는 안 풀림. 판정 전까지 False
     replan_after_escape = False
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
-                 clear_margin=0.25, back_max=0.15, side_margin=0.05, rot_radius=0.22):
+                 clear_margin=0.25, back_max=0.15, side_margin=0.05, rot_radius=0.22, raw_scan_topic='/scan_raw'):
         self.n = node
         self.step_m, self.xy_tol, self.yaw_tol = step_m, xy_tol, math.radians(yaw_tol_deg)
         self.turn_tol, self.settle_s, self.blocked_max, self.clear_margin = math.radians(turn_tol_deg), settle_s, blocked_max, clear_margin
@@ -66,6 +69,13 @@ class StepNavigator:
             self._gyro_from_odom = False
             node.create_subscription(Imu, '/imu/data', lambda m: self.S.update(gz=m.angular_velocity.z), 100)
         node.create_subscription(LaserScan, '/scan', lambda m: self.S.update(scan=m), 5)
+        # ⚠️ 10-10 실측: 이 라이다는 약 13.5 cm보다 가까운 것을 0.08 m로 읽는다 → 옆에 바짝(바퀴 바깥면 약 3 cm 안) 붙은 물체는
+        #   차체 다각형 안으로 찍혀 자기 필터에 지워지고 /scan엔 안 보인다(서 있는 동안 놓인 병: 그대로 돌면 침). 원시 스캔에서
+        #   기준(자기 구조물 방향) 밖에 0.08 m 반사가 새로 생기면 붙은 물체나 라이다 가림(10-09 종이테이프)으로 보고 움직이지 않는다
+        import collections
+        self._raw = collections.deque(maxlen=5)
+        node.create_subscription(LaserScan, raw_scan_topic, lambda m: self._raw.append(m), 5)   # deque.append는 콜백으로 직접 못 씀(서명 없음)
+        self._near_base = lidar_blockage.load_baseline()
         self.pub = node.create_publisher(Twist, cmd_topic, 10)
         self.tfb = Buffer(); self.tfl = TransformListener(self.tfb, node)
         self.planner = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
@@ -177,6 +187,12 @@ class StepNavigator:
             if self.cancel:
                 return self._done(False, '취소', step, t0, goal)
             self.settle()
+            nu = self._near_unknown()
+            if nu:
+                blocked += 1; self._note(step, 'near_unknown', dict(sectors=nu[:12]), None)
+                if blocked >= self.blocked_max:
+                    return self._done(False, f'라이다 바로 옆 미확인 물체 또는 가림({len(nu) * lidar_blockage.BIN}°: {nu[0][0]}°~{nu[-1][0]}°, 0°=정면·90°=왼쪽)', step, t0, goal)
+                self.spin(1.0); continue
             here = self.map_pose()
             if here is None:
                 return self._done(False, 'map→base_link TF 없음', step, t0, goal)
@@ -290,6 +306,13 @@ class StepNavigator:
             else:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
+
+    def _near_unknown(self):
+        """원시 스캔 최근 몇 장에서 기준(자기 구조물) 밖 방향에 12 cm 안 반사가 새로 있는 2° 칸 목록 — 합이 6° 넘을 때만(아니면 빈 목록)."""
+        if not self._raw or len(self._raw) < 3:
+            return []
+        nb = lidar_blockage.new_blocked(lidar_blockage.near_fraction(list(self._raw)), self._near_base)
+        return nb if len(nb) * lidar_blockage.BIN > lidar_blockage.MAX_NEW_DEG else []
 
     def _room_dir(self, dyaw, lidar_x=0.054, half=0.11):
         """dyaw만큼 돈 뒤의 앞 통로 여유(m)를 지금 스캔으로 미리 계산 — 점들을 차체 중심에서 −dyaw 돌려 corridor_clearance와
