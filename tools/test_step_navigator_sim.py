@@ -213,6 +213,66 @@ def main():
         builtins.print = quiet
         check('취소 요청 → 움직이지 않고 끝', not r['ok'] and r['msg'] == '취소' and not [x for x in nav.log if x['kind'] == 'drive'],
               f'{r["msg"]}, 직진 {len([x for x in nav.log if x["kind"] == "drive"])}회')
+        builtins.print = lambda *a, **k: None
+        # 11. 금지 구역(10-10, tools/keepout.py) — 구역 선은 가상의 벽: 실제 장애물이 하나도 없는 빈 곳에서 선만으로 멈춰야 한다
+        import keepout
+        box = lambda x0, y0, x1, y1, name='': dict(id=1, name=name, poly=[[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+        #  11a. 정면을 가로막은 구역(가짜 planner는 직선) → 선을 넘지 않고, 차체 앞끝이 선 앞 0.25 m(앞 여유)에서 멈춤
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); nav.set_zones([box(0.8, -1.0, 1.4, 1.0, '소파')])
+        r = nav.go((2.0, 0.0, None)); front = P['x'] + 0.11
+        builtins.print = quiet
+        check('금지 구역이 정면 → 선 앞에서 멈춤', not r['ok'] and 0.2 <= P['x'] and front <= 0.8 - 0.24, f'차체 앞끝 {front:.2f} m(선 0.80 m), {r["msg"]}')
+        builtins.print = lambda *a, **k: None
+        #  11b. 목표가 구역 안 → 움직이지 않고 이유를 알림
+        nav, P = make(); nav.set_zones([box(0.8, -1.0, 1.4, 1.0, '소파')]); r = nav.go((1.0, 0.0, None))
+        builtins.print = quiet
+        check('목표가 금지 구역 안 → 출발 안 함', not r['ok'] and not nav.log and '금지 구역' in r['msg'], r['msg'])
+        builtins.print = lambda *a, **k: None
+        #  11c. 로봇이 구역 안(구역을 로봇 위에 그렸을 때) → 움직이지 않음
+        nav, P = make(); nav.set_zones([box(-0.5, -0.5, 0.5, 0.5)]); r = nav.go((2.0, 0.0, None))
+        builtins.print = quiet
+        check('로봇이 금지 구역 안 → 움직이지 않음', not r['ok'] and not nav.log and '안에 있음' in r['msg'], r['msg'])
+        builtins.print = lambda *a, **k: None
+        #  11d. 구역 모서리가 오른쪽 옆면 7 cm(회전 반경 안) + 90° 왼쪽 목표 → 병 때와 같이 떨어진 뒤 회전, 돌 때 구역까지 > 0.20 m
+        zs = [box(-0.02, -0.28, 0.08, -0.18)]
+        nav, P = make(); nav.set_zones(zs); gaps = []; t0_ = nav.turner.turn_by
+        nav.turner.turn_by = lambda d: (gaps.append(keepout.nearest(P['x'], P['y'], zs)[0]), t0_(d))[1]
+        r = nav.go((0.0, 1.0, None)); kinds = [x['kind'] for x in nav.log]
+        builtins.print = quiet
+        check('금지 구역 모서리가 옆 → 떨어진 뒤 회전', r['ok'] and 'rot_clear' in kinds and min(gaps) > 0.20,
+              f'돌 때 구역까지 {min(gaps) * 100:.1f} cm, {kinds[:4]}')
+        builtins.print = lambda *a, **k: None
+        #  11e. 구역이 없으면 스캔을 건드리지 않는다(같은 객체), 구역을 지우면 원래대로
+        nav, P = make(); same0 = nav._scan() is not None and not nav._zone_pts
+        nav.set_zones([box(0.8, -1.0, 1.4, 1.0)]); r1 = nav.go((2.0, 0.0, None)); nav.set_zones([]); r2 = nav.go((2.0, 0.0, None))
+        builtins.print = quiet
+        check('구역을 지우면 다시 지나감', same0 and not r1['ok'] and r2['ok'], f'구역 있을 때: {r1["msg"]} / 지운 뒤: {r2["msg"]}')
+        builtins.print = lambda *a, **k: None
+        #  11g. 구역 서버의 말을 못 들었으면(실물에서 서버가 안 떴거나 아직 안 도착) 움직이지 않는다 — "모르면 없는 셈"이 아니다.
+        #       가는 도중에 목표를 덮는 구역이 생기면 그 자리에서 멈춘다
+        nav, P = make(); nav._zones_seen = False; r = nav.go((1.0, 0.0, None))
+        nav2, P2 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); d0 = nav2.driver.drive_by
+        nav2.driver.drive_by = lambda d: (d0(d), nav2.set_zones([box(1.6, -1.0, 2.6, 1.0)]))[0]      # 첫 걸음 뒤 구역이 생김
+        r2 = nav2.go((2.0, 0.0, None))
+        builtins.print = quiet
+        check('구역 정보 없음 → 움직이지 않음 / 도중에 생긴 구역 → 멈춤', not r['ok'] and not nav.log and '받지 못함' in r['msg']
+              and not r2['ok'] and '금지 구역' in r2['msg'] and P2['x'] < 0.5, f'{r["msg"]} / {r2["msg"]}, 이동 {P2["x"] * 100:.0f} cm')
+        builtins.print = lambda *a, **k: None
+        #  11f. 경로 계획용 격자: 구역 안과 차체 반폭 안은 100(통행 불가), 팽창 반경까지는 1~99, 그 밖은 0
+        m, ox, oy = keepout.build_mask([box(1.0, 1.0, 2.0, 1.6)])
+        at = lambda x, y: int(m[int((y - oy) / 0.05), int((x - ox) / 0.05)])
+        vals = [at(1.5, 1.3), at(1.5, 0.93), at(1.5, 0.80), at(1.5, 0.55), at(2.07, 1.67), at(-5.0, 3.0)]
+        ok = vals[0] == 100 and vals[1] == 100 and 1 <= vals[2] <= 99 and vals[3] == 0 and vals[4] == 100 and vals[5] == 0
+        try:
+            keepout.clean_zones([dict(poly=[[0, 0], [0.05, 0], [0, 0.05]])]); small = False
+        except ValueError:
+            small = True
+        try:
+            keepout.clean_zones([dict(poly=[[0, 0], [50, 0], [0, 50]])]); far = False
+        except ValueError:
+            far = True
+        builtins.print = quiet
+        check('금지 구역 격자 값·입력 검사', ok and small and far, f'안 {vals[0]}, 선 밖 7 cm {vals[1]}, 20 cm {vals[2]}, 45 cm {vals[3]}, 모서리 밖 {vals[4]} | 너무 작은 구역 거부 {small}, 범위 밖 거부 {far}')
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')

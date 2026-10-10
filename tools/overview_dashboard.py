@@ -21,6 +21,7 @@ from rclpy.signals import SignalHandlerOptions
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
 import lidar_blockage
@@ -85,6 +86,17 @@ def ros_thread():
     n.create_subscription(LaserScan, '/scan_raw', on_raw, qos_profile_sensor_data)
     n.create_subscription(Odometry, '/odometry/filtered', on_odom, 10)
     n.create_subscription(Twist, '/cmd_vel', lambda m: R.update(cmd=(time.time(), m.linear.x, m.angular.z)), 10)
+    # 금지 구역: 구역 서버가 실제로 적용한 것(파일이 아니라) — 지도에 겹쳐 그리고 개수를 자율주행 칸에 보인다
+    from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
+    KZ = {'zones': [], 'version': None}
+
+    def on_zones(m):
+        try:
+            d = json.loads(m.data); KZ.update(zones=[z['poly'] for z in d.get('zones', [])], version=d.get('version'))
+        except (ValueError, KeyError, TypeError):
+            pass
+    n.create_subscription(String, '/keepout_zones', on_zones,
+                          QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
     n.create_subscription(Twist, '/cmd_vel_nav', lambda m: R.update(nav=(time.time(), m.linear.x, m.angular.z)), 10)
     tfb = Buffer(); TransformListener(tfb, n)
 
@@ -139,6 +151,8 @@ def ros_thread():
         except Exception:
             names = set()
         put('nav_nodes', {k: (k in names) for k in NAV_NODES})
+        server = 'keepout_server' in names
+        put('keepout', dict(server=server, zones=KZ['zones'] if server else [], version=KZ['version']))
     n.create_timer(0.2, tick_fast); n.create_timer(0.5, tick); n.create_timer(3.0, tick_slow)
     put('baseline', sorted(base))
     rclpy.spin(n)
@@ -330,7 +344,11 @@ def snapshot():
         act = '지도 작성 스택만 켜짐, 정지'; value = '지도 작성만'
     else:
         act = '대기 (자율 스택 꺼짐)'; value = '꺼짐'
-    part('자율주행', value, ['켜진 것: ' + ', '.join(on) if on else 'SLAM·경로 계획·충돌 감시·주행기 모두 꺼짐'], pr, off=not on)
+    kz = d.get('keepout') or {}
+    if on and not kz.get('server'):
+        pr.append(('warn', '금지 구역 서버가 꺼져 있음 — 주행기는 구역 정보를 받기 전에는 움직이지 않는다'))
+    part('자율주행', value, ['켜진 것: ' + ', '.join(on) if on else 'SLAM·경로 계획·충돌 감시·주행기 모두 꺼짐',
+                          f'금지 구역 {len(kz.get("zones") or [])}개 적용' if kz.get('server') else ''], pr, off=not on)
 
     # 파이
     pr = [('warn', f'서비스 꺼짐: {n}') for n in off_by.get('파이', [])]
@@ -505,13 +523,15 @@ function drawMap(){
     g.strokeStyle='rgba(30,95,166,.18)';g.lineWidth=1;
     for(let x=Math.ceil(MAP.origin_x);x<MAP.origin_x+mw;x++){g.beginPath();g.moveTo(X(x),oy);g.lineTo(X(x),oy+mh*sc);g.stroke()}
     for(let y=Math.ceil(MAP.origin_y);y<MAP.origin_y+mh;y++){g.beginPath();g.moveTo(ox,Y(y));g.lineTo(ox+mw*sc,Y(y));g.stroke()}
+    for(const poly of ((D.keepout||{}).zones||[])){g.beginPath();poly.forEach((q,i)=>i?g.lineTo(X(q[0]),Y(q[1])):g.moveTo(X(q[0]),Y(q[1])));g.closePath();
+      g.fillStyle='rgba(194,54,43,.22)';g.fill();g.strokeStyle=C.bad;g.lineWidth=2;g.stroke()}
     const [rx,ry,th]=P.map,c=Math.cos(th),s=Math.sin(th);
     g.fillStyle=C.line;for(const p of (L.pts||[])){g.fillRect(X(rx+c*p[0]-s*p[1])-1,Y(ry+s*p[0]+c*p[1])-1,2,2)}
     g.save();g.translate(X(rx),Y(ry));g.rotate(-th+Math.PI/2);const kr=Math.max(1,14/(0.21*sc));g.scale(kr,kr);robot(g,sc);g.restore();
     g.fillStyle=C.ok;g.beginPath();g.arc(X(0),Y(0),4,0,7);g.fill();
     $('mapTitle').textContent='지도와 로봇 위치';
     $('mapInfo').textContent=`지도 ${f(mw,1)} × ${f(mh,1)} m`;
-    $('mapCap').textContent='검은 칸은 벽, 회색은 아직 모르는 곳입니다. 파란 점은 지금 라이다가 보는 것, 초록 점은 출발점, 모눈 한 칸은 1 m입니다.';
+    if($('mapCap').dataset.k!=='map'){$('mapCap').dataset.k='map';$('mapCap').innerHTML='검은 칸은 벽, 회색은 아직 모르는 곳입니다. 파란 점은 지금 라이다가 보는 것, 초록 점은 출발점, 모눈 한 칸은 1 m입니다. 빨간 칸은 금지 구역입니다 — <a href="#" onclick="location.port=8768;return false">지도 대시보드에서 그리고 고칩니다</a>.';}
   }else{
     // 지도가 없으면(SLAM 꺼짐) 로봇 중심으로 주변 스캔만
     const R=6.5,sc=Math.min(W,H)/2/R;g.save();g.translate(W/2,H/2);
@@ -521,7 +541,7 @@ function drawMap(){
     g.save();const k=Math.max(1,12/(0.21*sc));g.scale(k,k);robot(g,sc);g.restore();g.restore();
     $('mapTitle').textContent='라이다가 보는 주변 (지도 없음)';
     $('mapInfo').textContent='화면 위쪽이 로봇 앞';
-    $('mapCap').textContent='SLAM이 꺼져 있어 지도 대신 지금 스캔만 그립니다. 시험 스택이나 자율 매핑을 켜면 이 자리에 지도와 로봇 위치가 나옵니다.';
+    $('mapCap').dataset.k='scan';$('mapCap').textContent='SLAM이 꺼져 있어 지도 대신 지금 스캔만 그립니다. 시험 스택이나 자율 매핑을 켜면 이 자리에 지도와 로봇 위치가 나옵니다.';
   }
   $('map').classList.toggle('stale',!L.ok);
 }

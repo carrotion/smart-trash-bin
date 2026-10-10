@@ -33,6 +33,16 @@ from turn_to_angle import TurnToAngle, yaw_of, wrap
 from drive_distance import DriveDistance
 from speed_floor_sweep import corridor_clearance
 import lidar_blockage
+import keepout
+
+
+class _VScan:
+    """스캔과 같은 모양(ranges·각도·범위)의 가벼운 사본 — 금지 구역 경계를 가상의 벽으로 더할 때 쓴다."""
+    __slots__ = ('ranges', 'angle_min', 'angle_increment', 'range_min', 'range_max')
+
+    def __init__(self, m):
+        self.ranges = list(m.ranges); self.angle_min, self.angle_increment = m.angle_min, m.angle_increment
+        self.range_min, self.range_max = m.range_min, m.range_max
 
 
 class StepNavigator:
@@ -52,6 +62,11 @@ class StepNavigator:
     #   떨어진 뒤 그 자리에서 다시 계획할지. ⚠️ 10-10 지도 가상 시험: True면 문틈에서 "물러남 → 직진 → 물러남" 고리(40회) —
     #   경로가 꺾이는 자리가 회전 반경 안이라 생기는 문제라 재계획으로는 안 풀림. 판정 전까지 False
     replan_after_escape = False
+    #   금지 구역(tools/keepout.py): 구역 목록과 경계 점(지도 좌표). 비어 있으면 아무 영향 없음. 클래스 기본값인 이유는 cancel과 같다
+    _zones = ()
+    _zone_pts = ()
+    #   구역 서버의 말을 한 번이라도 들었는가. 실물(__init__)에서는 False로 시작 — 못 들은 채로는 움직이지 않는다(아래 go)
+    _zones_seen = True
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -81,6 +96,12 @@ class StepNavigator:
         self._raw = collections.deque(maxlen=5)
         node.create_subscription(LaserScan, raw_scan_topic, lambda m: self._raw.append(m), 5)   # deque.append는 콜백으로 직접 못 씀(서명 없음)
         self._near_base = lidar_blockage.load_baseline()
+        # 금지 구역: keepout_server가 마지막 값을 늦게 붙은 구독자에게도 준다(같은 방식으로 구독)
+        from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
+        from std_msgs.msg import String
+        self._zones_seen = False
+        node.create_subscription(String, '/keepout_zones', self._on_zones,
+                                 QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
         self.pub = node.create_publisher(Twist, cmd_topic, 10)
         self.tfb = Buffer(); self.tfl = TransformListener(self.tfb, node)
         self.planner = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
@@ -93,6 +114,43 @@ class StepNavigator:
         self.S['pose'] = (p.position.x, p.position.y, yaw_of(p.orientation)); self.S['v'] = m.twist.twist.linear.x
         if self._gyro_from_odom:
             self.S['gz'] = m.twist.twist.angular.z
+
+    def _on_zones(self, m):
+        try:
+            self.set_zones(keepout.clean_zones(json.loads(m.data).get('zones', []))); self._zones_seen = True
+        except (ValueError, AttributeError) as e:
+            print(f'⚠️ 금지 구역 메시지 오류 — 이전 구역 유지: {e}', flush=True)
+
+    def set_zones(self, zones):
+        self._zones = tuple(zones); self._zone_pts = tuple(keepout.boundary_points(zones))
+
+    def _scan(self, lidar_x=0.054):
+        """지금 스캔 + 금지 구역 경계(가상의 벽). 구역 선을 실제 벽처럼 다루려고 스캔에 점으로 더한다 — 앞 여유·회전 반경·
+        떨어지기·가까운 출발점 찾기가 전부 스캔을 읽으므로 한 곳에서 더하면 모두 같은 규칙을 따른다. 구역이 없으면 스캔 그대로.
+        서 있을 때의 판단에만 쓴다(직진 중 매 주기 검사 _clear_now는 실제 스캔만 — 구역은 움직이지 않고 걸음 전에 여유를 확인했다)."""
+        m = self.S['scan']
+        if m is None or not self._zone_pts:
+            return m
+        here = self.map_pose()
+        if here is None:
+            return m
+        c, s = math.cos(here[2]), math.sin(here[2]); n = len(m.ranges); out = None; two_pi = 2 * math.pi
+        for wx, wy in self._zone_pts:
+            dx, dy = wx - here[0], wy - here[1]
+            if abs(dx) > 2.0 or abs(dy) > 2.0:
+                continue
+            x, y = c * dx + s * dy - lidar_x, -s * dx + c * dy
+            i = int(round(((math.atan2(y, x) - m.angle_min) % two_pi) / m.angle_increment))
+            if i >= n:
+                if i > n:
+                    continue      # 스캔이 한 바퀴를 다 덮지 않는 경우 그 밖 방향
+                i = 0
+            r = max(math.hypot(x, y), m.range_min + 1e-3)
+            if out is None:
+                out = _VScan(m)
+            if not (m.range_min <= out.ranges[i] <= m.range_max) or r < out.ranges[i]:
+                out.ranges[i] = r
+        return out or m
 
     def spin(self, t):
         e = time.time() + t
@@ -107,7 +165,7 @@ class StepNavigator:
 
     def _corridor_pts(self, room, lidar_x=0.054, half=0.11, corridor=0.10):
         """앞 통로(corridor_clearance와 같은 범위)에서 차체 앞끝으로부터 room + 5 cm 안의 점 (x, y, 거리) — 진단 기록용."""
-        m = self.S['scan']; out = []
+        m = self._scan(); out = []
         for i, r in enumerate(m.ranges):
             if not (m.range_min <= r <= m.range_max):
                 continue
@@ -187,11 +245,25 @@ class StepNavigator:
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
         t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0
         self.path_remaining = None; self.path_pose = None
+        # 금지 구역 정보를 아직 못 받았으면 잠깐 기다리고, 끝내 없으면 움직이지 않는다.
+        #   ⚠️ 10-10 Stage: 주행기 서버가 뜨자마자 온 첫 목표가 구역 안이었는데, 구역 목록이 아직 안 도착해 '구역 없음'으로 출발 판단
+        #   (planner가 경로를 안 내 줘 움직이진 않았다). 안전 기능은 "모르면 없는 셈"이 아니라 "모르면 멈춤"이어야 한다
+        tz = time.time()
+        while not self._zones_seen and time.time() - tz < 5.0:
+            self.spin(0.1)
+        if not self._zones_seen:
+            return self._done(False, '금지 구역 정보를 받지 못함 — 구역 서버(keepout_server)가 떠 있는지 확인', 0, t0, goal)
         for step in range(max_steps):
             if time.time() - t0 > timeout:
                 return self._done(False, '시간 초과', step, t0, goal)
             if self.cancel:
                 return self._done(False, '취소', step, t0, goal)
+            # 금지 구역: 목표가 구역 안(차체가 선을 넘어야 닿는 자리 포함)이면 더 가지 않고 끝낸다 — planner도 못 가는 자리라
+            #   경로 실패로 3번 기다리다 끝나는 것보다 이유를 바로 알린다(탐색기는 실패한 목표를 잠시 제외한다).
+            #   매 단계 본다: 가는 도중에 사람이 구역을 그릴 수 있다
+            gd, gz = keepout.nearest(goal[0], goal[1], self._zones)
+            if gd < keepout.INSCRIBED:
+                return self._done(False, f'목표가 금지 구역{self._zname(gz)} 안', step, t0, goal)
             self.settle()
             nu = self._near_unknown()
             if nu:
@@ -202,6 +274,10 @@ class StepNavigator:
             here = self.map_pose()
             if here is None:
                 return self._done(False, 'map→base_link TF 없음', step, t0, goal)
+            hd, hz = keepout.nearest(here[0], here[1], self._zones)
+            if hd == 0.0:
+                # 구역 안에서는 경계가 사방의 벽이라 스스로 못 나온다(나오게 두면 구역의 뜻이 없다) → 사람이 정리
+                return self._done(False, f'로봇이 금지 구역{self._zname(hz)} 안에 있음 — 구역을 고치거나 로봇을 옮길 것', step, t0, goal)
             dist = math.hypot(goal[0] - here[0], goal[1] - here[1])
             if dist <= arrive_tol:
                 if goal[2] is not None:
@@ -305,7 +381,7 @@ class StepNavigator:
                 if not r['ok']:
                     return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
                 self.settle()
-            room = corridor_clearance(self.S['scan'], True, 0.0, self.side_margin)
+            room = corridor_clearance(self._scan(), True, 0.0, self.side_margin)
             if room < seg + self.clear_margin and room - self.clear_margin - 0.01 >= self.min_step:
                 # ⚠️ 10-09 our_home 시뮬: 앞 여유 0.55 m인데 걸음 0.345 + 여유 0.25 = 0.595가 안 돼 같은 자리에서 막힘 31번 반복
                 #   (탐색기가 같은 목표를 계속 다시 보냄, 지도 300초 뒤 정지). 걸음을 줄이면 그 걸음은 안전하다(여유 0.25 유지)
@@ -334,9 +410,13 @@ class StepNavigator:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
 
+    @staticmethod
+    def _zname(z):
+        return f' "{z["name"]}"' if z and z.get('name') else ''
+
     def _free_dir(self, bearing, half_width=math.radians(15), lidar_x=0.054, half=0.115):
         """로봇 기준 방향 bearing(rad)으로 차체 중심에서 가장 가까운 스캔 점까지 거리(±15° 부채꼴, 차체 안 제외)."""
-        m = self.S['scan']; best = float('inf')
+        m = self._scan(); best = float('inf')
         for i, r in enumerate(m.ranges):
             if not (m.range_min <= r <= m.range_max):
                 continue
@@ -385,7 +465,7 @@ class StepNavigator:
     def _room_dir(self, dyaw, lidar_x=0.054, half=0.11):
         """dyaw만큼 돈 뒤의 앞 통로 여유(m)를 지금 스캔으로 미리 계산 — 점들을 차체 중심에서 −dyaw 돌려 corridor_clearance와
         같은 규칙(차체 폭 + 옆 side_margin, 차체 앞끝부터)으로 본다. 실제 판정은 돈 뒤에 한 번 더 한다(회전 중심 어긋남·새 스캔)."""
-        m = self.S['scan']; c, s = math.cos(-dyaw), math.sin(-dyaw); best = float('inf')
+        m = self._scan(); c, s = math.cos(-dyaw), math.sin(-dyaw); best = float('inf')
         for i, r in enumerate(m.ranges):
             if not (m.range_min <= r <= m.range_max):
                 continue
@@ -402,7 +482,7 @@ class StepNavigator:
 
     def _near_pts(self, r_max, lidar_x=0.054, half=0.115):
         """스캔 점 중 base_link에서 r_max 안(차체 사각형 제외) — 로봇 기준 (x, y)."""
-        m = self.S['scan']; out = []
+        m = self._scan(); out = []
         for i, r in enumerate(m.ranges):
             if not (m.range_min <= r <= m.range_max):
                 continue
@@ -446,7 +526,7 @@ class StepNavigator:
 
     def _straight(self, step, d, kind, margin=None):
         """돌지 않고 앞(+)/뒤(−)로 d m. 가는 쪽 여유가 |d| + margin(기본 clear_margin) 이상일 때만. 실행했으면 True."""
-        room = corridor_clearance(self.S['scan'], d > 0, 0.0 if d > 0 else 0.1, self.side_margin)
+        room = corridor_clearance(self._scan(), d > 0, 0.0 if d > 0 else 0.1, self.side_margin)
         if room < abs(d) + (self.clear_margin if margin is None else margin):
             self._note(step, kind + '_blocked', dict(d=round(d, 3), room=round(room, 2)), None)
             return False

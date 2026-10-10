@@ -8,6 +8,9 @@ test_step_navigator_sim(직선 경로·장난감 장애물)과 Stage 시뮬(10�
 
 사례(월드 좌표, our_home.world 로봇 시작 (−2.7, 3.43)이 SLAM 지도 원점):
   wallstart: 10-10 Stage의 '빈 경로' 연쇄 — 출발 칸이 벽에 닿는 거리로 표시된 자리에서 출발(가까운 빈 점에서 다시 계획하는 복구 확인)
+  sofa  : 10-10 금지 구역 — 거실 한가운데 2.0 × 0.8 m 구역(가상의 소파) 너머로 목표. 실제 planner의 KeepoutFilter가 돌아가는
+          경로를 내고, 주행기는 구역 선을 가상의 벽으로 본다. 차체가 선을 넘으면 충돌로 센다
+  sofa_in: 목표가 구역 안 — 출발하지 않고 이유를 알려야 한다
   door  : 10-09 Stage 2차의 (4.8, −1.2) 막힘 — 폭 0.40~0.45 m 문틈을 벽 0.2 m 아래 오른쪽 문설주 밑에서 비스듬히 진입
           (⚠️ 이 문은 실제 77 cm다 — 08-23 지도가 절반 폭으로 그려져 있었음. 좁은 틈 통과 시험으로 narrow 지도에 남김)
 
@@ -27,11 +30,32 @@ from nav2_msgs.action import ComputePathToPose
 from geometry_msgs.msg import PoseStamped
 from test_step_navigator_sim import make
 
+SOFA = ((-2.0, 2.2, 0.0, 3.0),)       # 금지 구역 상자 (x0, y0, x1, y1) — 거실 가운데
+ZONE_FILE = '/tmp/step_nav_map_sim_keepout.json'
+FILTER_YAML = """      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/keepout_filter_info"
+"""
+
+
+def zone_dicts(boxes):
+    return [dict(id=k + 1, name=f'구역{k + 1}', poly=[[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) for k, (x0, y0, x1, y1) in enumerate(boxes)]
+
+
+def write_zones(boxes):
+    import keepout
+    d = keepout.load(ZONE_FILE); keepout.save(dict(d, zones=zone_dicts(boxes)), ZONE_FILE)
+
+
 CASES = {'door': dict(start=(1.83, 0.79, 130.0), goal=(2.19, 2.27)),
          # 10-10 Stage: 문 안에서 문설주 0.15 m 옆에 섰더니 planner '빈 경로' → 이후 목표 35개 연속 실패. NavFn은 출발 칸이
          #   벽에 닿는 거리(중심 0.11 m 안에 벽 칸)면 경로를 못 만든다. 문설주 0.07 m(지도상)에서 출발해 그 상황을 만든다
          #   (실제 문 폭 지도에서 — 좁은 문 지도에선 출발 자세 자체가 반대쪽 문설주와도 너무 가까워 빠져나올 자리가 없다)
-         'wallstart': dict(map='real', start=(2.14, 1.06, 80.0), goal=(0.46, -1.71))}
+         'wallstart': dict(map='real', start=(2.14, 1.06, 80.0), goal=(0.46, -1.71)),
+         'sofa': dict(map='real', start=(-2.6, 1.6, 90.0), goal=(-1.0, 3.8), zones=SOFA),
+         'sofa_in': dict(map='real', start=(-2.6, 1.6, 90.0), goal=(-1.0, 2.6), zones=SOFA, expect_fail='금지 구역')}
 RES, OX, OY = 0.05, -7.45, -4.925
 HALF = 0.11
 
@@ -56,7 +80,7 @@ def others_running():
     return [ln.strip()[:90] for ln in out if any(f'/{n} ' in ln + ' ' for n in ('planner_server', 'map_server', 'controller_server', 'async_slam_toolbox_node'))]
 
 
-def start_planner(radius='0.35', map_name='real'):
+def start_planner(radius='0.35', map_name='real', zones=None):
     # ⚠️ 10-10: 실물 시험 스택이 켜진 채 이 도구를 돌렸더니, 끝날 때 이름으로 정리하며 **실물 스택의 planner_server·
     #   lifecycle_manager까지 죽였다**(로봇 정지 중이라 무사). → ① 다른 Nav2가 떠 있으면 시작하지 않는다 ② 자기가 띄운
     #   프로세스 묶음(세션)만 죽인다
@@ -67,8 +91,14 @@ def start_planner(radius='0.35', map_name='real'):
     my = f'/tmp/step_nav_map_sim_{map_name}.yaml'
     open(my, 'w').write(open(os.path.join(d, 'map.yaml')).read().replace('image: ../../robot/sim_worlds/bitmaps/our_home.png', f'image: {map_path(map_name)}'))
     s = open(os.path.join(d, 'params.template.yaml')).read().replace('RADIUS', radius).replace('yaml_filename: map.yaml', f'yaml_filename: {my}')
+    if zones is not None:        # 금지 구역: 전역 코스트맵에 KeepoutFilter + 구역 서버(실물 런치와 같은 구성)
+        s = s.replace('      always_send_full_costmap: true', FILTER_YAML + '      always_send_full_costmap: true'); assert 'keepout_filter' in s
+        write_zones(zones)
     open(p, 'w').write(s)
     env = dict(os.environ); procs = []
+    if zones is not None:
+        procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, 'keepout_server.py'), '--keep', '--file', ZONE_FILE], env=env,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
     for cmd in (['ros2', 'run', 'tf2_ros', 'static_transform_publisher', '--frame-id', 'map', '--child-frame-id', 'base_link'],
                 ['ros2', 'run', 'nav2_map_server', 'map_server', '--ros-args', '--params-file', p],
                 ['ros2', 'run', 'nav2_planner', 'planner_server', '--ros-args', '--params-file', p],
@@ -89,11 +119,15 @@ def stop_planner(procs):
         time.sleep(1.0)
 
 
-def run_case(node, ac, world, start, goal, quiet=False):
+def run_case(node, ac, world, start, goal, quiet=False, zones=None):
     near = world[np.hypot(world[:, 0] - start[0], world[:, 1] - start[1]) < 6.0]
     nav, P = make(world=[tuple(p) for p in near])
     P['x'], P['y'], P['th'] = start[0], start[1], math.radians(start[2])
-    hits = {'n': 0, 'min_gap': 9.9}; track = [(P['x'], P['y'])]
+    hits = {'n': 0, 'min_gap': 9.9, 'zone': 0, 'zone_gap': 9.9}; track = [(P['x'], P['y'])]
+    zpts = None
+    if zones:
+        import keepout
+        nav.set_zones(zone_dicts(zones)); zpts = np.array(keepout.boundary_points(zone_dicts(zones), 0.01))
 
     def body_check():
         c, s = math.cos(P['th']), math.sin(P['th'])
@@ -102,6 +136,10 @@ def run_case(node, ac, world, start, goal, quiet=False):
         gap = np.maximum(np.abs(bx), np.abs(by)) - HALF       # 차체 사각형까지(음수 = 안쪽)
         hits['min_gap'] = min(hits['min_gap'], float(gap.min()))
         hits['n'] += int((gap < -0.025).sum() > 0)            # 칸 반쪽(2.5 cm) 넘게 파고들면 충돌
+        if zpts is not None:                                  # 금지 구역 선(1 cm 간격 점)이 차체 사각형 안에 들어오면 선을 넘은 것
+            dx, dy = zpts[:, 0] - P['x'], zpts[:, 1] - P['y']
+            g = np.maximum(np.abs(c * dx + s * dy), np.abs(-s * dx + c * dy)) - HALF
+            hits['zone_gap'] = min(hits['zone_gap'], float(g.min())); hits['zone'] += int(g.min() < -0.005)
 
     def ps(x, y):
         m = PoseStamped(); m.header.frame_id = 'map'; m.pose.position.x, m.pose.position.y = float(x), float(y); m.pose.orientation.w = 1.0
@@ -142,7 +180,7 @@ def run_case(node, ac, world, start, goal, quiet=False):
     return r, nav, P, hits, track
 
 
-def random_cases(world, n, seed=11, clear=0.26, goal_clear=0.26):
+def random_cases(world, n, seed=11, clear=0.26, goal_clear=0.26, zones=None):
     """집 안(가장 큰 연결 영역)에서 장애물과 clear 이상 떨어진 칸끼리 무작위 n쌍(직선 1.5~6 m), 출발 방향도 무작위.
     goal_clear: 목표의 장애물 여유. ⚠️ 주행기는 앞 장애물 0.2 m 안으로 직진하지 않으므로(drive clear_fn) 벽에서 약 0.31 m 안의
     목표는 그 방향으론 5 cm 안에 못 닿는다(설계상) — 주행기 성능만 보려면 0.40을 준다."""
@@ -170,16 +208,54 @@ def random_cases(world, n, seed=11, clear=0.26, goal_clear=0.26):
             best = comp
     cand = [(j, i) for j, i in best if dist[j, i] >= clear]
     rnd = random.Random(seed); out = {}
+    import keepout
+    zd = zone_dicts(zones or ())
     while len(out) < n:
         (aj, ai), (bj, bi) = rnd.choice(cand), rnd.choice(cand)
         pa = (OX + (ai + .5) * RES, OY + (aj + .5) * RES); pb = (OX + (bi + .5) * RES, OY + (bj + .5) * RES)
+        if zd and (keepout.nearest(pa[0], pa[1], zd)[0] < clear or keepout.nearest(pb[0], pb[1], zd)[0] < goal_clear):
+            continue      # 출발·목표는 구역에서도 벽과 같은 여유만큼 떨어진 곳
         if 1.5 <= math.dist(pa, pb) <= 6.0 and dist[bj, bi] >= goal_clear:
             out[f'r{len(out):02d}'] = dict(start=(pa[0], pa[1], rnd.uniform(-180, 180)), goal=pb)
     return out
 
 
+def update_check():
+    """구역을 켜고 끌 때 planner가 따라오는지(실행 중 갱신): 구역 있음 → 돌아감, 지움 → 가로지름, 다시 그림 → 다시 돌아감.
+    KeepoutFilter는 격자의 0 칸을 '손대지 않음'으로 다뤄서, 지운 구역의 자국이 코스트맵에 남지 않는지를 따로 봐야 한다."""
+    import keepout
+    rclpy.init(); node = rclpy.create_node('keepout_update_check'); ac = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
+    procs = start_planner(zones=SOFA); out = []
+    try:
+        if not ac.wait_for_server(timeout_sec=25):
+            print('❌ planner_server 안 뜸'); return 1
+        A, B = (-2.6, 1.6), (-1.0, 3.8); zd = zone_dicts(SOFA)
+
+        def gap():
+            req = ComputePathToPose.Goal(); req.use_start = True
+            for ps, (x, y) in ((req.start, A), (req.goal, B)):
+                ps.header.frame_id = 'map'; ps.pose.position.x, ps.pose.position.y = x, y; ps.pose.orientation.w = 1.0
+            f = ac.send_goal_async(req); rclpy.spin_until_future_complete(node, f, timeout_sec=10)
+            r = f.result().get_result_async(); rclpy.spin_until_future_complete(node, r, timeout_sec=20)
+            path = [(q.pose.position.x, q.pose.position.y) for q in r.result().result.path.poses]
+            return (min(keepout.nearest(x, y, zd)[0] for x, y in path), len(path)) if path else (None, 0)
+        for label, boxes, want_detour in (('구역 있음', SOFA, True), ('구역 지움', (), False), ('다시 그림', SOFA, True)):
+            write_zones(boxes); t0 = time.time(); g = None
+            while time.time() - t0 < 12:          # 서버 1초 + 코스트맵 갱신 1초 주기 — 따라올 때까지 걸린 시간도 잰다
+                rclpy.spin_once(node, timeout_sec=0.5); g, n = gap()
+                if g is not None and ((g >= keepout.INSCRIBED - 0.03) == want_detour):
+                    break
+            ok = g is not None and ((g >= keepout.INSCRIBED - 0.03) == want_detour); out.append(ok)
+            print(f'{"✅" if ok else "❌"} {label}: 경로와 구역 사이 최소 {("%.2f m" % g) if g is not None else "경로 없음"} '
+                  f'({"돌아감" if g and g > 0 else "가로지름"}), 반영까지 {time.time() - t0:.1f}초', flush=True)
+    finally:
+        stop_planner(procs)
+    return 0 if all(out) and len(out) == 3 else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--update-check', action='store_true', help='금지 구역을 실행 중에 지우고 다시 그렸을 때 경로가 따라오는지')
     for k in ('x', 'y', 'yaw', 'gx', 'gy'):
         ap.add_argument('--' + k, type=float)
     ap.add_argument('--verbose', action='store_true')
@@ -187,9 +263,13 @@ def main():
     ap.add_argument('--seed', type=int, default=11)
     ap.add_argument('--goal-clear', type=float, default=0.26, help='목표의 장애물 여유(m)')
     ap.add_argument('--map', choices=list(MAPS), default=None, help='기본: 사례만 돌리면 narrow(좁은 문틈 시험), --random/직접 지정이면 real')
+    ap.add_argument('--keepout', nargs='*', default=None, metavar='x0,y0,x1,y1', help='금지 구역 상자(지도 좌표). 값 없이 주면 SOFA. --random/직접 지정에 적용')
+    ap.add_argument('--case', help='사례 하나만')
     ap.add_argument('--nav-file', help='비교용: 다른 step_navigator.py(예: git show HEAD:… 로 꺼낸 파일)')
     ap.add_argument('--set', nargs='*', default=[], help='StepNavigator 클래스 값 덮어쓰기 예: replan_after_escape=True')
     a = ap.parse_args()
+    if a.update_check:
+        return update_check()
     import test_step_navigator_sim as T
     if a.nav_file:
         import importlib.util
@@ -199,41 +279,50 @@ def main():
         k, v = kv.split('='); setattr(T.StepNavigator, k, eval(v))
     map_name = a.map or ('narrow' if (a.x is None and not a.random) else 'real')
     world = load_world(map_name)
-    cases = CASES if a.x is None else {'custom': dict(start=(a.x, a.y, a.yaw or 0.0), goal=(a.gx, a.gy))}
+    kz = None if a.keepout is None else (tuple(tuple(float(v) for v in b.split(',')) for b in a.keepout) or SOFA)
+    cases = CASES if a.x is None else {'custom': dict(start=(a.x, a.y, a.yaw or 0.0), goal=(a.gx, a.gy), zones=kz)}
+    if a.case:
+        cases = {a.case: CASES[a.case]}
     if a.random:
-        cases = dict(CASES if map_name == 'narrow' else {}, **random_cases(world, a.random, a.seed, goal_clear=a.goal_clear))
+        cases = dict(CASES if map_name == 'narrow' and kz is None else {},
+                     **{k: dict(c, zones=kz) for k, c in random_cases(world, a.random, a.seed, goal_clear=a.goal_clear, zones=kz).items()})
     ok_all = True; stat = []; procs = []
     groups = {}
     for name, c in cases.items():
-        groups.setdefault(c.get('map', map_name), {})[name] = c
+        groups.setdefault((c.get('map', map_name), c.get('zones')), {})[name] = c
     try:
         rclpy.init(); node = rclpy.create_node('step_nav_map_sim'); ac = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
-        for gmap, gcases in groups.items():
-            print(f'지도: {gmap} ({MAPS[gmap]})', flush=True)
+        for (gmap, gzones), gcases in groups.items():
+            print(f'지도: {gmap} ({MAPS[gmap]})' + (f', 금지 구역 {list(gzones)}' if gzones else ''), flush=True)
             gworld = world if gmap == map_name else load_world(gmap)
-            procs = start_planner(map_name=gmap)
+            procs = start_planner(map_name=gmap, zones=gzones)
             if not ac.wait_for_server(timeout_sec=25):
                 print('❌ planner_server 안 뜸'); return 1
-            time.sleep(3.0)
+            time.sleep(6.0 if gzones else 3.0)       # 구역 격자가 코스트맵에 칠해질 때까지(전역 코스트맵 1 Hz)
             for name, c in gcases.items():
-                r, nav, P, hits, track = run_case(node, ac, gworld, c['start'], c['goal'], quiet=not a.verbose)
+                r, nav, P, hits, track = run_case(node, ac, gworld, c['start'], c['goal'], quiet=not a.verbose, zones=gzones)
                 kinds = [e['kind'] for e in nav.log]
-                ok = r['ok'] and hits['n'] == 0; ok_all &= ok
-                stat.append(dict(name=name, ok=r['ok'], msg=r['msg'], hits=hits['n'], steps=r['steps'], blocked=kinds.count('blocked'),
+                ok = r['ok'] and hits['n'] == 0 and hits['zone'] == 0
+                if c.get('expect_fail'):      # 실패가 정답인 사례: 움직이지 않고 그 이유를 말해야 한다
+                    ok = (not r['ok']) and c['expect_fail'] in r['msg'] and len(track) == 1
+                ok_all &= ok
+                stat.append(dict(name=name, ok=r['ok'], msg=r['msg'], hits=hits['n'], zone=hits['zone'], zone_gap=hits['zone_gap'], steps=r['steps'], blocked=kinds.count('blocked'),
                                  turns=kinds.count('turn'), shifts=kinds.count('plan_shift'), min_gap=hits['min_gap'], start=c['start'], goal=c['goal']))
                 if a.random and not a.verbose:
                     if not ok:
-                        print(f'❌ {name}: {r["msg"]} | 충돌 {hits["n"]} | 출발 ({c["start"][0]:.2f},{c["start"][1]:.2f},{c["start"][2]:.0f}°) → 목표 ({c["goal"][0]:.2f},{c["goal"][1]:.2f})', flush=True)
+                        print(f'❌ {name}: {r["msg"]} | 충돌 {hits["n"]}, 구역 침범 {hits["zone"]} | 출발 ({c["start"][0]:.2f},{c["start"][1]:.2f},{c["start"][2]:.0f}°) → 목표 ({c["goal"][0]:.2f},{c["goal"][1]:.2f})', flush=True)
                     continue
                 print(f'{"✅" if ok else "❌"} {name}: {r["msg"]} | 남은 {r["final_err_m"] * 100:.1f} cm, 단계 {r["steps"]}, 회전 {kinds.count("turn")}, '
-                      f'막힘 {kinds.count("blocked")}, 출발점 옮겨 계획 {kinds.count("plan_shift")}, 충돌 {hits["n"]}, 차체-장애물 최소 {hits["min_gap"] * 100:.1f} cm')
+                      f'막힘 {kinds.count("blocked")}, 출발점 옮겨 계획 {kinds.count("plan_shift")}, 충돌 {hits["n"]}, 차체-장애물 최소 {hits["min_gap"] * 100:.1f} cm'
+                      + (f', 구역 선 침범 {hits["zone"]}, 차체-구역 선 최소 {hits["zone_gap"] * 100:.1f} cm' if gzones else ''))
                 print('   지나간 점:', ' → '.join(f'({x:.2f},{y:.2f})' for x, y in track))
             stop_planner(procs); procs = []; time.sleep(2.0)
         if a.random:
             n = len(stat); arr = sum(x['ok'] for x in stat); col = sum(x['hits'] > 0 for x in stat)
             print(f'=== {n}건: 도착 {arr} ({arr / n:.0%}), 충돌 있는 건 {col}, 단계 평균 {np.mean([x["steps"] for x in stat]):.1f}, '
                   f'막힘 합 {sum(x["blocked"] for x in stat)}, 회전 합 {sum(x["turns"] for x in stat)}, 출발점 옮겨 계획 {sum(x["shifts"] for x in stat)}, '
-                  f'차체-장애물 최소 {min(x["min_gap"] for x in stat) * 100:.1f} cm')
+                  f'차체-장애물 최소 {min(x["min_gap"] for x in stat) * 100:.1f} cm'
+                  + (f', 구역 선 침범 있는 건 {sum(x["zone"] > 0 for x in stat)}, 차체-구역 선 최소 {min(x["zone_gap"] for x in stat) * 100:.1f} cm' if kz else ''))
             import json
             json.dump(stat, open(f'/tmp/step_nav_map_sim_{int(time.time())}.json', 'w'), default=float)
     finally:

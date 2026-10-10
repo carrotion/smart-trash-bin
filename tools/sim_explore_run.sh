@@ -12,12 +12,17 @@ cd /home/carrotian/smart-trash-bin
 ARGS="world:=$WORLD explorer:=frontier"; [ -n "$FP" ] && ARGS="$ARGS frontier_params_file:=$FP"
 xvfb-run -a bash -c "timeout -s INT $((DUR + 45)) ros2 launch smart_trash_bringup sim_autonomous_mapping.launch.py $ARGS" > $OUT/launch.log 2>&1 &
 sleep 25
+# 금지 구역 서버: 시뮬 전용 파일(KEEPOUT_FILE, 기본 <출력>/keepout.json — 미리 구역을 써 두면 그대로 적용, --keep)
+export KEEPOUT_FILE=${KEEPOUT_FILE:-$OUT/keepout.json}
+python3 -u tools/keepout_server.py --keep --file "$KEEPOUT_FILE" > $OUT/keepout.log 2>&1 &
+KP_PID=$!
 if [ "$STEP" = 1 ]; then
   python3 -u tools/step_nav_action_server.py --odom-topic /odom --gyro-from-odom --label sim > $OUT/server.log 2>&1 &
   SP=$!
 fi
 timeout $((DUR + 10)) python3 tools/map_coverage_logger.py --out $OUT/coverage.csv --sim-time --interval 5 --duration $DUR > $OUT/coverage.log 2>&1
 [ -n "$SP" ] && kill -TERM $SP
+kill -TERM $KP_PID 2>/dev/null
 wait
 python3 tools/killproc.py --kill9 stage_ros2 async_slam_toolbox_node controller_server planner_server behavior_server bt_navigator lifecycle_manager collision_monitor frontier_explorer Xvfb > $OUT/cleanup.log 2>&1
 python3 -c "import sys; sys.path.insert(0,'tools'); import mapping_cleanup; mapping_cleanup.clean_orphan_shm()" >> $OUT/cleanup.log 2>&1

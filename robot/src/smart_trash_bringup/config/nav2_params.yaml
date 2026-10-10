@@ -226,6 +226,17 @@ global_costmap:
       #   슬립 순간의 점이었는데, 멈춤-확인-이동은 정지·안정 뒤에만 경로를 받고 정지 스캔이 매번 빈 곳을 지운다.
       #   판정: 시험 뒤 "코스트맵 장애물인데 SLAM 지도엔 없는 칸" 수를 센다.
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      # 금지 구역(2026-10-10, todo 11a): 소파·침대 밑처럼 라이다(높이 8.5 cm)엔 비어 보이지만 가면 안 되는 곳을 사람이 지도
+      #   대시보드에서 그린다. tools/keepout_server.py가 구역 격자를 내고 이 필터가 받아 planner가 돌아가게 한다.
+      #   격자는 구역 안 + 차체 반폭(0.11 m)을 통행 불가로, 그 밖 0.35 m까지는 아래 팽창 층과 같은 식의 비용으로 낸다
+      #   (필터는 팽창 층 뒤에 적용돼 스스로 부풀려지지 않는다). 주행기는 구역 선을 가상의 벽으로 한 번 더 본다.
+      #   ⚠️ 토픽은 절대경로(아래 map_topic과 같은 이유). 서버가 없으면 "Filter mask was not received" 경고만 나고 동작은 그대로.
+      #   판정: tools/step_nav_map_sim.py --case sofa / --random 60 --keepout / --update-check
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/keepout_filter_info"
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         # ⚠️ 반드시 앞에 "/"를 붙인 절대경로여야 함. 이 코스트맵은 /global_costmap
