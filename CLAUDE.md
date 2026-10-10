@@ -1731,6 +1731,7 @@ EXT4-fs (sda2): Remounting filesystem read-only
 | `smart-trash-motor-dashboard` | 8766 | 모터 4채널 상태+수동조작(레버로 속도조절) |
 | `smart-trash-imu` + `smart-trash-lidar` + `smart-trash-sensor-dashboard` | 8767 | IMU/LiDAR 실시간 상태(sensor_dashboard.py가 앞 둘의 토픽을 구독해서 서빙) |
 | `smart-trash-map-dashboard` | 8768 | `/map`(SLAM Toolbox 발행) 실시간 시각화 — **SLAM Toolbox가 안 떠있으면 "맵핑 미실행"이 정상 상태**, `mapping.launch.py` 실행하면 자동으로 그리드가 채워짐. Pillow 등 이미지 라이브러리 없이 `<canvas>`에서 직접 렌더링(base64로 그리드 원시 바이트만 전송). |
+| `smart-trash-overview` | 8769 | **PC용 한 화면 관제(2026-10-10)** — 지도+로봇 위치, 근접 레이더(회전 반경·라이다 근접 한계·가림 방향), 명령/실제 속도, 바퀴·엔코더 오독, 배터리 추이, 자율 프로세스·서비스 상태, 최근 목표·경고, 비상정지(모터 대시보드 `/api/estop` 호출). `tools/overview_dashboard.py`. 다른 대시보드의 API와 ROS 토픽을 모아 보여 줄 뿐 로직은 없다 |
 
 ⚠️ **`smart-trash-lidar`와 `mapping.launch.py`를 동시에 켜면 `/dev/ttyAMA0` 포트 충돌남** (둘 다 LD06 노드를 띄우려 함) — `mapping.launch.py`로 실제 맵핑 세션 돌릴 땐 먼저 `sudo systemctl stop smart-trash-lidar.service`로 내리고, 끝나면 `start`로 복구할 것. (`smart-trash-map-dashboard`는 `/map` 구독만 하는 별개 프로세스라 이 충돌과 무관, 계속 켜둬도 됨.)
 

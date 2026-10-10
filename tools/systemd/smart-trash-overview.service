@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart Trash Bin - PC overview (one-screen status)
+After=network.target smart-trash-motor-dashboard.service smart-trash-sensor-dashboard.service smart-trash-power-monitor.service
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec python3 tools/overview_dashboard.py --port 8769'
+Restart=on-failure
+RestartSec=3
+# 관제 화면은 보조 — 주행·SLAM보다 뒤로
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
