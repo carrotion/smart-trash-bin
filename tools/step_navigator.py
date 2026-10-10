@@ -44,6 +44,9 @@ class StepNavigator:
     min_step = 0.10
     #   원시 스캔(최근 몇 장, 자기 필터 전). None이면 바로 옆 미확인 물체 검사를 건너뜀(시뮬·가상 시험엔 /scan_raw가 없다)
     _raw = None
+    #   가장 최근 경로의 남은 길이(m)와 그때 위치 — 액션 서버가 feedback(distance_remaining)을 만들 때 읽는다
+    path_remaining = None
+    path_pose = None
     #   떨어진 뒤 그 자리에서 다시 계획할지. ⚠️ 10-10 지도 가상 시험: True면 문틈에서 "물러남 → 직진 → 물러남" 고리(40회) —
     #   경로가 꺾이는 자리가 회전 반경 안이라 생기는 문제라 재계획으로는 안 풀림. 판정 전까지 False
     replan_after_escape = False
@@ -181,6 +184,7 @@ class StepNavigator:
     def go(self, goal, max_steps=40, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
         t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol
+        self.path_remaining = None; self.path_pose = None
         for step in range(max_steps):
             if time.time() - t0 > timeout:
                 return self._done(False, '시간 초과', step, t0, goal)
@@ -220,6 +224,9 @@ class StepNavigator:
                 if blocked >= self.blocked_max:
                     return self._done(False, f'경로 실패 {blocked}회: {why}', step, t0, goal)
                 self.spin(1.0); continue
+            i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
+            self.path_remaining = sum(math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) for i in range(i0, len(path) - 1))
+            self.path_pose = (here[0], here[1])
             c = self.carrot(path, here)
             seg = min(self.step_m + 0.01, math.hypot(c[0] - here[0], c[1] - here[1]))   # 균등 분할 걸음은 step_m 이하(반올림 여유 1 cm)
             head = math.atan2(c[1] - here[1], c[0] - here[0])

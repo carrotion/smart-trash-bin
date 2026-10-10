@@ -17,7 +17,7 @@ KP=/home/carrotian/smart-trash-bin/tools/killproc.py
 case "$1" in
   start)
     sudo -n systemctl stop smart-trash-lidar || exit 1
-    nohup ros2 launch smart_trash_bringup autonomous_mapping.launch.py enable_explore:=false > "$LOG" 2>&1 &
+    nohup ros2 launch smart_trash_bringup autonomous_mapping.launch.py enable_explore:=false navigator:=nav2 > "$LOG" 2>&1 &
     for i in $(seq 1 30); do
       sleep 1
       ros2 topic list 2>/dev/null | grep -q '^/local_costmap/costmap_raw$' && break

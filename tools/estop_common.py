@@ -25,12 +25,40 @@ AUTONOMOUS_EXECUTABLES = {
     "bt_navigator",
     "behavior_server",     # 복구 동작(회전/후진)도 cmd_vel을 냄
     "explore",             # explore_lite의 실행파일 이름
+    # ⚠️ 2026-10-10 추가 — 아래 셋이 빠져 있었다. 4층 주행기(멈춤-확인-이동)는 controller_server를 안 쓰고
+    #   자기가 /cmd_vel_nav에 명령을 내므로, 예전 목록으로 비상정지를 누르면 planner만 죽고 주행기는 하던 걸음
+    #   (최대 0.4 m 직진·회전)을 끝까지 했다. 09-27부터 기본 탐색기인 frontier_explorer도 빠져 있었다.
+    "collision_monitor",   # 자율 명령이 전부 지나는 길목(cmd_vel_nav → /cmd_vel) — 죽이면 0.5초 안에 구동 노드가 선다
+    "frontier_explorer",   # frontier_exploration_ros2
 }
+# 저장소 tools/ 밑의 파이썬 스크립트(주행기 서버·합격 시험·보정 도구 30여 개가 속도 명령을 낸다)는 이름을 일일이 적지 않고
+# 경로로 잡는다 — 새 도구를 만들 때마다 목록 갱신을 잊는 일을 없앤다. systemd 서비스로 도는 것(대시보드·기록기)은 제외.
+TOOLS_DIR = os.path.dirname(os.path.realpath(__file__))
 # 런치 프로세스는 argv[0]이 python이라 실행파일명으로는 못 잡는다 — 인자로 판별.
 AUTONOMOUS_LAUNCH_FILE = "autonomous_mapping.launch.py"
 
 
-def kill_autonomous_processes():
+def _is_repo_tool(pid, args):
+    """python으로 도는 저장소 tools/*.py인가(서비스 소속 제외)."""
+    if not os.path.basename(args[0]).startswith('python'):
+        return False
+    script = next((a for a in args[1:] if not a.startswith('-')), None)
+    if not script or not script.endswith('.py'):
+        return False
+    try:
+        cwd = os.readlink(f'/proc/{pid}/cwd')
+        path = os.path.realpath(script if os.path.isabs(script) else os.path.join(cwd, script))
+        if os.path.dirname(path) != TOOLS_DIR:
+            return False
+        with open(f'/proc/{pid}/cgroup') as f:
+            if '.service' in f.read():      # 대시보드·블랙박스 등 서비스로 도는 도구는 건드리지 않는다
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def kill_autonomous_processes(dry_run=False):
     """자율주행 프로세스를 /proc 직접 스캔 + os.kill로 죽인다. 목록을 반환.
 
     ⚠️ 예전엔 `subprocess.run(["pkill", "-f", p], capture_output=True)`를 썼는데,
@@ -73,7 +101,12 @@ def kill_autonomous_processes():
             match = exe
         elif any(a.endswith(AUTONOMOUS_LAUNCH_FILE) for a in args):
             match = AUTONOMOUS_LAUNCH_FILE
+        elif _is_repo_tool(pid, args):
+            match = 'tools/' + exe
         else:
+            continue
+        if dry_run:
+            killed.append(f'{match}({pid})')
             continue
 
         try:

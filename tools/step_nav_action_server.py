@@ -27,6 +27,15 @@ from step_navigator import StepNavigator
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def remaining_estimate(goal, live, path_remaining, path_pose):
+    """feedback용 남은 거리(m). 경로 길이 기준: 마지막 계획 때의 남은 경로 길이에서 그 뒤 움직인 만큼 뺀다(직선거리보다 작아지진 않게).
+    직선거리만 쓰면 벽을 돌아가는 동안 거리가 늘어 탐색기의 "진행 없음" 감시가 정상 목표를 끊는다. 경로를 아직 안 받았으면 직선거리."""
+    line = math.hypot(goal[0] - live[0], goal[1] - live[1])
+    if path_remaining is None or path_pose is None:
+        return line
+    return max(line, path_remaining - math.hypot(live[0] - path_pose[0], live[1] - path_pose[1]))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--action', default='step_navigate_to_pose')
@@ -55,14 +64,40 @@ def main():
         busy.set()
         return GoalResponse.ACCEPT
 
+    def live_pose():
+        # 액션 스레드에서 부른다 — 기다리지 않는 조회만(주 스레드가 TF를 채운다)
+        try:
+            t = nav.tfb.lookup_transform('map', 'base_link', rclpy.time.Time()).transform
+        except Exception:
+            return None
+        return (t.translation.x, t.translation.y, t.rotation)
+
     def execute(gh):
         done = threading.Event(); box = {}
-        jobs.put((gh.request.pose.pose.position.x, gh.request.pose.pose.position.y, done, box))
+        goal = (gh.request.pose.pose.position.x, gh.request.pose.pose.position.y)
+        nav.path_remaining = None; nav.path_pose = None      # 앞 목표의 경로 값이 이번 feedback에 섞이지 않게
+        jobs.put((goal[0], goal[1], done, box)); t_start = time.time(); t_fb = 0.0
         while not done.wait(0.1):
             if stopping.is_set():
                 return NavigateToPose.Result()
             if gh.is_cancel_requested:
                 nav.cancel = True
+            # ⚠️ 10-09: feedback이 없어 탐색기의 "진행 없음" 감시(기본 20초)를 600초로 늘려 꺼 두다시피 했다 → 0.5초마다 남은 거리를 보낸다
+            #   ⚠️ 10-10 시뮬: 경로를 받기 전 직선거리(1.45 m)를 먼저 보냈더니, 벽을 돌아가는 실제 경로(약 5 m)가 그보다 커서
+            #   탐색기가 "가장 작은 남은 거리가 안 준다"며 35초에 정상 목표를 취소 → 첫 경로가 나온 뒤부터만 보낸다
+            if time.time() - t_fb >= 0.5 and nav.path_remaining is not None:
+                t_fb = time.time(); lp = live_pose()
+                if lp is not None:
+                    fb = NavigateToPose.Feedback()
+                    fb.current_pose.header.frame_id = 'map'; fb.current_pose.header.stamp = srv_node.get_clock().now().to_msg()
+                    fb.current_pose.pose.position.x, fb.current_pose.pose.position.y = lp[0], lp[1]; fb.current_pose.pose.orientation = lp[2]
+                    fb.distance_remaining = float(remaining_estimate(goal, lp, nav.path_remaining, nav.path_pose))
+                    el = time.time() - t_start
+                    fb.navigation_time.sec = int(el); fb.navigation_time.nanosec = int((el % 1) * 1e9)
+                    try:
+                        gh.publish_feedback(fb)
+                    except Exception:
+                        pass
         r = box.get('r', dict(ok=False, msg='결과 없음'))
         res = NavigateToPose.Result()
         if gh.is_cancel_requested:
