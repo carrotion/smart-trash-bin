@@ -1,0 +1,24 @@
+#!/bin/bash
+# 5층 탐색 시뮬 한 번 돌리기(Stage, 도메인 42, 로봇 없이): 탐색기(frontier) + 4층 주행기 액션 서버 + 지도 넓이 기록.
+#   tools/sim_explore_run.sh <출력 폴더> <탐색 시간 초> <world> [frontier 파라미터 yaml, 기본 tools/sim_frontier_step.yaml] [주행기 서버 0/1, 기본 1]
+#   예: tools/sim_explore_run.sh /tmp/sim_a 600 our_home
+# 결과: <출력>/coverage.csv(5초마다 지도 넓이), server.log, docs/calibration/step_nav_server_*_sim.jsonl(목표별 기록)
+# ⚠️ 10-09엔 이 스크립트가 세션 임시 폴더에만 있다가 재부팅으로 사라졌다 → 저장소에 둠(10-10)
+OUT=$1; DUR=$2; WORLD=$3; FP=${4:-/home/carrotian/smart-trash-bin/tools/sim_frontier_step.yaml}; STEP=${5:-1}
+mkdir -p "$OUT"
+source /opt/ros/jazzy/setup.bash; source /home/carrotian/catkin_ws/install/setup.bash
+export ROS_DOMAIN_ID=42
+cd /home/carrotian/smart-trash-bin
+ARGS="world:=$WORLD explorer:=frontier"; [ -n "$FP" ] && ARGS="$ARGS frontier_params_file:=$FP"
+xvfb-run -a bash -c "timeout -s INT $((DUR + 45)) ros2 launch smart_trash_bringup sim_autonomous_mapping.launch.py $ARGS" > $OUT/launch.log 2>&1 &
+sleep 25
+if [ "$STEP" = 1 ]; then
+  python3 -u tools/step_nav_action_server.py --odom-topic /odom --gyro-from-odom --label sim > $OUT/server.log 2>&1 &
+  SP=$!
+fi
+timeout $((DUR + 10)) python3 tools/map_coverage_logger.py --out $OUT/coverage.csv --sim-time --interval 5 --duration $DUR > $OUT/coverage.log 2>&1
+[ -n "$SP" ] && kill -TERM $SP
+wait
+python3 tools/killproc.py --kill9 stage_ros2 async_slam_toolbox_node controller_server planner_server behavior_server bt_navigator lifecycle_manager collision_monitor frontier_explorer Xvfb > $OUT/cleanup.log 2>&1
+python3 -c "import sys; sys.path.insert(0,'tools'); import mapping_cleanup; mapping_cleanup.clean_orphan_shm()" >> $OUT/cleanup.log 2>&1
+echo done > $OUT/DONE

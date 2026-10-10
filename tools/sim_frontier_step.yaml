@@ -1,0 +1,9 @@
+# 탐색 시뮬(Stage)에서 탐색기를 4층 주행기 액션에 연결 + 실패 기억 — tools/sim_explore_run.sh가 쓴다 (2026-10-09 시뮬 2차와 같은 값)
+frontier_explorer:
+  ros__parameters:
+    use_sim_time: true
+    navigate_to_pose_action_name: step_navigate_to_pose
+    frontier_suppression_enabled: true
+    frontier_suppression_attempt_threshold: 3
+    # 주행기 액션 서버는 feedback(distance_remaining)을 안 보낸다 → 기본 20초 무진전 취소가 정상 목표(최대 100초대)를 끊지 않게 크게
+    frontier_suppression_no_progress_timeout_s: 600.0
