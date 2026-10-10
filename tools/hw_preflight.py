@@ -214,6 +214,15 @@ def check_ros():
     rclpy.shutdown()
 
 
+def check_lidar_blockage():
+    print('[라이다 가림]')
+    import lidar_blockage as lb
+    topics = subprocess.run(['ros2', 'topic', 'list'], capture_output=True, text=True).stdout.split()
+    scans = lb.collect_live('/scan_raw' if '/scan_raw' in topics else '/scan', 4.0)
+    good, msg = lb.check(scans)
+    (ok if good else bad)(msg, '' if good else '10-09: 종이테이프 2곳이 붙은 채 합격 시험을 함 — tools/lidar_blockage.py')
+
+
 def main():
     print('하드웨어 점검 (로봇을 움직이지 않음)')
     check_usb()
@@ -223,6 +232,10 @@ def main():
         check_ros()
     except Exception as e:
         bad(f'ROS 점검 중 예외: {e}')
+    try:
+        check_lidar_blockage()
+    except Exception as e:
+        bad(f'라이다 가림 점검 중 예외: {e}')
     print(f'\n=== 결과: ❌ {len(fails)}개, ⚠️ {len(warns)}개 ===')
     if fails:
         print('❌가 있으면 시험/주행으로 넘어가지 말 것.')
