@@ -60,6 +60,11 @@ def generate_launch_description():
             bringup_share, 'config', 'mapper_params_online_async.yaml'),
         description='SLAM Toolbox 파라미터 yaml 경로')
 
+    # 저장된 지도에서 위치 잡기(10-11): slam_launch:=localization_launch.py + slam_params_file:=<tools/localize_params.py가 만든 파일>
+    #   — slam_toolbox에 원래 있는 위치 잡기 런치를 그대로 쓴다. 기본은 지금까지와 같은 새 지도 그리기
+    declare_slam_launch_cmd = DeclareLaunchArgument(
+        'slam_launch', default_value='online_async_launch.py',
+        description='slam_toolbox의 런치 파일 이름: online_async_launch.py(새 지도) | localization_launch.py(저장 지도에서 위치 잡기)')
     declare_placeholder_odom_cmd = DeclareLaunchArgument(
         'publish_placeholder_odom',
         default_value='false',
@@ -160,7 +165,7 @@ def generate_launch_description():
     # 실물 로봇에서는 명시적으로 false로 덮어써야 함 (안 그러면 /clock을 기다리며 멈춤).
     slam_toolbox_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(slam_toolbox_share, 'launch', 'online_async_launch.py')),
+            [slam_toolbox_share, '/launch/', LaunchConfiguration('slam_launch')]),
         launch_arguments={
             'slam_params_file': slam_params_file,
             'use_sim_time': 'false',
@@ -177,6 +182,7 @@ def generate_launch_description():
 
     ld = LaunchDescription()
     ld.add_action(declare_slam_params_file_cmd)
+    ld.add_action(declare_slam_launch_cmd)
     ld.add_action(declare_placeholder_odom_cmd)
     ld.add_action(declare_lidar_port_cmd)
     ld.add_action(ldlidar_node)

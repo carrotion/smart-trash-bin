@@ -50,6 +50,8 @@ def generate_launch_description():
     declare_explore_params_cmd = DeclareLaunchArgument(
         'explore_params_file',
         default_value=os.path.join(bringup_share, 'config', 'explore_params.yaml'))
+    declare_slam_launch_cmd = DeclareLaunchArgument(      # 실물 mapping.launch.py와 같은 인자(저장 지도에서 위치 잡기 시험용)
+        'slam_launch', default_value='online_async_launch.py')
     declare_slam_params_cmd = DeclareLaunchArgument(
         'slam_params_file',
         default_value=os.path.join(bringup_share, 'config', 'mapper_params_online_async.yaml'))
@@ -151,7 +153,7 @@ def generate_launch_description():
 
     slam_toolbox_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(slam_toolbox_share, 'launch', 'online_async_launch.py')),
+            [slam_toolbox_share, '/launch/', LaunchConfiguration('slam_launch')]),
         launch_arguments={
             'slam_params_file': slam_params_file,
             'use_sim_time': 'true',
@@ -280,6 +282,7 @@ def generate_launch_description():
     ld.add_action(declare_nav2_params_cmd)
     ld.add_action(declare_explore_params_cmd)
     ld.add_action(declare_slam_params_cmd)
+    ld.add_action(declare_slam_launch_cmd)
     ld.add_action(declare_enable_explore_cmd)
     ld.add_action(declare_world_cmd)
     ld.add_action(declare_explorer_cmd)

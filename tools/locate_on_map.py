@@ -82,16 +82,49 @@ def locate(base, pts, around=(0.0, 0.0), radius=1.5):
     return fine
 
 
+def scan_from_ros(topic='/scan', lidar_x=0.054, timeout=10.0):
+    """/scan 한 장을 로봇 기준 점 목록으로(차체 안은 뺌)."""
+    import rclpy, time
+    from rclpy.qos import qos_profile_sensor_data
+    from sensor_msgs.msg import LaserScan
+    rclpy.init(); n = rclpy.create_node('locate_on_map'); got = []
+    n.create_subscription(LaserScan, topic, got.append, qos_profile_sensor_data)
+    t0 = time.time()
+    while not got and time.time() - t0 < timeout:
+        rclpy.spin_once(n, timeout_sec=0.2)
+    rclpy.shutdown()
+    if not got:
+        return None
+    m = got[-1]; out = []
+    for i, r in enumerate(m.ranges):
+        if m.range_min <= r <= m.range_max:
+            a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+            if not (abs(x) <= 0.115 and abs(y) <= 0.115):
+                out.append((x, y))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--map', required=True, help='저장된 지도 이름(확장자 없이)')
     ap.add_argument('--around', default='0,0'); ap.add_argument('--radius', type=float, default=1.5)
     ap.add_argument('--json', action='store_true')
+    ap.add_argument('--whole', action='store_true', help='지도에서 아는 범위 전체에서 찾는다(--around/--radius 무시)')
+    ap.add_argument('--ros', action='store_true', help='관제 대시보드 대신 지금 ROS 도메인의 /scan을 직접 읽는다(시뮬, 대시보드가 없을 때)')
     a = ap.parse_args()
-    d = json.load(urllib.request.urlopen('http://localhost:8769/api/overview', timeout=5))
-    if not d['lidar'].get('ok'):
+    if a.ros:
+        pts = scan_from_ros()
+    else:
+        d = json.load(urllib.request.urlopen('http://localhost:8769/api/overview', timeout=5))
+        pts = d['lidar']['pts'] if d['lidar'].get('ok') else None
+    if not pts:
         print('❌ 스캔이 안 들어온다'); return 2
-    r = locate(os.path.expanduser(a.map), d['lidar']['pts'], tuple(float(v) for v in a.around.split(',')), a.radius)
+    around, radius = tuple(float(v) for v in a.around.split(',')), a.radius
+    if a.whole:
+        img, res, ox, oy = load_map(os.path.expanduser(a.map)); jj, ii = np.nonzero(img != 205)
+        around = (ox + (ii.min() + ii.max()) / 2 * res, oy + (jj.min() + jj.max()) / 2 * res)
+        radius = max(ii.max() - ii.min(), jj.max() - jj.min()) / 2 * res + 0.3
+    r = locate(os.path.expanduser(a.map), pts, around, radius)
     if a.json:
         print(json.dumps(r)); return 0
     b = r[0]
