@@ -30,7 +30,7 @@ r = json.load(sys.stdin); b = r[0]
 if b['on_wall'] < 0.85 or (len(r) > 1 and r[1]['score'] > 0.85 * b['score']):
     sys.stderr.write('자리를 확신하지 못함: 벽 위 %.0f%%, 1등 %.2f / 2등 %.2f\\n' % (b['on_wall'] * 100, b['score'], r[1]['score'] if len(r) > 1 else 0)); sys.exit(1)
 print('%.3f,%.3f,%.2f' % (b['x'], b['y'], math.degrees(b['yaw'])))") || { echo "❌ 저장된 지도에서 지금 자리를 찾지 못했다 — 로봇을 벽이 잘 보이는 곳으로 옮기거나 MAP 없이(새 지도) 시작"; exit 1; }
-      python3 $T/localize_params.py --map "$B" --pose "$POSE" --out /tmp/slam_localize.yaml || exit 1
+      python3 $T/localize_params.py --map "$B" --pose="$POSE" --out /tmp/slam_localize.yaml || exit 1
       python3 -c "
 import sys; sys.path.insert(0, '$T'); import keepout
 z = keepout.load('$B.keepout.json')['zones']; keepout.save(dict(keepout.load(), zones=z, prev=[])); print('금지 구역 %d개를 지도에서 불러옴' % len(z))"
@@ -44,6 +44,20 @@ z = keepout.load('$B.keepout.json')['zones']; keepout.save(dict(keepout.load(), 
       ARGS="enable_explore:=false navigator:=nav2"
     fi
     nohup ros2 launch smart_trash_bringup autonomous_mapping.launch.py $ARGS $EXTRA > "$LOG" 2>&1 &
+    if [ -n "$MAP" ]; then
+      # 위치 잡기 노드는 수명 주기 노드라 런치가 깨워 줘야(configure→activate) 지도 좌표계가 생긴다. 10-11 두 번째 실물 기동에서
+      # 런치가 깨우지 못하고 unconfigured로 남았다(오류 기록 없음, 원인 미확인) → Nav2도 지도 좌표계를 60초 기다리다 기동 포기.
+      # 그래서 상태를 직접 보고, 안 깨어 있으면 여기서 깨운다. Nav2의 60초 안에 끝나야 하므로 costmap 대기보다 먼저 한다
+      sleep 4
+      for i in $(seq 1 10); do
+        S=$(timeout 10 ros2 lifecycle get /slam_toolbox 2>/dev/null | awk '{print $1}')
+        [ "$S" = active ] && break
+        if [ "$S" = unconfigured ] && [ $i -ge 3 ]; then echo "위치 잡기 노드가 안 깨어 있어 직접 깨움"; timeout 60 ros2 lifecycle set /slam_toolbox configure; fi
+        [ "$S" = inactive ] && timeout 60 ros2 lifecycle set /slam_toolbox activate
+        sleep 2
+      done
+      [ "$S" = active ] || { echo "❌ 위치 잡기 노드가 켜지지 않음(상태: ${S:-응답 없음}) — stop"; exec "$0" stop; }
+    fi
     for i in $(seq 1 30); do
       sleep 1
       ros2 topic list 2>/dev/null | grep -q '^/local_costmap/costmap_raw$' && break

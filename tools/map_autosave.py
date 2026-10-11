@@ -42,10 +42,22 @@ class MapAutoSaver(Node):
             self._ser = self.create_client(SerializePoseGraph, '/slam_toolbox/serialize_map')
         except ImportError:
             self._ser = None
+        # 저장된 지도로 시작(위치 잡기 모드)이면 자세 그래프를 못 뜬다 — slam_toolbox가 5분마다 ERROR를 냈다(10-11 실물).
+        #   SLAM에 모드를 한 번 물어보고 그 모드면 건너뛴다(그 지도는 이미 저장돼 있다)
+        from rcl_interfaces.srv import GetParameters
+        self._par_req = GetParameters.Request(names=['mode'])
+        self._par = self.create_client(GetParameters, '/slam_toolbox/get_parameters')
+        self._mode = None
         self.get_logger().info(f'맵 자동 저장 시작 — {self.out_dir}, {interval}초 간격')
 
     def _save_graph(self):
         if self._ser is None or not self._ser.service_is_ready():
+            return
+        if self._mode is None:
+            if self._par.service_is_ready():
+                self._par.call_async(self._par_req).add_done_callback(self._on_mode)
+            return
+        if self._mode == 'localization':
             return
         req = self._ser_type.Request(); req.filename = os.path.join(self.out_dir, 'latest')
         fut = self._ser.call_async(req)
@@ -63,6 +75,16 @@ class MapAutoSaver(Node):
                     pass
             self.get_logger().info('위치 잡기용 자료 저장 ' + ('완료' if ok else '실패'))
         fut.add_done_callback(done)
+
+    def _on_mode(self, f):
+        try:
+            self._mode = f.result().values[0].string_value or 'mapping'
+        except Exception:
+            return                        # 답을 못 받았으면 다음 차례에 다시 묻는다
+        if self._mode == 'localization':
+            self.get_logger().info('SLAM이 위치 잡기 모드 — 위치 잡기용 자료는 다시 뜨지 않음')
+        else:
+            self._save_graph()
 
     def _on_map(self, msg: OccupancyGrid):
         now = time.time()
