@@ -15,6 +15,7 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 - ⚠️ **구역은 지금 켜진 SLAM 지도의 좌표** — 스택을 다시 켜면 지난 구역은 보관함으로 치워진다(같은 자리·같은 방향에서 시작했을 때만 화면에서 다시 불러 씀)
 - ⚠️ 주행기는 구역 서버의 말을 못 들으면 움직이지 않는다("금지 구역 정보를 받지 못함"). 시뮬에서 주행기를 쓸 땐 `KEEPOUT_FILE=<시뮬용 파일> python3 tools/keepout_server.py --keep`를 같이 띄운다(`tools/sim_explore_run.sh`는 이미 그렇게 함). **KEEPOUT_FILE 없이 시뮬 도메인에서 서버를 띄우면 실물 구역 파일을 치운다**
 - 판정 도구: `tools/step_nav_map_sim.py --case sofa | --random 60 --keepout | --update-check`, 주행 중 감시 `tools/keepout_watch.py`(선 침범 횟수)
+- 탐색기는 `/map`이 아니라 `/map_explore`(`tools/explore_map_filter.py` — 로봇이 닿을 수 있는 영역의 경계만 남긴 지도)를 본다(10-11). 구역·틈 너머로 들여다본 자리를 목표로 되풀이하지 않고, 다 돌면 스스로 끝내고 **탐색을 시작한 자리로 돌아온다**. 시뮬: `EXPLORE_FILTER=0|1 tools/sim_explore_run.sh … tools/sim_frontier_step[_filter].yaml`
 - **탐색기는 멈춘 채로 뜬다**(`explore_autostart` 기본 false) — 지도 대시보드의 [탐색 시작]/[탐색 멈춤]. 지도 저장은 그림 + SLAM 자세 그래프 + 그 지도의 구역을 함께(다음 단계 "저장된 지도에서 위치 잡기"용)
 - 실물 바닥 판정 시험 통과(10-11, `tools/keepout_floor_test.py`), 첫 실물 탐색에서 선 침범 0
 
