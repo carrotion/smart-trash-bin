@@ -126,6 +126,9 @@ def generate_launch_description():
         name='frontier_explorer', output='screen',
         parameters=[dict(frontier_common,
                          navigate_to_pose_action_name='step_navigate_to_pose',
+                         # 탐색 후보는 "닿을 수 있는 곳의 경계"만(아래 explore_map_filter가 내는 지도). 10-11 첫 실물 탐색에서
+                         #   구역·틈 너머로 들여다본 자리를 3~6번씩 "빈 경로"로 되풀이하고 끝난 줄도 몰랐다
+                         map_topic='/map_explore',
                          frontier_suppression_enabled=True,
                          frontier_suppression_attempt_threshold=3,
                          frontier_suppression_no_progress_timeout_s=30.0)],
@@ -143,6 +146,14 @@ def generate_launch_description():
     # 금지 구역 서버(파이썬 도구) — 항상 뜬다. 켜질 때 지난 구역을 치워 둔다(SLAM이 새 원점으로 새 지도를 그리므로)
     keepout_server = ExecuteProcess(
         cmd=['python3', '-u', os.path.join(repo_tools, 'keepout_server.py')], output='screen')
+
+    # 탐색기용 지도 필터(파이썬 도구) — 탐색 구성(navigator:=step)에서만. 원래 /map은 그대로 두고 /map_explore를 따로 낸다
+    explore_map_filter = ExecuteProcess(
+        cmd=['python3', '-u', os.path.join(repo_tools, 'explore_map_filter.py')], output='screen',
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
+            LaunchConfiguration('explorer'), "' == 'frontier' and '",
+            LaunchConfiguration('navigator'), "' == 'step'"])))
 
     declare_explore_autostart_cmd = DeclareLaunchArgument(
         'explore_autostart', default_value='false',
@@ -167,4 +178,5 @@ def generate_launch_description():
     ld.add_action(frontier_step_node)
     ld.add_action(step_server)
     ld.add_action(keepout_server)
+    ld.add_action(explore_map_filter)
     return ld

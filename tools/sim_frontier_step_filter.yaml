@@ -1,0 +1,12 @@
+# (필터 판) 탐색기가 /map 대신 /map_explore(tools/explore_map_filter.py — 닿을 수 있는 곳의 경계만)를 본다. 나머지는 sim_frontier_step.yaml과 같다
+# 탐색 시뮬(Stage)에서 탐색기를 4층 주행기 액션에 연결 + 실패 기억 — tools/sim_explore_run.sh가 쓴다 (2026-10-09 시뮬 2차와 같은 값)
+frontier_explorer:
+  ros__parameters:
+    use_sim_time: true
+    map_topic: /map_explore
+    navigate_to_pose_action_name: step_navigate_to_pose
+    frontier_suppression_enabled: true
+    frontier_suppression_attempt_threshold: 3
+    # 진행 없음 감시: 주행기 서버가 남은 거리(경로 길이 기준)를 0.5초마다 보낸다(10-10). 멈춤-확인-이동은 큰 회전 동안 거리가
+    #   안 준다 — 기록상 직진 없는 가장 긴 구간이 실물 12.9초(73구간)·시뮬 11.3초(367구간), 20초 초과 0 → 기본 20초에 여유를 둬 30초
+    frontier_suppression_no_progress_timeout_s: 30.0
