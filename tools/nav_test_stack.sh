@@ -13,7 +13,7 @@ set -o pipefail
 source /opt/ros/jazzy/setup.bash
 source /home/carrotian/catkin_ws/install/setup.bash
 LOG=${NAV_TEST_LOG:-/tmp/nav_test_stack.log}
-NODES="ldlidar_stl_ros2_node scan_to_scan_filter_chain scan_resample_node async_slam_toolbox_node controller_server planner_server behavior_server bt_navigator lifecycle_manager collision_monitor explore keepout_server.py frontier_explorer step_nav_action_server.py"   # collision_monitor: 09-27 빠져 있어 남음
+NODES="ldlidar_stl_ros2_node scan_to_scan_filter_chain scan_resample_node async_slam_toolbox_node controller_server planner_server behavior_server bt_navigator lifecycle_manager collision_monitor explore keepout_server.py frontier_explorer step_nav_action_server.py static_transform_publisher"   # static_transform_publisher: 런치의 라이다 자리 변환이 매번 남았다(10-11 발견, 서비스 소속 IMU 변환은 killproc이 건너뜀)   # collision_monitor: 09-27 빠져 있어 남음
 KP=/home/carrotian/smart-trash-bin/tools/killproc.py
 
 case "$1" in
