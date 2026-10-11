@@ -104,18 +104,27 @@ def from_topic():
     return occ, w, m.info.height
 
 
+def from_pgm(path):
+    """저장된 지도(P5 pgm: 0 = 벽, 205 = 모름, 254 = 빈 곳). 좌표는 아래가 0이 되게 뒤집는다(/map과 같은 방향)."""
+    raw = open(path, 'rb').read()
+    parts = raw.split(None, 4)          # P5, 폭, 높이, 최댓값, 본문
+    w, h = int(parts[1]), int(parts[2]); body = parts[4][-w * h:]
+    return [(i % w, h - 1 - i // w) for i, v in enumerate(body) if v < 50], w, h
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--sim-time', action='store_true',
                     help='가방 재생 중이면 지정 (모의 시간 사용)')
     ap.add_argument('--split', action='store_true',
                     help='좌상단 사분면과 나머지를 나눠서 비교')
+    ap.add_argument('--pgm', help='저장된 지도 파일(.pgm) — 주면 /map을 구독하지 않는다')
     args = ap.parse_args()
 
-    occ, w, h = from_topic()
+    occ, w, h = from_pgm(args.pgm) if args.pgm else from_topic()
     print(f'점유 셀 {len(occ)}개, 맵 {w}x{h}\n')
     print('=== 전체 ===')
-    overall = report(wall_angles(occ))
+    report(wall_angles(occ))
     if args.split:
         # ROS 좌표는 아래에서 위로 증가하므로 "위쪽"은 y가 큰 쪽
         tl = [(x, y) for x, y in occ if x < w * 0.5 and y > h * 0.5]
