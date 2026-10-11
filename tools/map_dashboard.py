@@ -777,7 +777,7 @@ function renderExplore() {
 async function loadExplore() { try { E = await (await fetch('/api/explore')).json(); } catch (e) { return; } renderExplore(); }
 document.getElementById('exploreBtn').onclick = async ev => {
   const act = ev.target.dataset.act;
-  if (act === 'start' && !confirm('탐색을 시작합니다. 로봇이 스스로 움직입니다.\n로봇 주변이 비어 있고 금지 구역을 그렸는지 확인하세요.')) return;
+  if (act === 'start' && !confirm(`탐색을 시작합니다. 로봇이 스스로 움직입니다. 로봇 주변이 비어 있고 금지 구역을 그렸는지 확인하세요.`)) return;
   try { E = await (await fetch('/api/explore/' + act, {method: 'POST', body: '{}'})).json(); } catch (e) { return; }
   renderExplore(); setTimeout(loadExplore, 1000);
 };
