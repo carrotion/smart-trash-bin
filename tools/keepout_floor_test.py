@@ -7,6 +7,11 @@
   ③ 출발점으로 복귀(다시 구역을 돌아서)
 합격: ①거절·이동 0, ②③도착, **차체가 선을 넘은 표본 0**. 끝나면 시험 구역을 지운다(--keep-zone이면 남김).
 
+이미 그려 둔 구역으로 하는 시험(소파 등, 구역을 만들지 않음) — 지도 좌표로 차례를 준다:
+    python3 tools/keepout_floor_test.py --seq in:2.0,-1.9 go:1.2,-0.92 near:1.2,-1.25 home
+    in: 구역 안 목표(거절·이동 0이어야 합격)  go: 도착해야 합격  near: 선 바로 앞 목표(도착 여부는 안 따짐 — 선만 안 넘으면 됨)  home: 출발점 복귀
+    ⚠️ 이 방식은 시험 자리를 스캔으로 확인하지 않는다 — 가는 길에 밑이 빈 가구가 없는지 사람이 확인한 뒤에
+
 준비: 로봇 앞 (goal + 0.5) m, 좌우 (half-width + side) m가 비어 있어야 한다 — 스캔으로 확인하고 아니면 시작하지 않는다.
        실물: tools/nav_test_stack.sh start (탐색기 없음, 구역 서버 포함) 뒤
     python3 tools/keepout_floor_test.py
@@ -38,6 +43,55 @@ def blocked_points(scan, x0, x1, y0, y1, lidar_x=0.054):
     return out
 
 
+def run_seq(a, n, nav, here):
+    """이미 적용된 구역들을 대상으로 --seq의 차례를 실행. 차체-선 거리는 모든 구역의 선에 대해 잰다."""
+    if not nav._zones:
+        print('❌ 적용된 금지 구역이 없다 — 지도 대시보드에서 먼저 그릴 것'); return 2
+    pts = keepout.boundary_points(list(nav._zones), 0.01)
+    W = dict(n=0, cross=0, min_gap=float('inf'), last=0.0); spin0 = nav.spin
+
+    def spin(t):
+        spin0(t)
+        if time.time() - W['last'] >= 0.1:
+            W['last'] = time.time(); p = nav.map_pose()
+            if p:
+                g = body_gap(p, pts); W['n'] += 1; W['min_gap'] = min(W['min_gap'], g); W['cross'] += g < -0.005
+    nav.spin = spin
+    print(f'구역 {len(nav._zones)}개 대상, 출발 ({here[0]:+.2f}, {here[1]:+.2f})', flush=True)
+    res = []; ok_all = True
+    try:
+        for k, tok in enumerate(a.seq):
+            kind, _, xy = tok.partition(':'); p0 = nav.map_pose() or here
+            goal = (here[0], here[1], here[2]) if kind == 'home' else tuple(float(v) for v in xy.split(',')) + (None,)
+            r = nav.go(goal, timeout=240.0); p1 = nav.map_pose() or p0; moved = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+            if kind == 'in':
+                ok = (not r['ok']) and '금지 구역' in r['msg'] and moved < 0.03
+            elif kind == 'near':
+                ok = True
+            else:
+                ok = r['ok']
+            ok_all &= ok
+            line_d = keepout.nearest(p1[0], p1[1], list(nav._zones))[0]
+            res.append(dict(step=tok, ok=ok, arrived=r['ok'], msg=r['msg'], moved_cm=round(moved * 100, 1), err_cm=round(r['final_err_m'] * 100, 1),
+                            secs=round(r['secs'], 1), center_to_line_cm=round(line_d * 100, 1), end=[round(v, 3) for v in p1]))
+            print(f'{k + 1}. {tok}: {"✅" if ok else "❌"} {r["msg"]} | 이동 {moved * 100:.0f} cm, 목표까지 {r["final_err_m"] * 100:.1f} cm, '
+                  f'{r["secs"]:.0f}초, 끝난 자리에서 구역 선까지(중심) {line_d * 100:.0f} cm', flush=True)
+    except KeyboardInterrupt:
+        print('중단'); ok_all = False
+    finally:
+        from geometry_msgs.msg import Twist
+        for _ in range(5):
+            nav.pub.publish(Twist()); rclpy.spin_once(n, timeout_sec=0.02)
+    ok = ok_all and W['cross'] == 0 and W['n'] > 0
+    print(f'{"✅ 합격" if ok else "❌ 불합격"} | 차체가 구역 선을 넘은 표본 {W["cross"]}/{W["n"]}, 차체-선 최소 {W["min_gap"] * 100:+.1f} cm')
+    out = os.path.join(REPO, 'docs/calibration', f'keepout_floor_{time.strftime("%Y%m%d_%H%M%S")}{("_" + a.label) if a.label else "_seq"}.json')
+    json.dump(dict(start=here, zones=list(nav._zones), seq=res, watch={k: v for k, v in W.items() if k != 'last'}, ok=ok, log=nav.log), open(out, 'w'),
+              ensure_ascii=False, indent=1, default=str)
+    print('기록:', out)
+    rclpy.shutdown()
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ahead', type=float, default=0.9, help='구역 가까운 변까지(로봇 중심에서, m)')
@@ -45,6 +99,7 @@ def main():
     ap.add_argument('--half-width', type=float, default=0.35, help='구역 반폭(m)')
     ap.add_argument('--goal', type=float, default=2.1, help='구역 너머 목표(로봇 앞, m)')
     ap.add_argument('--side', type=float, default=0.75, help='구역 옆으로 비어 있어야 하는 폭(m) — 돌아갈 자리')
+    ap.add_argument('--seq', nargs='*', default=None, help='이미 있는 구역으로 시험: in:x,y go:x,y near:x,y home (지도 좌표)')
     ap.add_argument('--keep-zone', action='store_true')
     ap.add_argument('--label', default='', help="기록 파일 이름 꼬리(시뮬은 'sim')")
     ap.add_argument('--odom-topic', default='/odometry/filtered'); ap.add_argument('--gyro-from-odom', action='store_true')
@@ -57,6 +112,8 @@ def main():
     here = nav.map_pose()
     if here is None or not nav._zones_seen:
         print('❌ 시작 못 함: ' + ('지도 위 위치 없음(SLAM)' if here is None else '금지 구역 서버의 말을 못 들음(keepout_server)')); return 2
+    if a.seq is not None:
+        return run_seq(a, n, nav, here)
     bad = blocked_points(nav.S['scan'], -0.3, a.goal + 0.5, -(a.half_width + a.side), a.half_width + a.side)
     if len(bad) > 3:
         print(f'❌ 시험 자리가 비어 있지 않다(점 {len(bad)}개, 로봇 기준 앞·왼쪽 m): {bad[:8]}\n'
