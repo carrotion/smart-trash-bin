@@ -16,7 +16,14 @@ Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환�
 - ⚠️ 주행기는 구역 서버의 말을 못 들으면 움직이지 않는다("금지 구역 정보를 받지 못함"). 시뮬에서 주행기를 쓸 땐 `KEEPOUT_FILE=<시뮬용 파일> python3 tools/keepout_server.py --keep`를 같이 띄운다(`tools/sim_explore_run.sh`는 이미 그렇게 함). **KEEPOUT_FILE 없이 시뮬 도메인에서 서버를 띄우면 실물 구역 파일을 치운다**
 - 판정 도구: `tools/step_nav_map_sim.py --case sofa | --random 60 --keepout | --update-check`, 주행 중 감시 `tools/keepout_watch.py`(선 침범 횟수)
 - **탐색기는 멈춘 채로 뜬다**(`explore_autostart` 기본 false) — 지도 대시보드의 [탐색 시작]/[탐색 멈춤]. 지도 저장은 그림 + SLAM 자세 그래프 + 그 지도의 구역을 함께(다음 단계 "저장된 지도에서 위치 잡기"용)
-- 실물 바닥 판정 시험은 아직(10-10 기준) — `tools/keepout_floor_test.py`, todo 11a
+- 실물 바닥 판정 시험 통과(10-11, `tools/keepout_floor_test.py`), 첫 실물 탐색에서 선 침범 0
+
+## 🗺️ 저장한 지도로 다니기 (2026-10-11) → `docs/motion_foundation.md` "저장된 지도에서 위치 잡기" 절
+
+- 시작: `MAP=home_20261011 tools/nav_test_stack.sh start [explore]` — 스캔으로 지도 위 자리를 찾고(`tools/locate_on_map.py`) slam_toolbox 위치 잡기 방식으로 켠다. 새 지도를 그리지 않고 그 지도의 금지 구역을 그대로 쓴다
+- ⚠️ **켠 뒤에 로봇을 손으로 옮기면 위치 잡기는 모른다**(바퀴가 안 돌았으니). 주행기가 출발 전에 스캔과 지도를 맞춰 보고(`tools/pose_check.py`, 아는 칸의 점 중 벽 위 80% 미만이면) "지도 위 자리가 스캔과 안 맞음"으로 거절한다 → 지도 대시보드의 **[자리 다시 찾기]** 또는 `python3 tools/relocate.py`(로봇은 움직이지 않음)
+- 움직이기 전에 내가 직접 볼 때: `python3 tools/pose_check.py --live`
+- 한계: 긴 복도에서 복도 방향으로 옮겨진 것은 벽만으로 못 가린다. 지도를 그리는 중(매핑 방식)에는 [자리 다시 찾기]를 못 쓴다 — 스택을 다시 켠다
 
 ## ✅ 구동 기본값 `control_mode: velocity` (2026-09-26, 사용자 승인)
 

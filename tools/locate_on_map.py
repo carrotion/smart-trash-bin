@@ -82,6 +82,12 @@ def locate(base, pts, around=(0.0, 0.0), radius=1.5):
     return fine
 
 
+def whole_area(base):
+    """지도에서 아는 범위 전체를 덮는 (가운데, 반경) — 어디 놓였는지 전혀 모를 때의 찾는 범위."""
+    img, res, ox, oy = load_map(os.path.expanduser(base)); jj, ii = np.nonzero(img != 205)
+    return (ox + (ii.min() + ii.max()) / 2 * res, oy + (jj.min() + jj.max()) / 2 * res), max(ii.max() - ii.min(), jj.max() - jj.min()) / 2 * res + 0.3
+
+
 def scan_from_ros(topic='/scan', lidar_x=0.054, timeout=10.0):
     """/scan 한 장을 로봇 기준 점 목록으로(차체 안은 뺌)."""
     import rclpy, time
@@ -121,9 +127,7 @@ def main():
         print('❌ 스캔이 안 들어온다'); return 2
     around, radius = tuple(float(v) for v in a.around.split(',')), a.radius
     if a.whole:
-        img, res, ox, oy = load_map(os.path.expanduser(a.map)); jj, ii = np.nonzero(img != 205)
-        around = (ox + (ii.min() + ii.max()) / 2 * res, oy + (jj.min() + jj.max()) / 2 * res)
-        radius = max(ii.max() - ii.min(), jj.max() - jj.min()) / 2 * res + 0.3
+        around, radius = whole_area(a.map)
     r = locate(os.path.expanduser(a.map), pts, around, radius)
     if a.json:
         print(json.dumps(r)); return 0

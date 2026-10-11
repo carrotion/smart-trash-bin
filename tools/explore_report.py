@@ -21,7 +21,7 @@ def q(v, p):
 
 
 def group(msg):
-    for key in ('취소', '빈 경로', '미확인 물체', '앞 여유 부족', '회전 실패', '회전 반경 막힘', '직진 실패', '시간 초과', '금지 구역', '진동', 'TF'):
+    for key in ('취소', '자리가 스캔과 안 맞음', '빈 경로', '미확인 물체', '앞 여유 부족', '회전 실패', '회전 반경 막힘', '직진 실패', '시간 초과', '금지 구역', '진동', 'TF'):
         if key in msg:
             return key
     return msg[:16]
@@ -58,6 +58,11 @@ def main():
         dist = [abs(e['arg']) for e in drives if isinstance(e['arg'], (int, float))]; err = [abs(e['err_m']) * 100 for e in drives if e.get('err_m') is not None]; dok = sum(1 for e in drives if e.get('ok'))
         print(f'  직진 {len(drives)}회(성공 {dok}): 걸음 중앙 {statistics.median(dist) * 100:.0f} cm, 명령 거리 합 {sum(dist):.1f} m | 거리 오차 중앙 {statistics.median(err):.1f} cm, 95% {q(err, 0.95):.1f} cm '
               f'| 시간 합 {sum(e.get("secs", 0) for e in drives) / 60:.1f}분')
+    pcs = [e for e in L if e['kind'] == 'pose_check' and e.get('ratio') is not None]      # 출발 전 자리 검사(10-11~, tools/pose_check.py)
+    if pcs:
+        rr = [e['ratio'] * 100 for e in pcs]
+        print(f'  자리 검사 {len(pcs)}회: 아는 칸의 점 중 벽 위 비율 최소 {min(rr):.0f}%, 5% 분위 {q(rr, 0.05):.0f}%, 중앙 {statistics.median(rr):.0f}% | 기준(80%) 아래 {sum(not e["ok"] for e in pcs)}회, '
+              f'그 때문에 거절된 목표 {sum("자리가 스캔과 안 맞음" in r["result"]["msg"] for r in R)}개')
     kinds = collections.Counter(e['kind'] for e in L)
     print('  그 밖의 일: ' + ', '.join(f'{k} {kinds[k]}' for k in ('plan_fail', 'plan_shift', 'retreat', 'rot_near', 'rot_clear', 'near_unknown', 'blocked', 'lookahead', 'shorten', 'near_accept') if kinds[k]))
 
