@@ -4,6 +4,8 @@
 #   tools/nav_test_stack.sh start   # 라이다 서비스 내리고 autonomous_mapping(enable_explore:=false) 기동
 #   tools/nav_test_stack.sh start explore   # 탐색 구성(주행기 서버 + 탐색기)으로 기동. 탐색기는 **멈춘 채로** 뜬다 —
 #                                           # 지도 대시보드(8768)에서 금지 구역을 그리고 [탐색 시작]을 눌러야 움직인다(10-11)
+#   MAP=home_20261011 tools/nav_test_stack.sh start [explore]   # **저장된 지도로 시작**(10-11): 지금 스캔으로 지도 위 자리를 찾아
+#                                           # (locate_on_map.py) 거기서 위치 잡기를 켜고, 그 지도의 금지 구역을 불러온다. 새 지도를 그리지 않는다
 #   tools/nav_test_stack.sh stop    # 런치와 자식 노드 전부 종료 확인 → 라이다 서비스 복구
 #
 # ⚠️ 2026-09-27: ros2 launch 본체에 SIGINT를 보냈더니 본체만 죽고 자식 노드 9개(라이다 드라이버 포함)가
@@ -18,13 +20,30 @@ KP=/home/carrotian/smart-trash-bin/tools/killproc.py
 
 case "$1" in
   start)
+    EXTRA=""
+    if [ -n "$MAP" ]; then
+      # 저장된 지도로 시작. ⚠️ 자리 찾기는 라이다 서비스의 스캔(관제 대시보드 경유)을 쓰므로 서비스를 내리기 **전에** 한다
+      T=/home/carrotian/smart-trash-bin/tools; B=$HOME/maps/$MAP
+      POSE=$(python3 $T/locate_on_map.py --map "$B" --whole --json | python3 -c "
+import sys, json, math
+r = json.load(sys.stdin); b = r[0]
+if b['on_wall'] < 0.85 or (len(r) > 1 and r[1]['score'] > 0.85 * b['score']):
+    sys.stderr.write('자리를 확신하지 못함: 벽 위 %.0f%%, 1등 %.2f / 2등 %.2f\\n' % (b['on_wall'] * 100, b['score'], r[1]['score'] if len(r) > 1 else 0)); sys.exit(1)
+print('%.3f,%.3f,%.2f' % (b['x'], b['y'], math.degrees(b['yaw'])))") || { echo "❌ 저장된 지도에서 지금 자리를 찾지 못했다 — 로봇을 벽이 잘 보이는 곳으로 옮기거나 MAP 없이(새 지도) 시작"; exit 1; }
+      python3 $T/localize_params.py --map "$B" --pose "$POSE" --out /tmp/slam_localize.yaml || exit 1
+      python3 -c "
+import sys; sys.path.insert(0, '$T'); import keepout
+z = keepout.load('$B.keepout.json')['zones']; keepout.save(dict(keepout.load(), zones=z, prev=[])); print('금지 구역 %d개를 지도에서 불러옴' % len(z))"
+      export KEEPOUT_KEEP=1
+      EXTRA="slam_launch:=localization_launch.py slam_params_file:=/tmp/slam_localize.yaml"
+    fi
     sudo -n systemctl stop smart-trash-lidar || exit 1
     if [ "$2" = explore ]; then
       ARGS="enable_explore:=true navigator:=step explorer:=frontier explore_autostart:=false"
     else
       ARGS="enable_explore:=false navigator:=nav2"
     fi
-    nohup ros2 launch smart_trash_bringup autonomous_mapping.launch.py $ARGS > "$LOG" 2>&1 &
+    nohup ros2 launch smart_trash_bringup autonomous_mapping.launch.py $ARGS $EXTRA > "$LOG" 2>&1 &
     for i in $(seq 1 30); do
       sleep 1
       ros2 topic list 2>/dev/null | grep -q '^/local_costmap/costmap_raw$' && break

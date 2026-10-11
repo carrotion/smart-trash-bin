@@ -10,6 +10,8 @@ source /opt/ros/jazzy/setup.bash; source /home/carrotian/catkin_ws/install/setup
 export ROS_DOMAIN_ID=42
 cd /home/carrotian/smart-trash-bin
 ARGS="world:=$WORLD explorer:=frontier"; [ -n "$FP" ] && ARGS="$ARGS frontier_params_file:=$FP"
+# 저장 지도에서 위치 잡기 시험: SLAM_LAUNCH=localization_launch.py SLAM_PARAMS=<localize_params.py --sim 으로 만든 파일>
+[ -n "$SLAM_LAUNCH" ] && ARGS="$ARGS slam_launch:=$SLAM_LAUNCH slam_params_file:=$SLAM_PARAMS"
 xvfb-run -a bash -c "timeout -s INT $((DUR + 45)) ros2 launch smart_trash_bringup sim_autonomous_mapping.launch.py $ARGS" > $OUT/launch.log 2>&1 &
 sleep 25
 # 금지 구역 서버: 시뮬 전용 파일(KEEPOUT_FILE, 기본 <출력>/keepout.json — 미리 구역을 써 두면 그대로 적용, --keep)

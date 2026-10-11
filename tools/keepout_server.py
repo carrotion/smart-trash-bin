@@ -31,7 +31,7 @@ def main():
     ap.add_argument('--file', default=keepout.FILE)
     ap.add_argument('--keep', action='store_true', help='켜질 때 구역을 비우지 않는다')
     a = ap.parse_args()
-    if not a.keep:
+    if not (a.keep or os.environ.get('KEEPOUT_KEEP')):      # 저장 지도로 시작할 땐 그 지도의 구역을 그대로 쓴다(런치가 환경 변수로 알림)
         d = keepout.load(a.file)
         if d['zones']:
             keepout.save(dict(d, prev=d['zones'], zones=[]), a.file)
