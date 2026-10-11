@@ -13,6 +13,7 @@ REPO = os.path.dirname(HERE)
 CORE = ['tools/turn_to_angle.py', 'tools/drive_distance.py', 'tools/step_navigator.py', 'tools/turn_angle_test.py',
         'tools/drive_distance_test.py', 'tools/square_test.py', 'tools/test_turn_to_angle_sim.py',
         'tools/test_step_navigator_sim.py', 'tools/step_nav_acceptance.py', 'tools/step_nav_map_sim.py',
+        'tools/pose_check.py', 'tools/relocate.py', 'tools/locate_on_map.py', 'tools/explore_map_filter.py', 'tools/keepout.py',
         'robot/src/smart_trash_motion/smart_trash_motion/diff_drive_node.py',
         'robot/src/smart_trash_sensors/smart_trash_sensors/imu_publisher_node.py']
 
@@ -37,6 +38,7 @@ def main():
     res = [run('정적 검사(pyflakes, 핵심 파일)', [sys.executable, '-m', 'pyflakes'] + CORE, 60),
            run('④ 각도 회전 로직 가상 시험', [sys.executable, 'tools/test_turn_to_angle_sim.py'], 400),
            run('4층 주행기 로직 가상 시험', [sys.executable, 'tools/test_step_navigator_sim.py'], 60),
+           run('탐색기용 지도 필터 규칙', [sys.executable, 'tools/explore_map_filter.py', '--self-test'], 30),
            run('4층 지도 가상 시험(집 지도 문틈, 실제 planner)', [sys.executable, 'tools/step_nav_map_sim.py'], 120)]
     if a.floor:
         bat = subprocess.run(['bash', '-c', f'tail -1 {REPO}/logs/battery/$(date +%Y%m%d).csv | cut -d, -f3'],

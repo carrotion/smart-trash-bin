@@ -18,13 +18,19 @@ sleep 25
 export KEEPOUT_FILE=${KEEPOUT_FILE:-$OUT/keepout.json}
 python3 -u tools/keepout_server.py --keep --file "$KEEPOUT_FILE" > $OUT/keepout.log 2>&1 &
 KP_PID=$!
+# 탐색기용 지도 필터(닿을 수 있는 곳의 경계만 남김, /map_explore). 탐색기가 이 토픽을 보게 하려면 파라미터 파일에
+#   map_topic: /map_explore (tools/sim_frontier_step_filter.yaml). EXPLORE_FILTER=0이면 띄우지 않는다
+if [ "${EXPLORE_FILTER:-1}" = 1 ]; then
+  python3 -u tools/explore_map_filter.py > $OUT/map_filter.log 2>&1 &
+  MF_PID=$!
+fi
 if [ "$STEP" = 1 ]; then
   python3 -u tools/step_nav_action_server.py --odom-topic /odom --gyro-from-odom --label sim > $OUT/server.log 2>&1 &
   SP=$!
 fi
 timeout $((DUR + 10)) python3 tools/map_coverage_logger.py --out $OUT/coverage.csv --sim-time --interval 5 --duration $DUR > $OUT/coverage.log 2>&1
 [ -n "$SP" ] && kill -TERM $SP
-kill -TERM $KP_PID 2>/dev/null
+kill -TERM $KP_PID $MF_PID 2>/dev/null
 wait
 python3 tools/killproc.py --kill9 stage_ros2 async_slam_toolbox_node controller_server planner_server behavior_server bt_navigator lifecycle_manager collision_monitor frontier_explorer Xvfb > $OUT/cleanup.log 2>&1
 python3 -c "import sys; sys.path.insert(0,'tools'); import mapping_cleanup; mapping_cleanup.clean_orphan_shm()" >> $OUT/cleanup.log 2>&1
