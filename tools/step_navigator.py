@@ -34,6 +34,7 @@ from drive_distance import DriveDistance
 from speed_floor_sweep import corridor_clearance
 import lidar_blockage
 import keepout
+import pose_check
 
 
 class _VScan:
@@ -67,6 +68,11 @@ class StepNavigator:
     _zone_pts = ()
     #   구역 서버의 말을 한 번이라도 들었는가. 실물(__init__)에서는 False로 시작 — 못 들은 채로는 움직이지 않는다(아래 go)
     _zones_seen = True
+    #   지도(nav_msgs/OccupancyGrid)와 그 거리장 — 출발 전에 "지금 스캔이 지도 위 내 자리와 맞는가"를 본다(tools/pose_check.py).
+    #   None이면 검사를 건너뜀(가상 시험). pose_check_enforce=False면 재서 기록만 하고 거절하지 않는다
+    _map_msg = None
+    _field = None
+    pose_check_enforce = True
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -102,6 +108,9 @@ class StepNavigator:
         self._zones_seen = False
         node.create_subscription(String, '/keepout_zones', self._on_zones,
                                  QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
+        from nav_msgs.msg import OccupancyGrid
+        node.create_subscription(OccupancyGrid, '/map', self._on_map,
+                                 QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
         self.pub = node.create_publisher(Twist, cmd_topic, 10)
         self.tfb = Buffer(); self.tfl = TransformListener(self.tfb, node)
         self.planner = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
@@ -120,6 +129,20 @@ class StepNavigator:
             self.set_zones(keepout.clean_zones(json.loads(m.data).get('zones', []))); self._zones_seen = True
         except (ValueError, AttributeError) as e:
             print(f'⚠️ 금지 구역 메시지 오류 — 이전 구역 유지: {e}', flush=True)
+
+    def _on_map(self, m):
+        self._map_msg = m; self._field = None        # 거리장은 쓸 때 만든다(탐색 중엔 지도가 5초마다 온다)
+
+    def _pose_check(self, here):
+        """지금 스캔을 지도 위 자세 here에 놓아 본 결과(pose_check.check + ok, why). 지도나 스캔이 없으면 None."""
+        m, sc = self._map_msg, self.S['scan']
+        if m is None or sc is None or here is None:
+            return None
+        if self._field is None:
+            self._field = pose_check.Field.from_msg(m)
+        r = pose_check.check(self._field, here, pose_check.scan_points(sc))
+        r['ok'], r['why'] = pose_check.verdict(r)
+        return r
 
     def set_zones(self, zones):
         self._zones = tuple(zones); self._zone_pts = tuple(keepout.boundary_points(zones))
@@ -274,6 +297,20 @@ class StepNavigator:
             here = self.map_pose()
             if here is None:
                 return self._done(False, 'map→base_link TF 없음', step, t0, goal)
+            # 지도 위 내 자리가 지금 스캔과 맞는가 — 출발 전(첫 단계)에 본다. ⚠️ 10-11: 위치 잡기를 켠 채 사람이 로봇을 58 cm 옮겼는데
+            #   자세는 옮기기 전 그대로였다(경고 없음). 그대로 걸으면 틀린 자리 기준으로 걷고 금지 구역도 틀린 자리에 놓인다.
+            #   한 번 안 맞으면 새 스캔으로 두 번 더 본다(지나가는 사람). 매 단계 값은 기록만 한다 — 주행 중 거절할지는 자료가 쌓인 뒤 판단
+            pc = self._pose_check(here)
+            if pc is not None:
+                if step == 0 and not pc['ok']:
+                    for _ in range(2):
+                        self.spin(0.7); here = self.map_pose() or here; pc = self._pose_check(here) or pc
+                        if pc['ok']:
+                            break
+                self.log.append(dict(step=step, kind='pose_check', t=round(time.time(), 2), ok=pc['ok'], n=pc['n'], on=pc['on'], free=pc['free'], unk=pc['unk'],
+                                     ratio=None if pc['ratio'] is None else round(pc['ratio'], 3)))
+                if step == 0 and not pc['ok'] and self.pose_check_enforce:
+                    return self._done(False, f'지도 위 자리가 스캔과 안 맞음 — {pc["why"]}. 로봇이 옮겨졌을 수 있다 → 자리를 다시 찾을 것(tools/relocate.py)', step, t0, goal)
             hd, hz = keepout.nearest(here[0], here[1], self._zones)
             if hd == 0.0:
                 # 구역 안에서는 경계가 사방의 벽이라 스스로 못 나온다(나오게 두면 구역의 뜻이 없다) → 사람이 정리

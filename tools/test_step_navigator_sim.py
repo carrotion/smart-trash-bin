@@ -273,6 +273,34 @@ def main():
             far = True
         builtins.print = quiet
         check('금지 구역 격자 값·입력 검사', ok and small and far, f'안 {vals[0]}, 선 밖 7 cm {vals[1]}, 20 cm {vals[2]}, 45 cm {vals[3]}, 모서리 밖 {vals[4]} | 너무 작은 구역 거부 {small}, 범위 밖 거부 {far}')
+        builtins.print = lambda *a, **k: None
+        #  12. 출발 전 자리 검사(tools/pose_check.py): 4 × 3 m 방. 스캔은 실제 자리에서 본 벽, 주행기가 믿는 자리(map_pose)는 따로 준다.
+        #      맞으면 간다 / 0.5·0.4 m 어긋나 있으면 움직이지 않고 거절 / 한 번만 안 맞고(지나가는 사람) 다시 보니 맞으면 간다 /
+        #      거절을 끄면(pose_check_enforce=False) 가되 기록에는 남는다
+        import numpy as np
+        wall = [(x / 100, y) for x in range(-100, 301) for y in (-1.5, 1.5)] + [(x, y / 100) for y in range(-150, 151) for x in (-1.0, 3.0)]
+        g = np.full((100, 120), -1, np.int8); g[20:81, 20:101] = 0                     # 원점 (−2, −2.5), 칸 5 cm
+        g[20, 20:101] = g[80, 20:101] = 100; g[20:81, 20] = g[20:81, 100] = 100
+        fmap = types.SimpleNamespace(data=g, info=types.SimpleNamespace(width=120, height=100, resolution=0.05,
+                                     origin=types.SimpleNamespace(position=types.SimpleNamespace(x=-2.0, y=-2.5))))
+
+        def room(off=(0.0, 0.0)):
+            nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=wall); nav._map_msg = fmap
+            nav.map_pose = lambda: (P['x'] + off[0], P['y'] + off[1], P['th'])
+            return nav, P
+        nav, P = room(); r = nav.go((1.0, 0.0, None)); pc = [e for e in nav.log if e['kind'] == 'pose_check']
+        nav2, P2 = room((0.5, 0.4)); r2 = nav2.go((1.5, 0.4, None)); pc2 = [e for e in nav2.log if e['kind'] == 'pose_check']
+        nav3, P3 = room(); real = nav3._pose_check; calls = []
+        nav3._pose_check = lambda here: (calls.append(1), dict(real(here), ok=False, why='시험') if len(calls) == 1 else real(here))[1]
+        r3 = nav3.go((1.0, 0.0, None))
+        nav4, P4 = room((0.5, 0.4)); nav4.pose_check_enforce = False; r4 = nav4.go((1.5, 0.4, None))
+        builtins.print = quiet
+        check('출발 전 자리 검사: 맞으면 감 / 어긋나면 거절·이동 0 / 한 번만 안 맞으면 감 / 끄면 기록만',
+              r['ok'] and pc and all(e['ok'] and e['ratio'] > 0.95 for e in pc)
+              and not r2['ok'] and '안 맞음' in r2['msg'] and math.hypot(P2['x'], P2['y']) < 1e-9 and len(pc2) == 1 and pc2[0]['ratio'] < 0.8
+              and r3['ok'] and len(calls) >= 2
+              and r4['ok'] and not [e for e in nav4.log if e['kind'] == 'pose_check'][0]['ok'],
+              f'맞는 자리 비율 {min(e["ratio"] for e in pc):.2f}({len(pc)}회) | 어긋난 자리 비율 {pc2[0]["ratio"]:.2f} → {r2["msg"][:28]}…, 이동 {math.hypot(P2["x"], P2["y"]) * 100:.0f} cm | 재확인 뒤 {r3["msg"]} | 끔 {r4["msg"]}')
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')

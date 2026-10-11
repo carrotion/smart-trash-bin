@@ -32,6 +32,7 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
                        QoSReliabilityPolicy)
+from rcl_interfaces.srv import GetParameters
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
@@ -52,6 +53,25 @@ state_lock = threading.Lock()
 state = {"connected": False, "last_ts": 0.0}
 STALE_S = 5.0
 # 금지 구역(tools/keepout.py) 화면용 상태: 구역 서버가 실제로 적용한 version, 서버 생존, 지도 위 로봇 자세
+_reloc_lock = threading.Lock()
+
+
+def relocate():
+    """지도 위 자리를 다시 찾는다(tools/relocate.py를 그대로 돌린다 — 화면과 터미널이 같은 일을 하게). 로봇은 움직이지 않는다."""
+    import subprocess
+    import sys
+    if not _reloc_lock.acquire(blocking=False):
+        return dict(ok=False, text="이미 찾는 중입니다.")
+    try:
+        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "relocate.py")],
+                           capture_output=True, text=True, timeout=90)
+        return dict(ok=r.returncode == 0, text=(r.stdout or r.stderr).strip())
+    except subprocess.TimeoutExpired:
+        return dict(ok=False, text="90초 안에 끝나지 않았습니다.")
+    finally:
+        _reloc_lock.release()
+
+
 keep_state = {"applied_version": None, "applied_n": 0, "server": False, "pose": None}
 _last_pose = {"pose": None, "t": 0.0}     # 마지막으로 안 자세 — 지도 변환이 잠깐 끊긴 순간에도 "로봇 옆 금지"를 검사하려고
 ROBOT_KEEP_CLEAR = 0.25     # 로봇에서 이 거리 안에는 구역을 새로 만들거나 옮겨 놓지 못한다(구역 선은 벽 — 로봇이 갇힌다)
@@ -91,6 +111,16 @@ class MapBridge(Node):
         self.create_timer(0.5, self._pose_tick)
         self._explore_cli = self.create_client(ControlExploration, 'control_exploration') if ControlExploration else None
         self._ser_cli = self.create_client(SerializePoseGraph, '/slam_toolbox/serialize_map') if SerializePoseGraph else None
+        self._par_cli = self.create_client(GetParameters, '/slam_toolbox/get_parameters'); self._slam_mode = (0.0, None)
+
+    def slam_mode(self):
+        """SLAM이 지금 어떤 방식인가: dict(mode='mapping'|'localization', map=저장 지도 이름) 또는 None(SLAM 없음). 5초 동안은 지난 답."""
+        if time.time() - self._slam_mode[0] < 5.0:
+            return self._slam_mode[1]
+        r = self._call(self._par_cli, GetParameters.Request(names=['mode', 'map_file_name']), 2.0)
+        v = None if r is None or len(r.values) < 2 else dict(mode=r.values[0].string_value or 'mapping', map=os.path.basename(r.values[1].string_value))
+        self._slam_mode = (time.time(), v)
+        return v
 
     def _call(self, cli, req, timeout):
         """서비스 호출을 HTTP 처리 스레드에서 기다린다(노드는 다른 스레드가 돌린다). 응답 또는 None."""
@@ -525,6 +555,7 @@ __FAVICON__
   #zoneList { margin-top: .6rem; } #zoneList td { white-space: nowrap; padding: .3rem .5rem .3rem 0; border-bottom: 1px solid var(--border); font-size: .9rem;
     font-variant-numeric: tabular-nums; }
   #zoneList tr.sel td { background: rgba(208,59,59,.10); }
+  @media (max-width: 480px) { #zoneList td { padding-right: .25rem; font-size: .8rem; } #zoneList input { max-width: 22vw; } }
   #zoneList input { width: 9rem; max-width: 34vw; padding: .25rem .4rem; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: inherit; }
   #prevBox { margin-top: .7rem; padding: .6rem .75rem; border: 1px dashed var(--text-muted); border-radius: 8px; font-size: .88rem; line-height: 1.5; }
   .status-row { display: flex; justify-content: space-between; font-size: 0.85rem;
@@ -553,6 +584,10 @@ __FAVICON__
   <div class="zonebar" id="exploreBar" style="display:none">
     <button id="exploreBtn"></button>
     <span id="exploreState" class="msg"></span>
+  </div>
+  <div class="zonebar" id="relocBar" style="display:none">
+    <button id="relocBtn">자리 다시 찾기</button>
+    <span id="relocState" class="msg" style="white-space:pre-line"></span>
   </div>
   <div class="zonebar">
     <button id="drawBtn" disabled>금지 구역 그리기</button>
@@ -782,6 +817,23 @@ document.getElementById('exploreBtn').onclick = async ev => {
   renderExplore(); setTimeout(loadExplore, 1000);
 };
 setInterval(() => { if (!document.hidden) loadExplore(); }, 2000); loadExplore();
+// ---------------- 자리 다시 찾기 ----------------
+// 저장한 지도로 다니는 중에만 보인다. 로봇을 손으로 옮기면 위치 잡기는 그걸 모른다(바퀴가 안 돌았으니) —
+// 주행기는 스캔이 지도와 안 맞으면 출발을 거절하고, 이 버튼이 지금 스캔으로 자리를 다시 찾아 알려 준다. 로봇은 움직이지 않는다.
+let relocBusy = false;
+async function loadReloc() {
+  if (relocBusy) return;
+  let r; try { r = await (await fetch('/api/relocate')).json(); } catch (e) { return; }
+  document.getElementById('relocBar').style.display = r.available ? 'flex' : 'none';
+  const st = document.getElementById('relocState');
+  if (r.available && !st.dataset.result) st.textContent = `저장한 지도 ${r.map}(으)로 다니는 중입니다. 로봇을 손으로 옮겼으면 누르세요. 로봇은 움직이지 않습니다.`;
+}
+document.getElementById('relocBtn').onclick = async ev => {
+  const st = document.getElementById('relocState'); relocBusy = true; ev.target.disabled = true; st.textContent = '지금 스캔으로 자리를 찾는 중입니다. 20초쯤 걸립니다.';
+  let r; try { r = await (await fetch('/api/relocate', {method: 'POST', body: '{}'})).json(); } catch (e) { r = {ok: false, text: '대시보드가 응답하지 않습니다.'}; }
+  st.textContent = (r.text || '').trim().split(String.fromCharCode(10)).pop(); st.title = r.text || ''; st.dataset.result = '1'; ev.target.disabled = false; relocBusy = false;
+};
+setInterval(() => { if (!document.hidden) loadReloc(); }, 5000); loadReloc();
 addEventListener('resize', () => { fitMap(); drawOverlay(); });
 setInterval(() => { if (!document.hidden && !(document.activeElement && document.activeElement.hasAttribute('data-name'))) loadKeepout(); }, 1000);
 loadKeepout();
@@ -996,6 +1048,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(keepout_payload(), ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path == "/api/explore":
             self._send(200, json.dumps(Handler.node.explore(), ensure_ascii=False).encode("utf-8"), "application/json")
+        elif self.path == "/api/relocate":
+            m = Handler.node.slam_mode()
+            self._send(200, json.dumps(dict(available=bool(m and m["mode"] == "localization"), map=m["map"] if m else "", busy=_reloc_lock.locked()),
+                                       ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path == "/api/maps":
             self._send(200, json.dumps(list_maps()).encode("utf-8"),
                        "application/json")
@@ -1032,6 +1088,8 @@ class Handler(BaseHTTPRequestHandler):
             }).encode("utf-8"), "application/json")
         elif self.path in ("/api/explore/start", "/api/explore/stop"):
             self._send(200, json.dumps(Handler.node.explore(self.path.rsplit("/", 1)[1]), ensure_ascii=False).encode("utf-8"), "application/json")
+        elif self.path == "/api/relocate":
+            self._send(200, json.dumps(relocate(), ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path in ("/api/keepout", "/api/keepout/restore", "/api/keepout/drop_prev"):
             try:
                 ln = int(self.headers.get("Content-Length", "0") or 0)
