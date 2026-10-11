@@ -4,7 +4,7 @@
     mode: localization, map_file_name: <지도 이름(확장자 없이)>, map_start_pose: [x, y, 방향(rad)]
 시작 자세는 tools/locate_on_map.py가 스캔으로 찾은 값을 넣는다(사람이 놓은 자리를 믿지 않는다).
 
-    python3 tools/localize_params.py --map ~/maps/home_20261011 --pose -0.18,0.38,178.5 --out /tmp/slam_localize.yaml [--sim]
+    python3 tools/localize_params.py --map ~/maps/home_20261011 --pose=-0.18,0.38,178.5 --out /tmp/slam_localize.yaml [--sim]
 """
 import argparse, math, os, sys
 import yaml
