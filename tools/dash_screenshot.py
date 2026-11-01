@@ -25,6 +25,13 @@ CHECK_JS = r"""() => {
       if (w > 2 && h > 2) out.push(`겹침 ${w.toFixed(0)}x${h.toFixed(0)}px: <${kids[i].tagName.toLowerCase()}#${kids[i].id}> "${kids[i].textContent.trim().slice(0, 18)}" ↔ <${kids[j].tagName.toLowerCase()}#${kids[j].id}> "${kids[j].textContent.trim().slice(0, 18)}"`);
     }
   }
+  // 1b) 겹쳐 그리는 캔버스(지도 + 덧그림)의 크기가 같은가 — 다르면 덧그림 좌표가 지도와 어긋난다(11-01). 위 겹침 검사는 절대 배치라 못 잡는다
+  for (const p of document.querySelectorAll('body *')) {
+    const cs = [...p.children].filter(c => c.tagName === 'CANVAS' && vis(c));
+    if (cs.length < 2) continue;
+    const box = c => { const r = c.getBoundingClientRect(), t = getComputedStyle(c); return r.width - parseFloat(t.borderLeftWidth) - parseFloat(t.borderRightWidth); };
+    const w = cs.map(box); if (Math.max(...w) - Math.min(...w) > 3) out.push(`겹친 캔버스 폭 불일치: ${cs.map(c => c.id).join(', ')} ${w.map(v => v.toFixed(0)).join(' 대 ')}px`);
+  }
   // 2) 글자가 칸 밖으로 넘치거나 잘리는가
   for (const e of document.querySelectorAll('body *')) {
     if (!vis(e) || e.children.length || !e.textContent.trim()) continue;
