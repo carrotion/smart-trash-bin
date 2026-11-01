@@ -73,6 +73,15 @@ class StepNavigator:
     _map_msg = None
     _field = None
     pose_check_enforce = True
+    #   왕복 끊기(11-01): 출발 뒤 이 각도보다 큰 회전이 같은 목표에서 flip_max번째면 돌지 않고 끝낸다.
+    #   ⚠️ 11-01 실물 탐색: 닫힌 문 옆 틈의 코스트맵이 로봇 위치에 따라 뚫렸다 막혀 경로가 2.8 m ↔ 15 m로 뒤집히며 ±175° 왕복, 7분 허비.
+    #   근거: 도착한 목표는 실물 13개·시뮬 122개 모두 이런 회전 0번, 왕복한 목표는 2~5번. 1번은 막다른 길에서 돌아서는 정상 동작일 수 있어 허용
+    flip_deg = 150.0
+    flip_max = 2
+    #   시간 제한: 남은 경로 1 m당 이만큼(실측 약 20초/m의 2배)까지 늘린다. 시작값(기본 180초)보다 줄이지 않고 timeout_cap을 넘기지 않는다.
+    #   ⚠️ 11-01 실물 목표 10: 왕복이 아니라 24단계를 착실히 가던 중에 180초에 끊겼다(약 9 m가 한계였다)
+    route_s_per_m = 40.0
+    timeout_cap = 600.0
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -264,9 +273,9 @@ class StepNavigator:
             else:
                 calm = None
 
-    def go(self, goal, max_steps=40, timeout=180.0):
+    def go(self, goal, max_steps=120, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
-        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0
+        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0
         self.path_remaining = None; self.path_pose = None
         # 금지 구역 정보를 아직 못 받았으면 잠깐 기다리고, 끝내 없으면 움직이지 않는다.
         #   ⚠️ 10-10 Stage: 주행기 서버가 뜨자마자 온 첫 목표가 구역 안이었는데, 구역 목록이 아직 안 도착해 '구역 없음'으로 출발 판단
@@ -360,6 +369,10 @@ class StepNavigator:
             i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
             self.path_remaining = sum(math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) for i in range(i0, len(path) - 1))
             self.path_pose = (here[0], here[1])
+            # 지금까지 본 것보다 긴 경로가 나왔을 때만 늘린다. ⚠️ 첫 구현: 재계획마다 늘려 제자리걸음 2 m 목표가 600초까지 갔다(가상 시험에서 잡음)
+            if self.path_remaining > longest:
+                longest = self.path_remaining
+                timeout = min(max(timeout, time.time() - t0 + self.route_s_per_m * longest), max(timeout, self.timeout_cap))
             c = self.carrot(path, here)
             seg = min(self.step_m + 0.01, math.hypot(c[0] - here[0], c[1] - here[1]))   # 균등 분할 걸음은 step_m 이하(반올림 여유 1 cm)
             head = math.atan2(c[1] - here[1], c[0] - here[0])
@@ -407,6 +420,10 @@ class StepNavigator:
                     if near_turns >= 2:
                         return self._done(False, f'가까운 목표 주변 진동({dist * 100:.0f} cm)', step, t0, goal)
                     near_turns += 1
+                flip = step > 0 and abs(dyaw) > math.radians(self.flip_deg) and dist > self.back_max
+                if flip and flips + 1 >= self.flip_max:
+                    self._note(step, 'flip_stop', dict(dyaw=round(math.degrees(dyaw), 1), path_m=round(self.path_remaining, 2), flips=flips + 1), None)
+                    return self._done(False, f'경로가 뒤집혀 왕복 중 — {flips + 1}번째 큰 회전({math.degrees(dyaw):+.0f}°) 전에 멈춤, 남은 경로 {self.path_remaining:.1f} m', step, t0, goal)
                 r = self._turn(step, dyaw, 'turn', replan_after_escape=self.replan_after_escape)
                 if r.get('moved'):
                     continue
@@ -417,6 +434,7 @@ class StepNavigator:
                     self.spin(1.0); continue
                 if not r['ok']:
                     return self._done(False, f'회전 실패: {r["msg"]}', step, t0, goal)
+                flips += flip
                 self.settle()
             room = corridor_clearance(self._scan(), True, 0.0, self.side_margin)
             if room < seg + self.clear_margin and room - self.clear_margin - 0.01 >= self.min_step:

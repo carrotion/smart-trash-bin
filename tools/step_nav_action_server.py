@@ -46,7 +46,11 @@ def main():
     ap.add_argument('--label', default='')
     ap.add_argument('--dump-maps', default=os.environ.get('STEP_NAV_DUMP_MAPS', ''),
                     help='목표를 받을 때마다 그 순간의 SLAM 지도·위치·목표를 이 폴더에 떠 둔다(planner 비교용, tools/planfail_replay.py)')
+    ap.add_argument('--fail-near', default='', help='(시뮬 도메인 전용) x,y,r,초 — 이 원 안의 목표는 움직이지 않고 그 시간 뒤 실패로 돌려준다. 닫힌 문처럼 안 되는 곳을 탐색기가 어떻게 다루는지 보는 시험')
     a = ap.parse_args()
+    fail_near = tuple(float(v) for v in a.fail_near.split(',')) if a.fail_near else None
+    if fail_near and os.environ.get('ROS_DOMAIN_ID', '0') == '0':      # 실물은 도메인 0
+        print('❌ --fail-near는 시뮬 도메인 전용'); return 2
     rclpy.init()
     sim = [Parameter('use_sim_time', Parameter.Type.BOOL, True)] if a.sim_time else []
     n = rclpy.create_node('step_navigator', parameter_overrides=sim)
@@ -169,7 +173,13 @@ def main():
             if a.dump_maps:
                 dump_planfail(k, (x, y), here, out_dir=a.dump_maps)
             try:
-                r = nav.go((x, y, None)) if here else dict(ok=False, msg='map→base_link TF 없음', steps=0, secs=0.0, final_err_m=float('nan'))
+                if fail_near and math.hypot(x - fail_near[0], y - fail_near[1]) <= fail_near[2]:
+                    nav.path_remaining = 5.0; nav.path_pose = here; te = time.time()
+                    while time.time() - te < fail_near[3] and not nav.cancel:
+                        nav.spin(0.1)
+                    r = dict(ok=False, msg='시험: 닫힌 문 흉내', steps=0, secs=time.time() - te, final_err_m=0.0)
+                else:
+                    r = nav.go((x, y, None)) if here else dict(ok=False, msg='map→base_link TF 없음', steps=0, secs=0.0, final_err_m=float('nan'))
             except Exception as e:   # 주행기가 죽어도 목표를 준 쪽이 영영 기다리지 않게 실패로 돌려준다
                 if not rclpy.ok():
                     break

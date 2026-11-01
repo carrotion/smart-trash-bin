@@ -301,6 +301,54 @@ def main():
               and r3['ok'] and len(calls) >= 2
               and r4['ok'] and not [e for e in nav4.log if e['kind'] == 'pose_check'][0]['ok'],
               f'맞는 자리 비율 {min(e["ratio"] for e in pc):.2f}({len(pc)}회) | 어긋난 자리 비율 {pc2[0]["ratio"]:.2f} → {r2["msg"][:28]}…, 이동 {math.hypot(P2["x"], P2["y"]) * 100:.0f} cm | 재확인 뒤 {r3["msg"]} | 끔 {r4["msg"]}')
+        builtins.print = lambda *a, **k: None
+        #  13. 왕복 끊기(11-01 닫힌 문 옆 틈): 위치에 따라 경로가 앞뒤로 뒤집히는 가상 planner. 2번째 큰 회전 전에 멈춘다.
+        #      막다른 길에서 한 번 돌아서는 것은 그대로 도착해야 한다
+        def line(here, pts):
+            out = [(here[0], here[1])]
+            for x, y, *_ in pts:
+                x0, y0 = out[-1]; n = max(1, int(math.hypot(x - x0, y - y0) / 0.05))
+                out += [(x0 + (x - x0) * k / n, y0 + (y - y0) * k / n) for k in range(1, n + 1)]
+            return out
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0)
+        nav.plan = lambda here, goal: (line(here, [goal]) if here[0] < 0.5 else line(here, [(-6.0, 0.0), (-6.0, 4.0), goal]), '')
+        r = nav.go((2.0, 0.0, None)); big = [e for e in nav.log if e['kind'] == 'turn' and abs(e['arg']) > 150]
+        kinds = [e['kind'] for e in nav.log]
+        nav2, P2 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); seen = []
+        def dead_end(here, goal):
+            if here[0] > 0.9:
+                seen.append(1)
+            return (line(here, [goal]) if seen else line(here, [(3.0, 0.0), (3.0, 3.0), goal]), '')
+        nav2.plan = dead_end
+        r2 = nav2.go((-1.0, 0.0, None))
+        nav3, P3 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); nav3.flip_max = 99
+        nav3.plan = nav.plan; r3 = nav3.go((2.0, 0.0, None), max_steps=30)
+        big3 = [e for e in nav3.log if e['kind'] == 'turn' and abs(e['arg']) > 150]
+        builtins.print = quiet
+        check('경로 왕복 → 2번째 큰 회전 전에 멈춤 / 막다른 길 한 번은 도착 / 끊기가 없으면 왕복 재현',
+              not r['ok'] and '왕복' in r['msg'] and len(big) == 1 and 'flip_stop' in kinds and r2['ok'] and not r3['ok'] and len(big3) >= 5,
+              f'{r["msg"]} | 큰 회전 {len(big)}번 | 막다른 길: {r2["msg"]} | 끊기 없을 때 큰 회전 {len(big3)}번')
+        builtins.print = lambda *a, **k: None
+        #  14. 시간 제한은 경로 길이에 맞춘다. 시계를 걸음마다 8초씩 흘린다(실측 약 20초/m). 15 m는 도착(예전 180초면 약 9 m에서 끊김),
+        #      제자리걸음이면 짧은 경로는 180초, 긴 경로도 600초에서 끊는다
+        import step_navigator as sn
+        real_time = sn.time; clock = [1000.0]; sn.time = types.SimpleNamespace(time=lambda: clock[0], sleep=lambda t: None)
+        try:
+            def timed(goal, moves):
+                nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); d0 = nav.driver.drive_by
+                def drive(d):
+                    clock[0] += 8.0
+                    return d0(d) if moves else dict(ok=True, msg='', err_m=0.0, fixes=0, secs=8.0)
+                nav.driver.drive_by = drive
+                return nav.go(goal)
+            r15 = timed((15.0, 0.0, None), True); rs = timed((2.0, 0.0, None), False); rl = timed((30.0, 0.0, None), False)
+        finally:
+            sn.time = real_time
+        builtins.print = quiet
+        check('시간 제한: 15 m 도착 / 제자리걸음 2 m는 180초, 30 m는 600초에 끊김',
+              r15['ok'] and r15['secs'] > 180 and rs['msg'] == '시간 초과' and 180 <= rs['secs'] <= 196 and rl['msg'] == '시간 초과' and 600 <= rl['secs'] <= 616,
+              f'15 m: {r15["msg"]} {r15["secs"]:.0f}초 | 2 m 제자리: {rs["secs"]:.0f}초 | 30 m 제자리: {rl["secs"]:.0f}초')
+        builtins.print = lambda *a, **k: None
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')
