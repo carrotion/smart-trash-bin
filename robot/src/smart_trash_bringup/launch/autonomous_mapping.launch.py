@@ -131,7 +131,11 @@ def generate_launch_description():
                          map_topic='/map_explore',
                          frontier_suppression_enabled=True,
                          frontier_suppression_attempt_threshold=3,
-                         frontier_suppression_no_progress_timeout_s=30.0)],
+                         frontier_suppression_no_progress_timeout_s=30.0,
+                         # ⚠️ 11-01 실물: 실패 기억이 기본 90초라 닫힌 문 쪽 목표에 7분을 되풀이했다(한 시도 60~150초).
+                         #   15분이면 한 번의 탐색 안에서는 다시 안 가고, 문이 열렸으면 다음 시도에서 들어간다. 근거는 docs/motion_foundation.md
+                         frontier_suppression_timeout_s=900.0,
+                         all_frontiers_suppressed_behavior='return_to_start')],
         condition=IfCondition(PythonExpression([
             "'", LaunchConfiguration('enable_explore'), "' == 'true' and '",
             LaunchConfiguration('explorer'), "' == 'frontier' and '",

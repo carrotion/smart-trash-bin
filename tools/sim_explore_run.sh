@@ -27,6 +27,9 @@ fi
 if [ "$STEP" = 1 ]; then
   python3 -u tools/step_nav_action_server.py --odom-topic /odom --gyro-from-odom --label sim $STEP_NAV_ARGS > $OUT/server.log 2>&1 &
   SP=$!
+  # ⚠️ 11-01: 서버가 인자 오류로 안 떴는데 시뮬이 15분씩 두 번 끝까지 돌았다 → 죽어 있으면 기다리지 않는다
+  sleep 8
+  if ! kill -0 $SP 2>/dev/null; then echo "❌ 주행기 서버가 뜨지 않음 — $OUT/server.log"; tail -2 $OUT/server.log; DUR=1; fi
 fi
 timeout $((DUR + 10)) python3 tools/map_coverage_logger.py --out $OUT/coverage.csv --sim-time --interval 5 --duration $DUR > $OUT/coverage.log 2>&1
 [ -n "$SP" ] && kill -TERM $SP
