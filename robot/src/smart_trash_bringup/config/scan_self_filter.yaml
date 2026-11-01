@@ -42,3 +42,39 @@
         # false = 다각형 **안쪽**을 제거 (자기 구조물 제거가 목적)
         invert: false
         transform_timeout: 5.0
+    # 자기 구조물 모서리의 허상 반사(2026-11-01): 광선이 구조물(8 cm)과 뒤쪽 벽에 걸치면 그 사이 값(9~16 cm)이 나온다. 실물 없음.
+    #   주행기 "앞 여유 0" 실패 9건 중 7건의 원인(차체 좌표 (0.11, ±0.145) 등, docs/motion_foundation.md "허상 반사" 절).
+    #   라이다 위치에서 18 cm까지의 좁은 쐐기만 지운다 — 폭 3~5°는 15 cm에서 약 1.2 cm라 병 같은 물체는 가려지지 않고, 실제 벽(20 cm 이상)은 남는다.
+    #   ⚠️ 라이다 위 구조물·케이블을 옮기면 각도가 바뀐다: tools/scan_ghost_eval.py로 다시 잴 것
+    filter2:
+      name: ghost_left_rear
+      type: laser_filters/StaticLaserScanPolygonFilter
+      params:
+        polygon_frame: base_link
+        polygon: '[[0.054, 0.0], [0.1721, 0.1358], [0.1623, 0.1438]]'
+        invert: false
+        transform_timeout: 5.0
+    filter3:
+      name: ghost_left_front
+      type: laser_filters/StaticLaserScanPolygonFilter
+      params:
+        polygon_frame: base_link
+        polygon: '[[0.054, 0.0], [0.1301, 0.1631], [0.1156, 0.1691]]'
+        invert: false
+        transform_timeout: 5.0
+    filter4:
+      name: ghost_right_front
+      type: laser_filters/StaticLaserScanPolygonFilter
+      params:
+        polygon_frame: base_link
+        polygon: '[[0.054, 0.0], [0.1126, -0.1702], [0.1214, -0.1669]]'
+        invert: false
+        transform_timeout: 5.0
+    filter5:
+      name: ghost_right_rear
+      type: laser_filters/StaticLaserScanPolygonFilter
+      params:
+        polygon_frame: base_link
+        polygon: '[[0.054, 0.0], [0.1572, -0.1474], [0.1673, -0.1399]]'
+        invert: false
+        transform_timeout: 5.0
