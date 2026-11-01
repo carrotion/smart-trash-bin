@@ -642,7 +642,9 @@ const HANDLE = 14;            // 모서리 손잡이를 잡는 반경(px)
 
 function fitMap() {           // 격자를 카드 폭과 화면 높이 70%에 맞춰 키우거나 줄인다(작은 지도도 크게, 긴 지도는 화면 안에)
   if (!G) return;
-  const availW = document.getElementById('mapWrap').parentElement.clientWidth - 2;
+  // ⚠️ clientWidth엔 안쪽 여백이 들어 있다 — 빼지 않아 폭에 맞춰지는 창에서 지도 그림이 덧그림(구역·로봇)보다 커졌다(11-01: 1098 대 1066 px, 폰 356 대 324)
+  const par = document.getElementById('mapWrap').parentElement, ps = getComputedStyle(par);
+  const availW = par.clientWidth - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight) - 2;
   const sc = Math.min(availW / G.w, innerHeight * 0.7 / G.h, 12);
   canvas.style.width = (G.w * sc) + 'px'; canvas.style.height = (G.h * sc) + 'px';
   const dpr = devicePixelRatio || 1, W = Math.round(G.w * sc * dpr), H = Math.round(G.h * sc * dpr);

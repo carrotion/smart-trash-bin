@@ -58,10 +58,18 @@ def main():
         print('❌ 로봇이 움직이는 중이다 — 서 있을 때만 옮긴다'); return 1
     if not d['lidar'].get('ok'):
         print('❌ 스캔이 안 들어온다'); return 1
-    r = locate(base, d['lidar']['pts'], *whole_area(base)); b = r[0]
-    print(f'저장 지도 위 자리 ({b["x"]:+.2f}, {b["y"]:+.2f}) m, {math.degrees(b["yaw"]):+.1f}° — 벽 위 {b["on_wall"] * 100:.0f}%, 점수 {b["score"]:.2f}'
-          + (f' (2등 {r[1]["score"]:.2f})' if len(r) > 1 else '') + f' | 새 지도 위 자리(오도메트리) ({new[0]:+.2f}, {new[1]:+.2f}) m, {math.degrees(new[2]):+.1f}°')
-    if b['on_wall'] < 0.85 or (len(r) > 1 and r[1]['score'] > 0.85 * b['score']):
+    # 확신 기준: 스캔 3장이 같은 자리 + 2등과 차이 큼 + 벽 위 75% 이상. ⚠️ 11-01 실물: 지도를 그리고 3주 뒤 거실에 물건이 늘어 벽 위 77~85%였지만
+    #   자리는 4번 모두 2 cm 안, 점수 0.75 대 2등 0.43, 맞지 않는 점은 전부 소파 앞·거실의 빈 칸이었다. 벽 위 비율만 보면 멀쩡한 자리를 거절한다.
+    #   도크 위는 0.70 대 0.68로 여전히 거절. 저장 지도로 시작(MAP=, 벽 위 85%)은 건드리지 않음 — 이쪽은 시작 전에 사람이 화면에서 구역을 본다
+    area = whole_area(base); R = [locate(base, d['lidar']['pts'], *area)]
+    for _ in range(2):
+        time.sleep(0.5); R.append(locate(base, overview()['lidar']['pts'], *area))
+    B = [q[0] for q in R]; b = B[-1]
+    spread = max(math.hypot(p['x'] - b['x'], p['y'] - b['y']) for p in B); ang = max(abs((p['yaw'] - b['yaw'] + math.pi) % (2 * math.pi) - math.pi) for p in B)
+    ratio = max(q[1]['score'] / q[0]['score'] for q in R if len(q) > 1) if all(len(q) > 1 for q in R) else 0.0; wall = min(p['on_wall'] for p in B)
+    print(f'저장 지도 위 자리 ({b["x"]:+.2f}, {b["y"]:+.2f}) m, {math.degrees(b["yaw"]):+.1f}° — 3장 차이 {spread * 100:.0f} cm·{math.degrees(ang):.1f}°, 벽 위 최소 {wall * 100:.0f}%, 2등/1등 최대 {ratio:.2f}'
+          + f' | 새 지도 위 자리(오도메트리) ({new[0]:+.2f}, {new[1]:+.2f}) m, {math.degrees(new[2]):+.1f}°')
+    if spread > 0.05 or ang > math.radians(2) or ratio > 0.70 or wall < 0.75:
         print('❌ 자리를 확신하지 못해 구역을 옮기지 않는다 — 벽이 잘 보이는 곳(도크 밖)에 두고 다시'); return 1
     zones = carry(keepout.load(base + '.keepout.json')['zones'], (b['x'], b['y'], b['yaw']), new)
     print(f'구역 {len(zones)}개를 옮김: ' + ', '.join(z['name'] for z in zones))
