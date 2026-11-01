@@ -88,7 +88,8 @@ z = keepout.load('$B.keepout.json')['zones']; keepout.save(dict(keepout.load(), 
     [ -n "$LP" ] && kill -KILL $LP && sleep 1
     # 떠돌이 = 관련 이름인데 systemd 서비스 소속이 아닌 프로세스(서비스 라이다는 정상)
     SVC=$(cat /sys/fs/cgroup/system.slice/smart-trash-*.service/cgroup.procs 2>/dev/null | tr '\n' ' ')
-    STRAY=$(ps -eo pid,args | grep -v grep | grep -E "$(echo $NODES | tr ' ' '|')" | awk -v svc=" $SVC " 'index(svc, " "$1" ")==0 {print $1, $2}')
+    # 부르는 셸은 뺀다: 명령줄에 노드 이름이 들어 있으면 셸 자신이 떠돌이로 잡혀 라이다 서비스를 안 켰다(11-01)
+    STRAY=$(ps -eo pid,comm,args | grep -v grep | grep -E "$(echo $NODES | tr ' ' '|')" | awk -v svc=" $SVC " '$2 !~ /^(bash|sh|dash|awk|timeout|sudo)$/ && index(svc, " "$1" ")==0 {print $1, $3}')
     if [ -n "$STRAY" ]; then
       echo "❌ 서비스 밖 관련 프로세스가 남아 있다 — 라이다 서비스 켜지 않음:"; echo "$STRAY" | sed 's/^/    /'
       exit 1
