@@ -25,7 +25,7 @@ if [ "${EXPLORE_FILTER:-1}" = 1 ]; then
   MF_PID=$!
 fi
 if [ "$STEP" = 1 ]; then
-  python3 -u tools/step_nav_action_server.py --odom-topic /odom --gyro-from-odom --label sim > $OUT/server.log 2>&1 &
+  python3 -u tools/step_nav_action_server.py --odom-topic /odom --gyro-from-odom --label sim $STEP_NAV_ARGS > $OUT/server.log 2>&1 &
   SP=$!
 fi
 timeout $((DUR + 10)) python3 tools/map_coverage_logger.py --out $OUT/coverage.csv --sim-time --interval 5 --duration $DUR > $OUT/coverage.log 2>&1
