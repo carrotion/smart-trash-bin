@@ -648,6 +648,7 @@ class DiffDriveNode(Node):
         self._turn_i = 0.0            # 회전 폐루프 적분항
         self._prev_control_time = None
         self._gyro_ts = None          # 자이로 최신 수신 시각(신선도 판단용)
+        self._last_pwm4 = [0, 0, 0, 0]
         self._target_left_pwm = 0
         self._target_right_pwm = 0
 
@@ -934,7 +935,15 @@ class DiffDriveNode(Node):
         뒷바퀴 affine/모터 오프셋을 거치지 않는다."""
         lim = self._velocity_max_pwm
         out = [int(max(-lim, min(lim, vals[i] * self._pwm_sign[i]))) for i in range(4)]
+        self._last_pwm4 = out
         self._send(f'$pwm:{out[0]},{out[1]},{out[2]},{out[3]}#'.encode())
+
+    def _zero_stale_pwm4(self):
+        """보드에 남은 $pwm 값을 0으로. ⚠️ 2026-11-01 사고: 능동 제동은 목표(_target_*)를 0으로 둔 채 제동 PWM을 보낸다 — 제동 중에
+        명령이 끊기면 시간 초과 처리가 "목표 0이니 보낼 것 없음"으로 넘어가 PWM이 보드에 남았다. 바닥에선 마찰에 눌려 안 보이다가
+        도크(바퀴 뜸)에 올리자 명령 0인 채 뒷바퀴가 돌았다. 재현: tools/stale_pwm_dock_test.py"""
+        if any(self._last_pwm4):
+            self._send_pwm4([0, 0, 0, 0])
 
     def _side_values(self, v):
         """바퀴별 값 v[4](거리 또는 속도, 전진 +) → 측별 값 {'L','R'}.
@@ -1337,6 +1346,7 @@ class DiffDriveNode(Node):
                 self._target_left_pwm = 0
                 self._target_right_pwm = 0
                 self._apply_pwm(0, 0)
+            self._zero_stale_pwm4()
             self._turn_i = 0.0
             self._ramped_v = 0.0
             self._reset_velocity_state()
@@ -1349,6 +1359,7 @@ class DiffDriveNode(Node):
                 self._target_left_pwm = 0
                 self._target_right_pwm = 0
                 self._apply_pwm(0, 0)
+            self._zero_stale_pwm4()
             self._turn_i = 0.0
             self._ramped_v = 0.0
             self._reset_velocity_state()
