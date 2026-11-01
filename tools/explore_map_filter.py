@@ -56,7 +56,13 @@ def _grow(seed, allowed, steps=None):
     return out
 
 
-def reachable(grid, res, ox, oy, robot_xy, zones=(), inscribed=keepout.INSCRIBED, edge=EDGE):
+# 차체 중심이 설 수 있는 칸: 벽·구역에서 이만큼 넘게 떨어진 칸. 처음엔 차체 반폭(0.11)이었으나 11-01 실물에서 닫힌 문 옆 틈(코스트 84~99, 실제 못 지나감) 너머가
+#   "닿음"으로 남아 왕복했다. 두 녹화로 고른 값: 0.15면 도착한 목표 13개 모두 유지, 왕복 쪽 목표 6개 중 4개 제외. 0.16이면 실제로 도착한 A방 목표가 빠진다
+#   ⚠️ 여유가 0.01뿐이고 왕복 쪽 2개는 남는다 — 이것만으로 왕복이 사라진다고 보지 말 것. 실물로 다시 잴 것
+STAND = 0.15
+
+
+def reachable(grid, res, ox, oy, robot_xy, zones=(), inscribed=STAND, edge=EDGE):
     """(닿는 영역, 남길 빈 칸) 두 장의 bool 격자. grid는 OccupancyGrid 값(−1 모름, 0 빈 칸, 100 벽), 행 0 = 아래쪽.
     로봇 자리가 설 수 없는 칸이면(벽 옆에 바짝) 0.3 m 안의 가장 가까운 설 수 있는 칸에서 시작한다. 그것도 없으면 (None, None)."""
     occ = grid >= OCC; free = (grid >= 0) & ~occ; zm = zone_mask(grid.shape, res, ox, oy, zones) if zones else np.zeros(grid.shape, bool)
@@ -149,8 +155,8 @@ def self_test():
     out, reach = filtered(g, res, 0.0, 0.0, (1.0, 2.0), z)
     case('문을 구역으로 막음 → 옆방의 경계가 사라지고 이쪽 방은 그대로', right_frontier(out) == 0 and frontier_cells(out[:, :60]) == frontier_cells(g[:, :60]) and (g == out)[g != 0].all(),
          f'옆방 경계 칸 {right_frontier(g)} → {right_frontier(out)}, 이쪽 {frontier_cells(g[:, :60])} → {frontier_cells(out[:, :60])}')
-    n20 = right_frontier(filtered(world(4), res, 0.0, 0.0, (1.0, 2.0))[0]); n30 = right_frontier(filtered(world(6), res, 0.0, 0.0, (1.0, 2.0))[0])
-    case('틈 0.20 m는 못 지나감(차체 0.22 m) / 0.30 m는 지나감', n20 == 0 and n30 > 0, f'옆방 경계 칸: 0.20 m {n20}, 0.30 m {n30}')
+    n20 = right_frontier(filtered(world(6), res, 0.0, 0.0, (1.0, 2.0))[0]); n30 = right_frontier(filtered(world(8), res, 0.0, 0.0, (1.0, 2.0))[0])
+    case('틈 0.30 m는 못 지나감(주행기 통로 0.32 m) / 0.40 m는 지나감', n20 == 0 and n30 > 0, f'옆방 경계 칸: 0.30 m {n20}, 0.40 m {n30}')
     out, reach = filtered(g, res, 0.0, 0.0, (2.96, 1.0))
     case('로봇이 벽에 바짝(설 수 없는 칸) → 가까운 설 수 있는 칸에서 시작', reach is not None and right_frontier(out) > 0, f'닿는 칸 {0 if reach is None else int(reach.sum())}')
     out, reach = filtered(g, res, 0.0, 0.0, (30.0, 30.0))
