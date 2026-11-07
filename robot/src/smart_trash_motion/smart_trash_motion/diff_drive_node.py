@@ -30,6 +30,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Int32MultiArray, String
+from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
 _MALL_RE = re.compile(r"^\$MAll:(-?\d+),(-?\d+),(-?\d+),(-?\d+)#$")
@@ -624,6 +625,16 @@ class DiffDriveNode(Node):
         # 백그라운드로 계속 폴링하고, ROS 타이머는 캐시된 최신값만 읽어서
         # 즉시 발행 — cmd_vel 콜백이 더 이상 엔코더 폴링에 막히지 않는다.
         self._counts_lock = threading.Lock()
+        # 모터 보드 무응답 감시(2026-11-07 사고): 보드 STM32가 멈추면 마지막 PWM을 붙든 채 바퀴가 계속 돌고, 정지 명령도
+        #   비상정지도 전달되지 않았다(빨래 걸이에 걸려 바퀴가 막힌 뒤 전압 11.18 V까지 출렁, 17:00:15부터 무응답 → 사용자가
+        #   도크에 올렸는데도 바퀴가 돎). CH340의 RTS 신호를 낮게→높게→낮게 주자 보드가 리셋되며 바퀴가 멈췄다(원격 실측).
+        #   그래서 응답이 board_reset_after_s 넘게 끊기면 스스로 리셋한다. 평소 스스로 돌아오는 끊김은 최대 5.1초까지 있었지만
+        #   (journal 60건), 그동안 바퀴가 마지막 출력으로 돌 수 있으므로 짧게 잡는다 — 불필요한 리셋의 대가는 잠깐 멈춤뿐
+        self._board_reset_after_s = 1.0
+        self._board_reset_gap_s = 5.0
+        self._board_resets = 0
+        self._last_board_reset = -1e9
+        self._rebaseline = False
         self._latest_counts = None
         self._latest_counts_ts = None
         self._encoder_thread_stop = threading.Event()
@@ -693,6 +704,8 @@ class DiffDriveNode(Node):
         # 이 노드에 아예 안 들어오고 있었다.
         self.create_subscription(Imu, 'imu/data', self._on_imu, 20)
 
+        # 보드 리셋 서비스: 비상정지·배터리 정지가 부른다(보드가 멈춰 정지 명령이 안 먹을 때도 RTS 리셋은 먹는다, 11-07 실측)
+        self.create_service(Trigger, 'reset_motor_board', self._on_reset_board_srv)
         self.create_timer(1.0 / p('odom_rate_hz').value, self._on_odom_timer)
         self.create_timer(0.1, self._on_safety_timer)
         self.create_timer(1.0 / p('control_rate_hz').value, self._on_control_timer)
@@ -739,6 +752,28 @@ class DiffDriveNode(Node):
                 return [int(g) for g in m.groups()], raw
         return None, raw
 
+    def _reset_board(self, why):
+        """모터 보드 STM32를 RTS 신호로 리셋하고 설정을 다시 보낸다(출력 0으로 시작). 리셋하면 보드 엔코더 카운터가 0이 되므로
+        위치 계산 기준값을 다시 잡게 한다."""
+        self._board_resets += 1; self._last_board_reset = time.monotonic()
+        self.get_logger().error(f'모터 보드 리셋: {why} — RTS 신호({self._board_resets}번째). 바퀴 출력이 끊긴다')
+        with self._serial_lock:
+            for v in (False, True, False):
+                self._ser.rts = v
+                time.sleep(0.15)
+        time.sleep(0.8)
+        with self._counts_lock:
+            self._latest_counts = None
+            self._rebaseline = True
+            self._vel_prev = None            # 바퀴 속도 계산의 이전 카운터도(0으로 돌아간 카운터를 큰 역속도로 읽지 않게)
+        self._configure_driver()
+        self._last_pwm4 = [0, 0, 0, 0]
+
+    def _on_reset_board_srv(self, req, res):
+        self._reset_board('요청')
+        res.success = True; res.message = f'보드 리셋 {self._board_resets}번째'
+        return res
+
     def _encoder_poll_loop(self):
         """백그라운드 스레드: 시리얼 왕복(~60ms)이 걸리는 엔코더 폴링을 ROS
         실행기 스레드 밖에서 계속 반복한다. cmd_vel 콜백이 이 폴링에 막히지
@@ -778,6 +813,10 @@ class DiffDriveNode(Node):
                     self.get_logger().warn(
                         f'엔코더 응답 파싱 실패 시작 — 원시 바이트({len(raw)}): {raw!r}')
                 fail_streak += 1
+                if now - fail_streak_start >= self._board_reset_after_s and now - self._last_board_reset >= self._board_reset_gap_s:
+                    self._reset_board(f'무응답 {now - fail_streak_start:.1f}초({fail_streak}회 연속 실패)')
+                    fail_streak = 0
+                    continue
                 if now - last_heartbeat > 2.0:
                     self.get_logger().warn(
                         f'엔코더 응답 계속 실패 중 — {fail_streak}회, '
@@ -1554,6 +1593,8 @@ class DiffDriveNode(Node):
         with self._counts_lock:
             counts = self._latest_counts
             now = self._latest_counts_ts
+            if self._rebaseline:          # 보드 리셋으로 카운터가 0이 됐다 — 그 차이를 이동으로 세지 않는다
+                self._rebaseline = False; self._prev_counts = None
         if counts is None:
             return
 
