@@ -2,6 +2,13 @@
 
 Claude Code가 이 저장소에서 작업할 때마다 참고해야 하는 환경 특이사항과 확정 결정사항. 컨텍스트가 압축되어도 여기 내용은 다시 읽고 재발견 없이 이어서 작업할 것.
 
+## 🔓 공개 저장소 원칙 (2026-11-07 사용자 결정)
+
+이 저장소는 **public**이다. 지난 이력은 그대로 두고, 지금부터 아래 기준으로 운영한다. 경계가 애매하면 올리기 전에 판단하고, 판단이 서지 않으면 사용자에게 묻는다. **커밋 전에 diff를 이 기준으로 본다.**
+- **올린다(프로젝트 범위)**: 로봇·서버의 설계와 코드, 시험 결과, **로봇↔서버 통신 규약**(서버 운영까지 프로젝트 범위), 결정과 이유
+- **올리지 않는다**: 에이전트끼리 주고받은 대화와 그 경로(협업용 보관함·게시판·채팅방의 이름과 구조), IP 주소·계정·비밀번호·토큰(규약과 예시에는 `192.168.0.x` 같은 자리 표시), 이 프로젝트와 무관한 사용자의 다른 일
+- 결정을 적을 때 "누가 정했나"는 "사용자"로 쓴다
+
 ## 🧱 주행 작업 원칙 (2026-09-27 사용자 합의) — `docs/motion_foundation.md`
 
 - 아래층(센서 → 기본 동작 → 위치 추정 → 안전 → 주행 방식)부터 **숫자로 된 합격 기준**으로 검증하고, 합격한 동작만 위층에서 조합한다. 위층에서 문제가 나면 거기서 땜질하지 말고 아래층 기준으로 돌아간다
@@ -1823,7 +1830,7 @@ EXT4-fs (sda2): Remounting filesystem read-only
 - **ROS 2 Jazzy**는 공식적으로 Ubuntu 24.04(Noble)/Python 3.12 타겟이고, 이 시스템의 기본 `python3`가 정확히 3.12라 별도 venv/wrapper 없이 `import rclpy`가 바로 동작함. 26.04 시절 썼던 `~/ros2_venv`/`~/.local/bin/ros2` wrapper 우회는 더 이상 필요 없고 만들지 말 것.
 - 빌드에 `build-essential`(특히 `g++`) 필요 — 이 Pi5 이미지엔 기본으로 없어서 최초 `colcon build` 시 `CMAKE_CXX_COMPILER` 에러로 실패했었음. `sudo apt-get install -y build-essential`로 해결. 새 이미지로 또 재설치하게 되면 이 패키지부터 확인할 것.
 - 개발 중 부팅 디스크는 **외장 USB SSD 128GB**(`/dev/sda2`)를 사용 (microSD 쓰기속도/수명 문제 회피). 최종 배포용 128GB A2 microSD는 별도 확보돼 있음 — 개발 완료 후 전환 예정.
-- GitHub: `carrotion/smart-trash-bin` (private). **인증은 SSH 키**(`~/.ssh/id_ed25519`, 2026-08-01 이 Pi5에서 새로 생성 후 GitHub 계정에 등록) — `gh` CLI는 설치돼 있지 않음, git 명령은 `git@github.com:...` SSH remote로 동작. git 커밋 이메일은 `59335136+carrotion@users.noreply.github.com`.
+- GitHub: `carrotion/smart-trash-bin` (**public** — 2026-11-07 사용자 확인. 예전에 private로 적혀 있었다. 아래 "공개 저장소 원칙" 참고). **인증은 SSH 키**(`~/.ssh/id_ed25519`, 2026-08-01 이 Pi5에서 새로 생성 후 GitHub 계정에 등록) — `gh` CLI는 설치돼 있지 않음, git 명령은 `git@github.com:...` SSH remote로 동작. git 커밋 이메일은 `59335136+carrotion@users.noreply.github.com`.
 - **설치 완료 (2026-08-01, 24.04에서 전부 재확인)**: `ros-jazzy-ros-base`, `ros-jazzy-slam-toolbox`, Nav2 전체(`ros-jazzy-navigation2`, `ros-jazzy-nav2-bringup`, `ros-jazzy-nav2-map-server`), `ros-jazzy-cv-bridge`. 26.04에서 겪었던 boost-python/graphicsmagick 크로스버전 충돌은 24.04에서 재현되지 않음 — Nav2 관련 막힘 이슈는 해소된 것으로 간주.
 
 ## 워크스페이스
