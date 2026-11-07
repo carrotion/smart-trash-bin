@@ -116,6 +116,8 @@ def start_planner(radius='0.35', map_name='real', zones=None):
     my = f'/tmp/step_nav_map_sim_{map_name}.yaml'
     open(my, 'w').write(open(os.path.join(d, 'map.yaml')).read().replace('image: ../../robot/sim_worlds/bitmaps/our_home.png', f'image: {map_path(map_name)}'))
     s = open(os.path.join(d, 'params.template.yaml')).read().replace('RADIUS', radius).replace('yaml_filename: map.yaml', f'yaml_filename: {my}')
+    # 코스트맵 갱신 10 Hz(아래 plan()이 요청마다 다시 계산시킨다 — 실물 코스트맵을 흉내). ⚠️ 11-07 참고
+    s = s.replace('      update_frequency: 1.0\n      publish_frequency: 1.0\n      global_frame: map', '      update_frequency: 10.0\n      publish_frequency: 1.0\n      global_frame: map', 1)
     if zones is not None:        # 금지 구역: 전역 코스트맵에 KeepoutFilter + 구역 서버(실물 런치와 같은 구성)
         s = s.replace('      always_send_full_costmap: true', FILTER_YAML + '      always_send_full_costmap: true'); assert 'keepout_filter' in s
         write_zones(zones)
@@ -145,6 +147,9 @@ def stop_planner(procs):
 
 
 def run_case(node, ac, world, start, goal, quiet=False, zones=None):
+    from nav2_msgs.srv import ClearEntireCostmap
+    clear_cli = getattr(node, '_clear_cli', None) or node.create_client(ClearEntireCostmap, '/global_costmap/clear_entirely_global_costmap')
+    node._clear_cli = clear_cli
     near = world[np.hypot(world[:, 0] - start[0], world[:, 1] - start[1]) < 6.0]
     nav, P = make(world=[tuple(p) for p in near])
     P['x'], P['y'], P['th'] = start[0], start[1], math.radians(start[2])
@@ -173,6 +178,14 @@ def run_case(node, ac, world, start, goal, quiet=False, zones=None):
         return m
 
     def plan(here, g):
+        # ⚠️ 11-07: NavFn은 요청마다 출발 칸을 공유 코스트맵에 FREE_SPACE로 써 넣는다(clearRobotCell, Jazzy 소스). 실물은 센서 갱신이
+        #   로봇 주변을 매 주기 다시 계산해 그 구멍이 곧 지워지지만, 이 시뮬은 고정 지도뿐이라 구멍이 쌓여 장애물 옆에서 자주 묻는
+        #   주행기에서 계획이 "legal potential … failed"로 연달아 실패했다(의자 통로 c12부터 끝까지). 요청마다 코스트맵을 다시 계산시킨다
+        if clear_cli.wait_for_service(timeout_sec=0.0) or clear_cli.wait_for_service(timeout_sec=2.0):
+            fc = clear_cli.call_async(ClearEntireCostmap.Request()); rclpy.spin_until_future_complete(node, fc, timeout_sec=2)
+            t_c = time.time()
+            while time.time() - t_c < 0.15:
+                rclpy.spin_once(node, timeout_sec=0.02)
         req = ComputePathToPose.Goal(); req.start = ps(here[0], here[1]); req.goal = ps(g[0], g[1]); req.use_start = True
         f = ac.send_goal_async(req); rclpy.spin_until_future_complete(node, f, timeout_sec=10)
         if not f.done() or not f.result().accepted:

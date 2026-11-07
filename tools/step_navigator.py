@@ -670,36 +670,46 @@ class StepNavigator:
         return out
 
     def _turn(self, step, dyaw, kind, replan_after_escape=False):
-        """제자리 회전. 먼저 반경 rot_radius 안이 비었는지 보고, 막혔으면 앞/뒤로 가장 짧게(5~25 cm) 떨어진 뒤 돈다.
+        """제자리 회전. 먼저 반경 안이 비었는지 보고, 막혔으면 앞/뒤로 곧게(최대 60 cm) 떨어져 돌 자리를 찾은 뒤 돈다.
+        반경은 두 단계: 평소 rot_radius + rot_extra, 그런 자리가 없을 때만 rot_radius(3층 안전장치 반경 0.20 + 2 cm).
+        ⚠️ 11-07 일곱 번째 탐색: 넓은 기준(0.24)만 쓰니 앞 물체(중심 13.5 cm)와 뒤 벽 사이에서 돌 자리가 61 cm 뒤로 밀려(뒤 여유 19 cm라 불가)
+        "회전 반경 막힘"으로 멈췄다 — 0.22면 9~11 cm 뒤에서 돌 수 있었다(실제 스캔 176점, tools/test_data/trap7_pts.json).
+        반경을 0.22 하나로 되돌리면 의자 통로 시뮬에서 다리와 1.6 cm까지 붙었다 → 평소엔 넓게, 막혔을 때만 좁게.
         떨어질 수 없으면 돌지 않고 dict(ok=False, blocked=True)."""
+        def find_move(R):
+            pts = self._near_pts(R + 0.65)
+            # 1 cm 간격, 최대 60 cm(⚠️ 11-07 다섯 번째 탐색: 25 cm 안에는 돌 자리가 없어 갇혔다 — 벽이 끝나는 45~50 cm 뒤까지 가야 했다)
+            for d in [k / 100 for k in range(2, 61)]:
+                for sg in (d, -d):
+                    if all(math.hypot(x - sg, y) > R for x, y in pts):
+                        return sg
+            return None
         R = self.rot_radius + self.rot_extra
         near = [p for p in self._near_pts(R)]
         if near:
-            # 돌 자리 찾기: 앞뒤로 곧게 최대 60 cm. ⚠️ 11-07 다섯 번째 탐색: 왼쪽 벽이 차체 옆(중심에서 20 cm)을 따라 이어진 자리에서
-            #   25 cm 안에는 돌 자리가 없어 "회전 반경 막힘"으로 갇혔다 — 벽이 끝나는 45~50 cm 뒤까지 가야 돌 수 있었다
-            pts = self._near_pts(R + 0.65); move = None
-            for d in [k / 100 for k in range(5, 61, 5)]:
-                for s in (d, -d):
-                    if all(math.hypot(x - s, y) > R for x, y in pts):
-                        move = s; break
-                if move is not None:
-                    break
-            self._note(step, 'rot_near', dict(pts=[(round(x, 3), round(y, 3)) for x, y in near[:6]], move=move), None)
+            move = find_move(R)
+            if move is None and self.rot_extra > 0:
+                R = self.rot_radius
+                move = 0.0 if not self._near_pts(R) else find_move(R)
+            self._note(step, 'rot_near', dict(pts=[(round(x, 3), round(y, 3)) for x, y in near[:6]], move=move, radius=round(R, 2)), None)
             if move is None and self.last_fwd > 0.03:
                 # 돌 자리가 없으면 회전 없이 방금 들어온 직진을 곧게 되돌린다(들어온 길이라 옆 간격이 그대로) → 호출한 쪽이 다시 계획
                 d = -min(self.last_fwd, 0.40)
                 if self._straight(step, d, 'rot_retrace', margin=0.05):
                     self.last_fwd = 0.0
                     return dict(ok=True, moved=True, msg='')
-            if move is None or not self._straight(step, move, 'rot_clear', margin=0.05):
+            if move is None:
                 return dict(ok=False, blocked=True, msg='회전 반경 안 장애물 — 떨어질 곳 없음')
-            self.settle()
-            if self._near_pts(R):
-                return dict(ok=False, blocked=True, msg='떨어진 뒤에도 회전 반경 안 장애물')
-            if replan_after_escape:
-                # ⚠️ 10-10 지도 가상 시험(문틈): 떨어지느라 위치가 10~20 cm 바뀌었는데 떨어지기 전에 정한 각도로 돌아
-                #   앞이 막힘(헛회전 2회). 위치가 바뀌었으면 돌지 말고 경로·방향부터 다시 정한다
-                return dict(ok=True, moved=True, msg='')
+            if move != 0.0:
+                if not self._straight(step, move, 'rot_clear', margin=0.05):
+                    return dict(ok=False, blocked=True, msg='회전 반경 안 장애물 — 떨어질 곳 없음')
+                self.settle()
+                if self._near_pts(R):
+                    return dict(ok=False, blocked=True, msg='떨어진 뒤에도 회전 반경 안 장애물')
+                if replan_after_escape:
+                    # ⚠️ 10-10 지도 가상 시험(문틈): 떨어지느라 위치가 10~20 cm 바뀌었는데 떨어지기 전에 정한 각도로 돌아
+                    #   앞이 막힘(헛회전 2회). 위치가 바뀌었으면 돌지 말고 경로·방향부터 다시 정한다
+                    return dict(ok=True, moved=True, msg='')
         r = self.turner.turn_by(dyaw); self._note(step, kind, math.degrees(dyaw), r); self.last_fwd = 0.0
         return r
 
