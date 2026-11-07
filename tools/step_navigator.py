@@ -538,7 +538,10 @@ class StepNavigator:
             return False
         width, n, an, t, L, R = best
         if width < 2 * 0.11 + 0.06:
-            self._note(step, 'gap_too_narrow', dict(width=round(width, 3)), None)
+            # ⚠️ 11-07 여섯 번째 탐색: 장애물이 경로 위에 걸치면 그 점이 경로 양쪽에 하나씩 잡혀 "폭 0.4 cm"가 된다 — 틈이 아니라 막힌 경로.
+            #   동작(정렬하지 않음)은 맞으므로 기록만 나눈다. 건너뛰고 더 먼 틈을 찾게 바꿨더니 의자 통로 시험이 나빠졌다(17/20 → 15/20)
+            kind = 'gap_path_blocked' if min(L[0], R[0]) <= 0.05 else 'gap_too_narrow'
+            self._note(step, kind, dict(width=round(width, 3), left=round(L[0], 3), right=round(R[0], 3)), None)
             return False
         # 틈 축 = 양옆 점을 잇는 선에 수직(경로 쪽 방향). ⚠️ 경로 방향으로 섰더니 경로가 틈에 26~31° 비스듬히 들어가 몸도 비스듬히 섰다
         cx0, cy0 = (L[1] + R[1]) / 2, (L[2] + R[2]) / 2
