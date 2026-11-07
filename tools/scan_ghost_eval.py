@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from speed_floor_sweep import corridor_clearance
 
 LX = 0.054
-WEDGES = ((49, 53), (65, 70), (289, 292), (305, 309))   # 허상이 나오는 방향(도, 0=앞·90=왼쪽)
+WEDGES = ((48, 72), (164, 176), (182, 192), (232, 248), (288, 310))   # 자기 구조물이 차지하는 방향(기준 칸 ±4°, 도, 0=앞·90=왼쪽) — 11-07: 모서리 4곳만 지웠더니 60°(가운데)에서도 허상
 
 
 def wedges(r, ang):

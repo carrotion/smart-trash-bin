@@ -664,14 +664,22 @@ class StepNavigator:
         R = self.rot_radius + self.rot_extra
         near = [p for p in self._near_pts(R)]
         if near:
-            pts = self._near_pts(R + 0.3); move = None
-            for d in (0.05, 0.10, 0.15, 0.20, 0.25):
+            # 돌 자리 찾기: 앞뒤로 곧게 최대 60 cm. ⚠️ 11-07 다섯 번째 탐색: 왼쪽 벽이 차체 옆(중심에서 20 cm)을 따라 이어진 자리에서
+            #   25 cm 안에는 돌 자리가 없어 "회전 반경 막힘"으로 갇혔다 — 벽이 끝나는 45~50 cm 뒤까지 가야 돌 수 있었다
+            pts = self._near_pts(R + 0.65); move = None
+            for d in [k / 100 for k in range(5, 61, 5)]:
                 for s in (d, -d):
                     if all(math.hypot(x - s, y) > R for x, y in pts):
                         move = s; break
                 if move is not None:
                     break
             self._note(step, 'rot_near', dict(pts=[(round(x, 3), round(y, 3)) for x, y in near[:6]], move=move), None)
+            if move is None and self.last_fwd > 0.03:
+                # 돌 자리가 없으면 회전 없이 방금 들어온 직진을 곧게 되돌린다(들어온 길이라 옆 간격이 그대로) → 호출한 쪽이 다시 계획
+                d = -min(self.last_fwd, 0.40)
+                if self._straight(step, d, 'rot_retrace', margin=0.05):
+                    self.last_fwd = 0.0
+                    return dict(ok=True, moved=True, msg='')
             if move is None or not self._straight(step, move, 'rot_clear', margin=0.05):
                 return dict(ok=False, blocked=True, msg='회전 반경 안 장애물 — 떨어질 곳 없음')
             self.settle()
