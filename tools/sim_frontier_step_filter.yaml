@@ -9,7 +9,7 @@ frontier_explorer:
     frontier_suppression_attempt_threshold: 3
     # 진행 없음 감시: 주행기 서버가 남은 거리(경로 길이 기준)를 0.5초마다 보낸다(10-10). 멈춤-확인-이동은 큰 회전 동안 거리가
     #   안 준다 — 기록상 직진 없는 가장 긴 구간이 실물 12.9초(73구간)·시뮬 11.3초(367구간), 20초 초과 0 → 기본 20초에 여유를 둬 30초
-    frontier_suppression_no_progress_timeout_s: 30.0
+    frontier_suppression_no_progress_timeout_s: 60.0   # 실물 런치와 같게(11-07: 좁은 틈 정렬 때문에 30 → 60)
     # 실패 기억 15분 + 전부 제외되면 시작 자리로(실물 런치와 같은 값, 11-01)
     frontier_suppression_timeout_s: 900.0
     all_frontiers_suppressed_behavior: return_to_start
