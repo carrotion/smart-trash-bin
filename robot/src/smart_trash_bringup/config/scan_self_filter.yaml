@@ -42,39 +42,49 @@
         # false = 다각형 **안쪽**을 제거 (자기 구조물 제거가 목적)
         invert: false
         transform_timeout: 5.0
-    # 자기 구조물 모서리의 허상 반사(2026-11-01): 광선이 구조물(8 cm)과 뒤쪽 벽에 걸치면 그 사이 값(9~16 cm)이 나온다. 실물 없음.
-    #   주행기 "앞 여유 0" 실패 9건 중 7건의 원인(차체 좌표 (0.11, ±0.145) 등, docs/motion_foundation.md "허상 반사" 절).
-    #   라이다 위치에서 18 cm까지의 좁은 쐐기만 지운다 — 폭 3~5°는 15 cm에서 약 1.2 cm라 병 같은 물체는 가려지지 않고, 실제 벽(20 cm 이상)은 남는다.
-    #   ⚠️ 라이다 위 구조물·케이블을 옮기면 각도가 바뀐다: tools/scan_ghost_eval.py로 다시 잴 것
+    # 자기 구조물 방향의 허상 반사(2026-11-01 모서리 4곳 → 11-07 방향 전체로 넓힘): 광선이 구조물(8 cm)과 뒤쪽 물체에 걸치면 그 사이 값이 나온다.
+    #   이 방향은 구조물이 가려 라이다가 원래 8 cm 너머를 못 보므로, 여기서 나오는 9~18 cm 값은 허상뿐이다.
+    #   ⚠️ 11-01: 모서리만 지웠더니 11-07에 60°(구조물 가운데 쪽) 11.5 cm 허상이 차체에 붙어 다니며 회전·후진을 다 막았다.
+    #   ⚠️ "9~13.5 cm는 늘 허상"은 틀렸다: 녹화에서 구조물 방향 밖에도 8,417점(대부분 11-01 의자 다리 260~270°) → 거리대로 지우지 않는다.
+    #   범위 = docs/calibration/lidar_self_baseline.json 칸 ±4°, 라이다에서 18 cm까지. 녹화 삭제량 0.16% 이하, 병 앞 프레임 유지.
+    #   ⚠️ 라이다 위 구조물·케이블을 옮기면 다시 잴 것(tools/scan_ghost_eval.py)
     filter2:
-      name: ghost_left_rear
+      name: self_dir_left
       type: laser_filters/StaticLaserScanPolygonFilter
       params:
         polygon_frame: base_link
-        polygon: '[[0.054, 0.0], [0.1721, 0.1358], [0.1623, 0.1438]]'
+        polygon: '[[0.054, 0.0], [0.1744, 0.1338], [0.1598, 0.1456], [0.144, 0.1559], [0.1272, 0.1644], [0.1096, 0.1712]]'
         invert: false
         transform_timeout: 5.0
     filter3:
-      name: ghost_left_front
+      name: self_dir_rear_left
       type: laser_filters/StaticLaserScanPolygonFilter
       params:
         polygon_frame: base_link
-        polygon: '[[0.054, 0.0], [0.1301, 0.1631], [0.1156, 0.1691]]'
+        polygon: '[[0.054, 0.0], [-0.119, 0.0496], [-0.1233, 0.0313], [-0.1256, 0.0126]]'
         invert: false
         transform_timeout: 5.0
     filter4:
-      name: ghost_right_front
+      name: self_dir_rear_right
       type: laser_filters/StaticLaserScanPolygonFilter
       params:
         polygon_frame: base_link
-        polygon: '[[0.054, 0.0], [0.1126, -0.1702], [0.1214, -0.1669]]'
+        polygon: '[[0.054, 0.0], [-0.1259, -0.0063], [-0.1247, -0.0219], [-0.1221, -0.0374]]'
         invert: false
         transform_timeout: 5.0
     filter5:
-      name: ghost_right_rear
+      name: self_dir_right_rear
       type: laser_filters/StaticLaserScanPolygonFilter
       params:
         polygon_frame: base_link
-        polygon: '[[0.054, 0.0], [0.1572, -0.1474], [0.1673, -0.1399]]'
+        polygon: '[[0.054, 0.0], [-0.0568, -0.1418], [-0.0432, -0.1515], [-0.0286, -0.1599], [-0.0134, -0.1669]]'
+        invert: false
+        transform_timeout: 5.0
+    filter6:
+      name: self_dir_right
+      type: laser_filters/StaticLaserScanPolygonFilter
+      params:
+        polygon_frame: base_link
+        polygon: '[[0.054, 0.0], [0.1096, -0.1712], [0.1258, -0.1651], [0.1413, -0.1574], [0.156, -0.1483], [0.1697, -0.1379]]'
         invert: false
         transform_timeout: 5.0

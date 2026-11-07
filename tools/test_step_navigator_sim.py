@@ -389,6 +389,22 @@ def main():
               len(boA) == 1 and not turnA and 0.03 < -boA[0]['arg'] <= 0.30 and not rA['ok'] and '미확인' in rA['msg']
               and len(boB) == 1 and rB['ok'] and not boC and '미확인' in rC['msg'] and not boD,
               f'A 후진 {[e["arg"] for e in boA]}, {rA["msg"][:16]} | B {rB["msg"]} | C 후진 {len(boC)}번, {rC["msg"][:16]} | D 후진 {len(boD)}번')
+        builtins.print = lambda *a, **k: None
+        #  16. 벽과 의자 다리 사이(11-07 다섯 번째 탐색): 왼쪽 벽이 차체 옆(중심 20 cm)을 x −0.2~0.45로 따라 이어지고 오른쪽 다리가 옆면 4 cm.
+        #      뒤쪽 목표라 돌아야 한다 → 곧게 뒤로 빠져 돌 자리를 찾아(25 cm 안에는 없음) 돌고 도착 / 뒤도 막혔으면 움직이지 않고 실패
+        def trap(rear_wall):
+            w = [(x / 100, 0.20) for x in range(-20, 46, 2)] + bottle(0.0, -0.165, 0.015)
+            if rear_wall:      # 앞뒤 다 막힘(뒤만 막으면 앞으로 60 cm 나가 돌 자리를 찾는다 — 그것도 옳은 판단)
+                w += [(-0.33, y / 100) for y in range(-30, 31, 2)] + [(0.50, y / 100) for y in range(-30, 31, 2)]
+            nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=w); nav.last_fwd = 0.31
+            r = nav.go((-1.5, 0.05, None)); return r, [e for e in nav.log], P
+        rA, logA, PA = trap(False); rB, logB, PB = trap(True)
+        mvA = [e['arg'] for e in logA if e['kind'] == 'rot_clear']
+        moved_B = max(abs(e['arg']) for e in logB if e['kind'] in ('rot_clear', 'rot_retrace', 'drive')) if any(e['kind'] in ('rot_clear', 'rot_retrace', 'drive') for e in logB) else 0
+        builtins.print = quiet
+        check('벽과 다리 사이: 곧게 뒤로 빠져(25 cm 넘게) 돌고 도착 / 앞뒤 다 막히면 회전 반경 막힘으로 실패',
+              rA['ok'] and mvA and mvA[0] < -0.25 and not rB['ok'] and '회전 반경' in rB['msg'] and min(P['turn_clear'] or [9]) > 0.0,
+              f'A {rA["msg"]}, 뒤로 {mvA} | B {rB["msg"][:20]}, 움직인 최대 {moved_B}')
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')
