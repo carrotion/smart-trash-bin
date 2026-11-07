@@ -349,6 +349,46 @@ def main():
               r15['ok'] and r15['secs'] > 180 and rs['msg'] == '시간 초과' and 180 <= rs['secs'] <= 196 and rl['msg'] == '시간 초과' and 600 <= rl['secs'] <= 616,
               f'15 m: {r15["msg"]} {r15["secs"]:.0f}초 | 2 m 제자리: {rs["secs"]:.0f}초 | 30 m 제자리: {rl["secs"]:.0f}초')
         builtins.print = lambda *a, **k: None
+        builtins.print = lambda *a, **k: None
+        #  15. 의자 밑(11-01 세 번째 탐색): 들어가다 다리가 옆면에 붙어 원시 스캔 260~268°에 0.08 — 방금 들어온 직진을 곧게 되돌려 나온다.
+        #      (C의 뒤 벽은 차체 뒤 19 cm: 후진 여유 검사는 원래 차체 뒤 10 cm 안을 부착물 자리로 보지 않는다 — 시험 3과 같은 설계)
+        #      다리 (0.40, −0.18) 근처(중심 20 cm 안)에서만 원시 반사가 생기는 가상 라이다
+        class RawNear:
+            def __init__(self, P, leg, deg=(260, 268)):
+                self.P, self.leg, self.deg = P, leg, deg
+            def __len__(self):
+                return 5
+            def __iter__(self):
+                sc = Scan()
+                if math.hypot(self.P['x'] - self.leg[0], self.P['y'] - self.leg[1]) < 0.20:
+                    for i in range(455):
+                        d = math.degrees(sc.angle_min + i * sc.angle_increment) % 360
+                        if self.deg[0] <= d <= self.deg[1]:
+                            sc.ranges[i] = 0.082
+                return iter([sc] * 5)
+        def chair(plan_detour=False, deg=(260, 268), rear_wall=False):
+            nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[] if rear_wall else None); nav._near_base = base; nav._raw = RawNear(P, (0.40, -0.18), deg)
+            straight = nav.plan
+            if plan_detour:   # 빠져나온 뒤 planner가 다리를 피해 왼쪽으로 돈다(코스트맵에 다리가 찍힘)
+                nav.plan = lambda here, goal: ((line(here, [(here[0], 0.35), (1.5, 0.35), goal]), '') if any(e['kind'] == 'back_out' for e in nav.log) and here[1] < 0.3 else straight(here, goal))
+            if rear_wall:     # 다리를 만난 순간 뒤가 막힌다
+                nu0 = nav._near_unknown
+                def nu():
+                    r = nu0()
+                    if r and not nav.S.world:
+                        nav.S.world.extend((P['x'] - 0.30, P['y'] + k / 100) for k in range(-15, 16))
+                    return r
+                nav._near_unknown = nu
+            r = nav.go((1.5, 0.0, None)); kinds = [e['kind'] for e in nav.log]
+            bo = [e for e in nav.log if e['kind'] == 'back_out']
+            i = kinds.index('near_unknown') if 'near_unknown' in kinds else len(kinds)
+            return r, kinds, bo, 'turn' in kinds[i:kinds.index('back_out')] if bo else False
+        rA, kA, boA, turnA = chair(); rB, kB, boB, _ = chair(plan_detour=True); rC, kC, boC, _ = chair(rear_wall=True); rD, kD, boD, _ = chair(deg=(176, 184))
+        builtins.print = quiet
+        check('의자 밑: 들어온 직진만큼 곧게 후진(회전 없이, 1번) / 빠진 뒤 돌아가는 길이면 도착 / 뒤가 막히거나 물체가 뒤쪽이면 후진 안 함',
+              len(boA) == 1 and not turnA and 0.03 < -boA[0]['arg'] <= 0.30 and not rA['ok'] and '미확인' in rA['msg']
+              and len(boB) == 1 and rB['ok'] and not boC and '미확인' in rC['msg'] and not boD,
+              f'A 후진 {[e["arg"] for e in boA]}, {rA["msg"][:16]} | B {rB["msg"]} | C 후진 {len(boC)}번, {rC["msg"][:16]} | D 후진 {len(boD)}번')
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')

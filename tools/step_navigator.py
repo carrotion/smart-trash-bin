@@ -82,6 +82,11 @@ class StepNavigator:
     #   ⚠️ 11-01 실물 목표 10: 왕복이 아니라 24단계를 착실히 가던 중에 180초에 끊겼다(약 9 m가 한계였다)
     route_s_per_m = 40.0
     timeout_cap = 600.0
+    #   바로 옆 미확인 물체에서 빠져나오기(11-07): 방금 한 동작이 직진이었으면 그만큼(최대 back_out_max) 곧게 되돌아 나온다.
+    #   ⚠️ 11-01 세 번째 탐색: 의자 밑에서 14° 돌고 26 cm 들어간 직후 오른쪽 다리가 옆면 3~7 cm에 붙어 거절만 반복 — 녹화로 복원하니
+    #   뒤는 비어 있었다(방금 지나온 길). 제자리 회전은 모서리(반경 15.6 cm)가 다리를 친다. 의자는 늘 움직이니 자리로 피하지 않고 빠져나온다
+    back_out_max = 0.30
+    last_fwd = 0.0
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -275,7 +280,7 @@ class StepNavigator:
 
     def go(self, goal, max_steps=120, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
-        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0
+        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0
         self.path_remaining = None; self.path_pose = None
         # 금지 구역 정보를 아직 못 받았으면 잠깐 기다리고, 끝내 없으면 움직이지 않는다.
         #   ⚠️ 10-10 Stage: 주행기 서버가 뜨자마자 온 첫 목표가 구역 안이었는데, 구역 목록이 아직 안 도착해 '구역 없음'으로 출발 판단
@@ -300,6 +305,10 @@ class StepNavigator:
             nu = self._near_unknown()
             if nu:
                 blocked += 1; self._note(step, 'near_unknown', dict(sectors=nu[:12]), None)
+                # 두 번째로도 보이면(지나가는 손이 아니면) 방금 들어온 직진을 되돌린다 — 물체가 뒤쪽 방향이면 하지 않는다
+                if blocked >= 2 and backouts < 1 and self.last_fwd > 0.03 and not any(135 <= d <= 225 for d, _ in nu):
+                    if self._straight(step, -min(self.last_fwd, self.back_out_max), 'back_out', margin=0.05):
+                        backouts += 1; blocked = 0; self.spin(1.0); continue
                 if blocked >= self.blocked_max:
                     return self._done(False, f'라이다 바로 옆 미확인 물체 또는 가림({len(nu) * lidar_blockage.BIN}°: {nu[0][0]}°~{nu[-1][0]}°, 0°=정면·90°=왼쪽)', step, t0, goal)
                 self.spin(1.0); continue
@@ -457,6 +466,7 @@ class StepNavigator:
                     return self._done(False, f'앞 여유 부족 {blocked}회({room:.2f} m)', step, t0, goal)
                 self.spin(1.0); continue
             r = self.driver.drive_by(seg); self._note(step, 'drive', round(seg, 3), r)
+            self.last_fwd = seg if r['ok'] else 0.0
             if not r['ok']:
                 blocked += 1
                 if blocked >= self.blocked_max:
@@ -571,7 +581,7 @@ class StepNavigator:
                 # ⚠️ 10-10 지도 가상 시험(문틈): 떨어지느라 위치가 10~20 cm 바뀌었는데 떨어지기 전에 정한 각도로 돌아
                 #   앞이 막힘(헛회전 2회). 위치가 바뀌었으면 돌지 말고 경로·방향부터 다시 정한다
                 return dict(ok=True, moved=True, msg='')
-        r = self.turner.turn_by(dyaw); self._note(step, kind, math.degrees(dyaw), r)
+        r = self.turner.turn_by(dyaw); self._note(step, kind, math.degrees(dyaw), r); self.last_fwd = 0.0
         return r
 
     def _goal_in_body(self, goal, here):
@@ -586,6 +596,7 @@ class StepNavigator:
             self._note(step, kind + '_blocked', dict(d=round(d, 3), room=round(room, 2)), None)
             return False
         r = self.driver.drive_by(d); self._note(step, kind, round(d, 3), r)
+        self.last_fwd = d if d > 0 and r.get('ok') else 0.0
         return True
 
     def _note(self, step, kind, arg, r):
