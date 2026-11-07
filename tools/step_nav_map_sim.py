@@ -61,10 +61,35 @@ HALF = 0.11
 
 
 MAPS = {'real': 'our_home.png',                   # 문 폭 실제값(A·B 0.75, C 0.85 m — 10-10 사용자 실측 77/77/87 cm)
-        'narrow': 'our_home_narrowdoors.png'}     # 08-23 원본: 문 세 곳이 0.45 m로 그려짐 → 좁은 틈 통과 시험용으로 남김
+        'narrow': 'our_home_narrowdoors.png',
+        'chair': '(make_chair_map — 거실 왼쪽 구역 + 의자 다리 통로)'}     # 08-23 원본: 문 세 곳이 0.45 m로 그려짐 → 좁은 틈 통과 시험용으로 남김
+
+
+CHAIR_PNG = '/tmp/step_nav_map_sim_chair.png'
+
+
+def make_chair_map(gap=0.40, depth=0.40):
+    """(11-07) 의자 다리 사이 좁은 통로: real 지도 거실 왼쪽(x −3.3~−1.8, y 1.0~4.6)을 막아 작은 구역을 만들고, 출구는
+    x = −1.8 선의 폭 gap 틈 하나 — 앞다리 둘은 그 선 위, 뒷다리 둘은 depth 뒤. 11-07 실물 탐색에서 막힌 의자 통로가 38~39 cm였다."""
+    im = np.array(Image.open(map_path('real'))).copy(); H = im.shape[0]
+    def px(x, y):
+        return H - 1 - int((y - OY) / RES), int((x - OX) / RES)
+    cy, x0 = 2.6, -1.8
+    for y in np.arange(1.0, 4.6, RES / 2):            # 세로 막이(틈 제외)
+        if abs(y - cy) >= gap / 2:
+            im[px(x0, y)] = 0
+    for x in np.arange(-3.3, x0, RES / 2):             # 가로 막이
+        im[px(x, 1.0)] = 0
+    for dx in (0.0, depth):                             # 다리 넷
+        for dy in (-gap / 2, gap / 2):
+            im[px(x0 + dx, cy + dy)] = 0
+    Image.fromarray(im).save(CHAIR_PNG)
+    return CHAIR_PNG
 
 
 def map_path(name):
+    if name == 'chair':
+        return CHAIR_PNG if os.path.exists(CHAIR_PNG) else make_chair_map()
     return os.path.abspath(os.path.join(HERE, '../robot/sim_worlds/bitmaps', MAPS[name]))
 
 
@@ -134,6 +159,8 @@ def run_case(node, ac, world, start, goal, quiet=False, zones=None):
         dx, dy = near[:, 0] - P['x'], near[:, 1] - P['y']
         bx, by = c * dx + s * dy, -s * dx + c * dy
         gap = np.maximum(np.abs(bx), np.abs(by)) - HALF       # 차체 사각형까지(음수 = 안쪽)
+        if float(gap.min()) < hits['min_gap']:
+            hits['min_at'] = (round(P['x'], 2), round(P['y'], 2), round(math.degrees(P['th'])), nav.log[-1]['kind'] if nav.log else '')
         hits['min_gap'] = min(hits['min_gap'], float(gap.min()))
         hits['n'] += int((gap < -0.025).sum() > 0)            # 칸 반쪽(2.5 cm) 넘게 파고들면 충돌
         if zpts is not None:                                  # 금지 구역 선(1 cm 간격 점)이 차체 사각형 안에 들어오면 선을 넘은 것
@@ -265,6 +292,8 @@ def main():
     ap.add_argument('--map', choices=list(MAPS), default=None, help='기본: 사례만 돌리면 narrow(좁은 문틈 시험), --random/직접 지정이면 real')
     ap.add_argument('--keepout', nargs='*', default=None, metavar='x0,y0,x1,y1', help='금지 구역 상자(지도 좌표). 값 없이 주면 SOFA. --random/직접 지정에 적용')
     ap.add_argument('--case', help='사례 하나만')
+    ap.add_argument('--chair', type=int, default=0, help='의자 다리 통로(폭 40 cm) 통과 시험 n번 — 막힌 구역 안 무작위 출발 → 통로 너머 목표')
+    ap.add_argument('--chair-gap', type=float, default=0.40)
     ap.add_argument('--nav-file', help='비교용: 다른 step_navigator.py(예: git show HEAD:… 로 꺼낸 파일)')
     ap.add_argument('--set', nargs='*', default=[], help='StepNavigator 클래스 값 덮어쓰기 예: replan_after_escape=True')
     a = ap.parse_args()
@@ -277,13 +306,22 @@ def main():
         T.StepNavigator = mod.StepNavigator
     for kv in a.set:
         k, v = kv.split('='); setattr(T.StepNavigator, k, eval(v))
-    map_name = a.map or ('narrow' if (a.x is None and not a.random) else 'real')
+    if a.chair:
+        make_chair_map(a.chair_gap)
+    map_name = 'chair' if a.chair else (a.map or ('narrow' if (a.x is None and not a.random) else 'real'))
     world = load_world(map_name)
     kz = None if a.keepout is None else (tuple(tuple(float(v) for v in b.split(',')) for b in a.keepout) or SOFA)
     cases = CASES if a.x is None else {'custom': dict(start=(a.x, a.y, a.yaw or 0.0), goal=(a.gx, a.gy), zones=kz)}
     if a.case:
         cases = {a.case: CASES[a.case]}
-    if a.random:
+    if a.chair:
+        import random
+        rnd = random.Random(a.seed); cases = {}
+        while len(cases) < a.chair:
+            sx, sy = rnd.uniform(-3.0, -2.2), rnd.uniform(1.4, 4.2); gx, gy = rnd.uniform(-0.9, -0.4), rnd.uniform(1.6, 3.6)
+            cases[f'c{len(cases):02d}'] = dict(start=(sx, sy, rnd.uniform(-180, 180)), goal=(gx, gy))
+        a.random = a.chair
+    if a.random and not a.chair:
         cases = dict(CASES if map_name == 'narrow' and kz is None else {},
                      **{k: dict(c, zones=kz) for k, c in random_cases(world, a.random, a.seed, goal_clear=a.goal_clear, zones=kz).items()})
     ok_all = True; stat = []; procs = []
@@ -309,6 +347,8 @@ def main():
                 stat.append(dict(name=name, ok=r['ok'], msg=r['msg'], hits=hits['n'], zone=hits['zone'], zone_gap=hits['zone_gap'], steps=r['steps'], blocked=kinds.count('blocked'),
                                  turns=kinds.count('turn'), shifts=kinds.count('plan_shift'), min_gap=hits['min_gap'], start=c['start'], goal=c['goal']))
                 if a.random and not a.verbose:
+                    if hits['min_gap'] < 0.03:
+                        print(f'   ⚠️ {name}: 차체-장애물 {hits["min_gap"] * 100:.1f} cm — 자세·직전 동작 {hits.get("min_at")}', flush=True)
                     if not ok:
                         print(f'❌ {name}: {r["msg"]} | 충돌 {hits["n"]}, 구역 침범 {hits["zone"]} | 출발 ({c["start"][0]:.2f},{c["start"][1]:.2f},{c["start"][2]:.0f}°) → 목표 ({c["goal"][0]:.2f},{c["goal"][1]:.2f})', flush=True)
                     continue

@@ -87,6 +87,16 @@ class StepNavigator:
     #   뒤는 비어 있었다(방금 지나온 길). 제자리 회전은 모서리(반경 15.6 cm)가 다리를 친다. 의자는 늘 움직이니 자리로 피하지 않고 빠져나온다
     back_out_max = 0.30
     last_fwd = 0.0
+    #   좁은 틈 앞 정렬(11-07): 앞 여유가 모자라고 경로 1.2 m 안에 좁은 곳(경로 점에서 가장 가까운 장애물이 gap_narrow 안)이 있으면
+    #   그 좁은 곳 gap_stage_m 앞의 경로 점으로 정확히 가서 경로 방향으로 돌아선 뒤 곧게 들어간다(목표당 2번까지).
+    #   ⚠️ 11-07 실물 탐색: 폭 38~39 cm 의자 통로를 가운데로 가면 양옆 8 cm인데, 0.4 m 걸음으로 모서리를 질러 4~7 cm 치우쳐
+    #   들어가 옆 여유(5 cm)에 걸려 우상단을 못 갔다. 지도 시험(의자 통로 40 cm, 무작위 20번): 이 동작 없이 통과 5/20
+    gap_narrow = 0.24
+    gap_stage_m = 0.40
+    #   회전 전 반경 검사에 더하는 여유: 실제 회전 중심은 base_link와 다르다(09-27 큰 회전 뒤 앞뒤로 3.7~10.3 cm 밀림, 부호도 바뀜 → 2~5 cm).
+    #   지도 시험의 가상 차체도 4 cm 뒤를 축으로 돈다 — 반경을 base_link 기준 그대로 두면 모서리가 원 밖을 쓸어 의자 다리에 1.6 cm까지 갔다(11-07).
+    #   의자 통로 40번: 0 cm 통과 39·최소 1.6 cm / 2 cm 통과 35·최소 4.2 cm / 4 cm 통과 29(통로 안에서 돌 자리가 없다며 포기) → 2 cm
+    rot_extra = 0.02
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -280,7 +290,7 @@ class StepNavigator:
 
     def go(self, goal, max_steps=120, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
-        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0
+        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0; stages = 0
         self.path_remaining = None; self.path_pose = None
         # 금지 구역 정보를 아직 못 받았으면 잠깐 기다리고, 끝내 없으면 움직이지 않는다.
         #   ⚠️ 10-10 Stage: 주행기 서버가 뜨자마자 온 첫 목표가 구역 안이었는데, 구역 목록이 아직 안 도착해 '구역 없음'으로 출발 판단
@@ -458,6 +468,8 @@ class StepNavigator:
                 arrive_tol = 2 * self.xy_tol
                 self._note(step, 'near_accept', dict(dist=round(dist, 3), room=round(room, 2)), None)
                 continue
+            if room < seg + self.clear_margin and stages < 2 and self._gap_stage(step, path, here):
+                stages += 1; blocked = 0; continue
             if room < seg + self.clear_margin:
                 # ⚠️ 09-27: 병 옆 통과 뒤 "앞 여유 0"으로 멈췄는데 무엇이 막았는지 남기지 않아 원인을 못 가렸다
                 #   (사용자: 그 자리엔 아무것도 없었음, 병은 20~30 cm 옆). 막은 점들을 base_link 좌표로 기록
@@ -474,6 +486,94 @@ class StepNavigator:
             else:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
+
+    def _gap_stage(self, step, path, here, lidar_x=0.054):
+        """경로 앞 1.2 m 안에서 양옆이 다 막힌 가장 좁은 틈을 지금 스캔으로 찾아, 그 틈 가운데 선의 gap_stage_m 앞으로 가서
+        틈 방향으로 선다. 너무 가까우면 먼저 곧게 물러선다. 움직였으면 True.
+        ⚠️ 첫 구현(11-07 지도 시험): ① 경로는 틈 가운데로 나지 않는다(좁은 곳에서 경로-다리 1.7 cm) → 양옆 장애물로 가운데를 잡는다
+        ② 한쪽만 막힌 곳(막이 벽 모서리)도 좁은 곳으로 잡아 폭 4.6 cm로 포기 → 양쪽이 다 막힌 곳만 틈으로 본다
+        ③ 물러서기만 하고 끝내 정렬 기회를 썼다 → 물러선 뒤 같은 동작 안에서 정렬까지 한다"""
+        m = self._scan()
+        if m is None or len(path) < 3:
+            return False
+        c, s = math.cos(here[2]), math.sin(here[2]); pts = []
+        for i, r in enumerate(m.ranges):
+            if m.range_min <= r <= min(m.range_max, 2.0):
+                a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+                if not (abs(x) <= 0.11 and abs(y) <= 0.11):
+                    pts.append((here[0] + c * x - s * y, here[1] + s * x + c * y))
+        if not pts:
+            return False
+        i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
+        acc, best = 0.0, None
+        for i in range(i0, len(path)):
+            if i > i0:
+                acc += math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1])
+            if acc > 1.2:
+                break
+            a0, a1 = path[max(i - 3, 0)], path[min(i + 3, len(path) - 1)]
+            t = math.atan2(a1[1] - a0[1], a1[0] - a0[0]); tx, ty, nx, ny = math.cos(t), math.sin(t), -math.sin(t), math.cos(t)
+            L = R = None
+            for px, py in pts:
+                dx, dy = px - path[i][0], py - path[i][1]
+                if abs(dx * tx + dy * ty) <= 0.12:
+                    o = dx * nx + dy * ny
+                    if 0 <= o <= 0.5 and (L is None or o < L[0]):
+                        L = (o, px, py)
+                    elif -0.5 <= o < 0 and (R is None or -o < R[0]):
+                        R = (-o, px, py)
+            if L is not None and R is not None:
+                w = math.hypot(L[1] - R[1], L[2] - R[2])       # 양옆 장애물 점 사이 실제 거리
+                if w < 0.50 and (best is None or w < best[0]):
+                    best = (w, i, acc, t, L, R)
+        if best is None:
+            return False
+        width, n, an, t, L, R = best
+        if width < 2 * 0.11 + 0.06:
+            self._note(step, 'gap_too_narrow', dict(width=round(width, 3)), None)
+            return False
+        # 틈 축 = 양옆 점을 잇는 선에 수직(경로 쪽 방향). ⚠️ 경로 방향으로 섰더니 경로가 틈에 26~31° 비스듬히 들어가 몸도 비스듬히 섰다
+        cx0, cy0 = (L[1] + R[1]) / 2, (L[2] + R[2]) / 2
+        ax = math.atan2(L[2] - R[2], L[1] - R[1]) - math.pi / 2
+        if math.cos(ax - t) < 0:
+            ax += math.pi
+        t = wrap(ax); tx, ty = math.cos(t), math.sin(t)
+        sp = (cx0 - tx * self.gap_stage_m, cy0 - ty * self.gap_stage_m)
+        self._note(step, 'gap_stage', dict(width=round(width, 3), at=round(an, 2), center=(round(cx0, 2), round(cy0, 2)), stage=(round(sp[0], 2), round(sp[1], 2)), dir=round(math.degrees(t))), None)
+        moved = False
+        if an < self.gap_stage_m:      # 틈에 너무 가깝다 — 곧게 물러서서 정렬할 자리를 만든다
+            if self._straight(step, -(self.gap_stage_m - an), 'gap_back', margin=0.05):
+                moved = True; self.settle(); here = self.map_pose() or here
+        d = math.hypot(sp[0] - here[0], sp[1] - here[1])
+        if d > 0.03:
+            r = self._turn(step, wrap(math.atan2(sp[1] - here[1], sp[0] - here[0]) - here[2]), 'gap_turn')
+            if not r.get('ok') or r.get('moved'):
+                return moved or bool(r.get('moved'))
+            self.settle()
+            if not self._straight(step, d, 'gap_approach', margin=0.05):
+                return True
+            self.settle(); here = self.map_pose() or here
+        dyaw = wrap(t - here[2])
+        if abs(dyaw) > self.turn_tol:
+            r = self._turn(step, dyaw, 'gap_align')
+            if not r.get('ok'):
+                return True
+            self.settle()
+        # 정렬한 축 그대로 틈 너머까지 곧게(다음 걸음에서 경로 방향으로 다시 틀면 비스듬해진다). 앞 여유가 허락하는 만큼만
+        # 틈이 끝나는 곳까지: 축 옆(차체 반폭 밖 ~ 30 cm)에 장애물이 있는 마지막 지점 너머로 차체가 다 빠질 만큼.
+        #   ⚠️ 첫 구현은 틈 가운데에서 35 cm만 가서, 다리가 두 쌍(앞·뒤 40 cm)인 의자 밑에서 뒷다리 사이에 서서 돌다 모서리가 1.6 cm까지 갔다
+        here = self.map_pose() or here
+        end = 0.0
+        for px, py in pts:
+            dx, dy = px - cx0, py - cy0; al, la = dx * tx + dy * ty, abs(-dx * ty + dy * tx)
+            if 0.0 <= al <= 1.0 and 0.11 < la < 0.30:
+                end = max(end, al)
+        through = max(0.0, (cx0 - here[0]) * tx + (cy0 - here[1]) * ty) + max(0.35, end + 0.11 + 0.10)
+        room = corridor_clearance(self._scan(), True, 0.0, self.side_margin)
+        d = min(through, room - self.clear_margin - 0.01)
+        if d >= self.min_step:
+            self._straight(step, d, 'gap_through')
+        return True
 
     @staticmethod
     def _zname(z):
@@ -561,7 +661,7 @@ class StepNavigator:
     def _turn(self, step, dyaw, kind, replan_after_escape=False):
         """제자리 회전. 먼저 반경 rot_radius 안이 비었는지 보고, 막혔으면 앞/뒤로 가장 짧게(5~25 cm) 떨어진 뒤 돈다.
         떨어질 수 없으면 돌지 않고 dict(ok=False, blocked=True)."""
-        R = self.rot_radius
+        R = self.rot_radius + self.rot_extra
         near = [p for p in self._near_pts(R)]
         if near:
             pts = self._near_pts(R + 0.3); move = None
