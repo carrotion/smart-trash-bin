@@ -97,6 +97,10 @@ class StepNavigator:
     #   지도 시험의 가상 차체도 4 cm 뒤를 축으로 돈다 — 반경을 base_link 기준 그대로 두면 모서리가 원 밖을 쓸어 의자 다리에 1.6 cm까지 갔다(11-07).
     #   의자 통로 40번: 0 cm 통과 39·최소 1.6 cm / 2 cm 통과 35·최소 4.2 cm / 4 cm 통과 29(통로 안에서 돌 자리가 없다며 포기) → 2 cm
     rot_extra = 0.02
+    #   모터 보드 엔코더 마지막 수신 시각(monotonic). None이면 검사 안 함(시뮬·가상 시험엔 엔코더 토픽이 없다).
+    #   ⚠️ 11-07 사고: 보드가 멈춘 뒤에도 주행기는 1분 넘게 걸음·후진을 명령했다(위치 추정은 20 m 튐) → 1초 넘게 끊기면 걸음을 내딛지 않는다
+    _enc_ts = None
+    enc_stale_s = 1.0
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
@@ -119,6 +123,8 @@ class StepNavigator:
             self._gyro_from_odom = False
             node.create_subscription(Imu, '/imu/data', lambda m: self.S.update(gz=m.angular_velocity.z), 100)
         node.create_subscription(LaserScan, '/scan', lambda m: self.S.update(scan=m), 5)
+        from std_msgs.msg import Int32MultiArray
+        node.create_subscription(Int32MultiArray, '/wheel_encoders', lambda m: setattr(self, '_enc_ts', time.monotonic()), 10)
         # ⚠️ 10-10 실측: 이 라이다는 약 13.5 cm보다 가까운 것을 0.08 m로 읽는다 → 옆에 바짝(바퀴 바깥면 약 3 cm 안) 붙은 물체는
         #   차체 다각형 안으로 찍혀 자기 필터에 지워지고 /scan엔 안 보인다(서 있는 동안 놓인 병: 그대로 돌면 침). 원시 스캔에서
         #   기준(자기 구조물 방향) 밖에 0.08 m 반사가 새로 생기면 붙은 물체나 라이다 가림(10-09 종이테이프)으로 보고 움직이지 않는다
@@ -305,6 +311,8 @@ class StepNavigator:
                 return self._done(False, '시간 초과', step, t0, goal)
             if self.cancel:
                 return self._done(False, '취소', step, t0, goal)
+            if self._enc_ts is not None and time.monotonic() - self._enc_ts > self.enc_stale_s:
+                return self._done(False, f'모터 보드 응답 없음({time.monotonic() - self._enc_ts:.1f}초) — 구동 노드가 보드를 리셋했는지 확인', step, t0, goal)
             # 금지 구역: 목표가 구역 안(차체가 선을 넘어야 닿는 자리 포함)이면 더 가지 않고 끝낸다 — planner도 못 가는 자리라
             #   경로 실패로 3번 기다리다 끝나는 것보다 이유를 바로 알린다(탐색기는 실패한 목표를 잠시 제외한다).
             #   매 단계 본다: 가는 도중에 사람이 구역을 그릴 수 있다

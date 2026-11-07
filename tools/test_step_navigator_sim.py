@@ -405,6 +405,14 @@ def main():
         check('벽과 다리 사이: 곧게 뒤로 빠져(25 cm 넘게) 돌고 도착 / 앞뒤 다 막히면 회전 반경 막힘으로 실패',
               rA['ok'] and mvA and mvA[0] < -0.25 and not rB['ok'] and '회전 반경' in rB['msg'] and min(P['turn_clear'] or [9]) > 0.0,
               f'A {rA["msg"]}, 뒤로 {mvA} | B {rB["msg"][:20]}, 움직인 최대 {moved_B}')
+        builtins.print = lambda *a, **k: None
+        #  17. 모터 보드 엔코더가 끊기면(11-07 사고) 걸음을 내딛지 않는다 / 신선하면 평소대로
+        import time as _t
+        nav, P = make(); nav._enc_ts = _t.monotonic() - 2.0; r = nav.go((1.0, 0.0, None))
+        nav2, P2 = make(); nav2._enc_ts = _t.monotonic() + 3600; r2 = nav2.go((1.0, 0.0, None))
+        builtins.print = quiet
+        check('엔코더 2초 끊김 → 움직이지 않고 보드 응답 없음 / 신선하면 도착',
+              not r['ok'] and '모터 보드 응답 없음' in r['msg'] and not nav.log and P['x'] == 0.0 and r2['ok'], f'{r["msg"][:22]} | {r2["msg"]}')
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')

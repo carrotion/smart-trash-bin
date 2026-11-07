@@ -291,14 +291,19 @@ def snapshot():
     pr = [('danger', f'서비스 꺼짐: {n}') for n in off_by.get('구동', [])]
     if not motor.get('connected', False):
         pr.append(('warn', '모터 보드 상태를 못 읽고 있음'))
+    enc_age = motor.get('enc_age')
+    if enc_age is not None and enc_age > 1.0:
+        # ⚠️ 11-07 사고: 보드가 멈춘 2분 동안 이 화면은 마지막 바퀴 값을 실시간처럼 보여 줬고, 비상정지는 바퀴를 못 세웠다
+        pr.append(('danger', f'모터 보드 응답 없음 {enc_age:.0f}초 — 바퀴 값이 멈춰 있음, 정지 명령이 안 먹을 수 있다'))
     rej = d.get('enc_rejects'); notes = []
     if rej and sum(rej):
         bad = ' · '.join(f'M{i + 1} {n:,}' for i, n in enumerate(rej) if n)
         growing = now - d.get('enc_rejects_changed', 0) < 300
         notes.append(f'엔코더 오독 {"늘어나는 중" if growing else "누적"}: {bad}')
     moving = abs(drv.get('v', 0)) > 0.01 or abs(drv.get('w', 0)) > 0.05
-    value = '정지' if not moving else (f'{drv.get("v", 0):+.2f} m/s' if abs(drv.get('v', 0)) > 0.01 else '제자리 회전')
-    part('구동', value, ['모터 보드 응답 정상' if motor.get('connected') else '', '엔코더 오독 없음' if rej and not sum(rej) else ''], pr, notes)
+    enc_dead = enc_age is not None and enc_age > 1.0
+    value = '모름(보드 무응답)' if enc_dead else ('정지' if not moving else (f'{drv.get("v", 0):+.2f} m/s' if abs(drv.get('v', 0)) > 0.01 else '제자리 회전'))
+    part('구동', value, ['' if enc_dead else ('모터 보드 응답 정상' if motor.get('connected') else ''), '엔코더 오독 없음' if rej and not sum(rej) else ''], pr, notes)
 
     # 라이다
     pr = []; near_cm = None
@@ -573,9 +578,9 @@ function render(){
   const h=drv.hist||[], t1=D.now;
   chart($('cSpd'),[{pts:h.map(r=>[r[0],r[3]]),col:C.mute,dash:[4,3]},{pts:h.map(r=>[r[0],r[1]]),col:C.line,w:2}],
     {t1,span:60,min:-0.1,max:0.3,ticks:[0,0.15,0.3],dec:2,lines:[{v:0.15,col:C.mute,label:'순항 0.15'}]});
-  const rej=D.enc_rejects, names=['왼쪽 앞 M1','오른쪽 앞 M2','왼쪽 뒤 M3','오른쪽 뒤 M4'], rate=M.rate||[0,0,0,0];
-  $('wheels').innerHTML='<tr><th>바퀴</th><th class="r">카운트/초</th><th></th><th class="r">오독 누적</th></tr>'+names.map((n,i)=>{const r=rate[i]||0,w=Math.min(50,Math.abs(r)/60),left=r>=0?50:50-w;
-    return `<tr><td class="n">${n}</td><td class="r">${f(r,0)}</td><td class="bar"><i><u style="left:${left}%;width:${w}%"></u></i></td><td class="r ${rej&&rej[i]>0?'bad':''}">${rej?rej[i].toLocaleString():'–'}</td></tr>`}).join('');
+  const rej=D.enc_rejects, names=['왼쪽 앞 M1','오른쪽 앞 M2','왼쪽 뒤 M3','오른쪽 뒤 M4'], rate=(M.enc_age!=null&&M.enc_age>1)?[NaN,NaN,NaN,NaN]:(M.rate||[0,0,0,0]);
+  $('wheels').innerHTML='<tr><th>바퀴</th><th class="r">카운트/초</th><th></th><th class="r">오독 누적</th></tr>'+names.map((n,i)=>{const r=Number.isNaN(rate[i])?NaN:(rate[i]||0),w=Number.isNaN(r)?0:Math.min(50,Math.abs(r)/60),left=r>=0?50:50-w;
+    return `<tr><td class="n">${n}</td><td class="r">${Number.isNaN(r)?'—':f(r,0)}</td><td class="bar"><i><u style="left:${left}%;width:${w}%"></u></i></td><td class="r ${rej&&rej[i]>0?'bad':''}">${rej?rej[i].toLocaleString():'–'}</td></tr>`}).join('');
   // 배터리
   const bh=D.batt_hist||[], th=B.thresholds||{warn1:11.3,warn2:11.0,critical:10.7};
   chart($('cBat'),[{pts:bh,col:C.line,w:2}],{t1,span:Math.max(600,bh.length?t1-bh[0][0]:600),min:10.4,max:12.8,ticks:[11,12],dec:0,

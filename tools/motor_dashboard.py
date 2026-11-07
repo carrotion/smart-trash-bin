@@ -27,7 +27,6 @@ import argparse
 import collections
 import gzip
 import json
-import math
 import os
 import signal
 import subprocess
@@ -208,6 +207,19 @@ PERIPHERAL_STOP_SERVICES = [
 ]
 
 
+def wheels_stopped(wait=1.5):
+    """엔코더로 바퀴가 실제로 멈췄는지. 새 엔코더 값이 wait초 안에 안 오면 '모름'(None) — 오래된 값을 정지로 믿지 않는다
+    (11-07: 보드가 멈춘 동안 관제 화면이 2분 전 바퀴 값을 그대로 보여 줬다). 반환 (True/False/None, 바퀴별 틱/초)"""
+    t0 = time.time()
+    while time.time() - t0 < wait:
+        time.sleep(0.1)
+    with state_lock:
+        ts = state.get("enc_ts"); rate = list(state.get("rate") or [])
+    if not ts or time.time() - ts > 1.0 or not rate:
+        return None, rate
+    return all(abs(r) < 50 for r in rate), rate
+
+
 def _stop_peripherals():
     """2차/3차 공통 동작. 자율주행 프로세스 킬 + cmd_vel 0 발행(기존 자동정지
     로직 그대로) + 위 서비스 목록을 순서대로 systemctl stop. 이미 멈춰있는
@@ -221,6 +233,12 @@ def _stop_peripherals():
         Handler.node.send_cmd(0.0, 0.0)
     except Exception:
         pass
+    # 구동 서비스를 끄기 전에 보드를 리셋한다 — 서비스 종료가 보내는 출력 0은 보드가 멈춰 있으면 전달되지 않는다(11-07 사고)
+    try:
+        r = Handler.node.reset_board()
+        print(f'[battery] 모터 보드 리셋: {r}', flush=True)
+    except Exception as e:
+        print(f'[battery] 모터 보드 리셋 예외: {e}', flush=True)
     stopped = []
     for svc in PERIPHERAL_STOP_SERVICES:
         try:
@@ -415,8 +433,25 @@ class TeleopNode(Node):
         self.battery_pub = self.create_publisher(String, 'battery_tier', 1)
         self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
         self.create_subscription(Int32MultiArray, 'wheel_encoders', self._on_enc, 10)
+        # 모터 보드 리셋(diff_drive_node): ⚠️ 11-07 사고 — 보드 STM32가 멈추자 정지 명령이 전달되지 않아 비상정지로도 바퀴가 돌았다.
+        #   RTS 리셋은 보드가 멈춰 있어도 먹는다(실측) → 비상정지·배터리 정지가 반드시 함께 부른다
+        from std_srvs.srv import Trigger
+        self._Trigger = Trigger
+        self._reset_cli = self.create_client(Trigger, 'reset_motor_board')
         self._prev_enc = None
         self._prev_enc_ts = None
+
+    def reset_board(self, timeout=4.0):
+        """모터 보드 리셋을 요청하고 끝날 때까지 기다린다(HTTP 스레드에서 부름, 노드는 다른 스레드가 돌린다). (성공, 설명)"""
+        if not self._reset_cli.service_is_ready():
+            return False, '구동 노드의 리셋 서비스 없음'
+        fut = self._reset_cli.call_async(self._Trigger.Request()); t0 = time.time()
+        while not fut.done() and time.time() - t0 < timeout:
+            time.sleep(0.02)
+        if not fut.done():
+            return False, f'리셋 응답 {timeout:.0f}초 안에 없음'
+        r = fut.result()
+        return bool(r.success), r.message
 
     def _on_odom(self, msg: Odometry):
         with state_lock:
@@ -435,6 +470,7 @@ class TeleopNode(Node):
                 dt = max(now - self._prev_enc_ts, 1e-3)
                 state["rate"] = [(counts[i] - self._prev_enc[i]) / dt for i in range(4)]
             state["encoder"] = counts
+            state["enc_ts"] = now
         self._prev_enc, self._prev_enc_ts = counts, now
 
     def autonomous_active(self):
@@ -479,6 +515,9 @@ def staleness_watchdog():
             if state["connected"] and time.time() - state["last_ts"] > STALE_S:
                 state["connected"] = False
                 state["rate"] = [0.0, 0.0, 0.0, 0.0]
+            # 엔코더 자체의 나이: ⚠️ 11-07 — odom(EKF)은 IMU만으로도 계속 나와서 "연결됨"인 채 바퀴 값이 2분 전 값에 멈춰 있었다.
+            #   바퀴 값은 정지로 바꾸지 않는다(모르는 것을 정지라고 하면 안 된다) — 나이를 내보내 화면이 경보를 띄운다
+            state["enc_age"] = round(time.time() - state["enc_ts"], 1) if state.get("enc_ts") else None
         time.sleep(0.5)
 
 
@@ -643,16 +682,15 @@ let driveInFlight = false;
 let prevScale = 0;  // 이전 /api/drive 응답 오기 전엔 새로 안 쏨 — 요청 밀림 방지
 
 document.getElementById('estopBtn').onclick = async () => {
-  // 되돌릴 수 없는 동작은 아니지만 주행을 통째로 끊으므로 확인을 받는다.
-  if (!confirm('자율주행 프로세스를 강제 종료합니다. 진행할까요?')) return;
+  // ⚠️ 11-07: 확인 창을 없앰 — 비상정지는 확인을 받는 동안 바퀴가 계속 돈다(관제 화면 버튼과 동작도 같게)
   const b = document.getElementById('estopBtn');
   b.textContent = '중단 중...';
   try {
     const r = await (await fetch('/api/estop', {method:'POST'})).json();
     const n = (r.killed || []).length;
     b.textContent = '🛑 비상정지 (자율주행 전체 중단)';
-    alert(n ? ('종료된 프로세스 ' + n + '개:\\n' + r.killed.join('\\n'))
-            : '종료할 자율주행 프로세스가 없었습니다.');
+    const ws = r.wheels_stopped === true ? '바퀴 정지 확인' : (r.wheels_stopped === false ? '⚠️ 바퀴가 아직 돈다 — 배터리 커넥터를 뺄 것' : '⚠️ 바퀴 상태 모름(엔코더 끊김)');
+    alert(ws + '\\n보드 리셋: ' + (r.board_reset ? '됨' : ('실패 — ' + r.board_reset_msg)) + '\\n종료된 프로세스 ' + n + '개' + (n ? ':\\n' + r.killed.join('\\n') : ''));
   } catch (e) {
     b.textContent = '🛑 비상정지 (자율주행 전체 중단)';
     alert('비상정지 요청 실패: ' + e);
@@ -1163,7 +1201,15 @@ class Handler(BaseHTTPRequestHandler):
                 Handler.node.send_cmd(0.0, 0.0)
             except Exception:
                 pass
-            self._send(200, json.dumps({"ok": True, "killed": killed}).encode(),
+            # ⚠️ 11-07 사고: 여기까지만 하고 "정지함"을 돌려줬는데 보드가 멈춰 있어 바퀴는 계속 돌았다.
+            #   → 보드를 리셋해 출력을 확실히 끊고, 그 뒤 엔코더로 바퀴가 실제로 멈췄는지 확인해 그대로 보고한다
+            try:
+                reset_ok, reset_msg = Handler.node.reset_board()
+            except Exception as e:
+                reset_ok, reset_msg = False, f'리셋 요청 예외: {e}'
+            stopped, rate = wheels_stopped()
+            self._send(200, json.dumps({"ok": bool(stopped), "killed": killed, "board_reset": reset_ok, "board_reset_msg": reset_msg,
+                                        "wheels_stopped": stopped, "wheel_rate": rate}, ensure_ascii=False).encode(),
                        "application/json")
             return
         if self.path == "/api/drive":

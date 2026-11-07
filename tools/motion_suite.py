@@ -15,7 +15,8 @@ CORE = ['tools/turn_to_angle.py', 'tools/drive_distance.py', 'tools/step_navigat
         'tools/test_step_navigator_sim.py', 'tools/step_nav_acceptance.py', 'tools/step_nav_map_sim.py',
         'tools/pose_check.py', 'tools/relocate.py', 'tools/locate_on_map.py', 'tools/explore_map_filter.py', 'tools/keepout.py', 'tools/carry_zones.py',
         'robot/src/smart_trash_motion/smart_trash_motion/diff_drive_node.py',
-        'robot/src/smart_trash_sensors/smart_trash_sensors/imu_publisher_node.py']
+        'robot/src/smart_trash_sensors/smart_trash_sensors/imu_publisher_node.py', 'tools/test_board_reset.py', 'tools/motor_dashboard.py',
+        'tools/step_nav_action_server.py', 'tools/estop_common.py']
 
 
 def run(name, cmd, timeout, ok_pattern=None):
@@ -40,6 +41,7 @@ def main():
            run('4층 주행기 로직 가상 시험', [sys.executable, 'tools/test_step_navigator_sim.py'], 60),
            run('탐색기용 지도 필터 규칙', [sys.executable, 'tools/explore_map_filter.py', '--self-test'], 30),
            run('금지 구역 옮기기 계산', [sys.executable, 'tools/carry_zones.py', '--self-test'], 30),
+           run('모터 보드 무응답 자동 리셋(11-07 사고)', [sys.executable, 'tools/test_board_reset.py'], 30),
            run('4층 지도 가상 시험(집 지도 문틈, 실제 planner)', [sys.executable, 'tools/step_nav_map_sim.py'], 120)]
     if a.floor:
         bat = subprocess.run(['bash', '-c', f'tail -1 {REPO}/logs/battery/$(date +%Y%m%d).csv | cut -d, -f3'],
