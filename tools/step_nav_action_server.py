@@ -37,6 +37,17 @@ def remaining_estimate(goal, live, path_remaining, path_pose):
     return max(line, path_remaining - math.hypot(live[0] - path_pose[0], live[1] - path_pose[1]))
 
 
+# 로봇 자체가 지금 움직일 수 없는 실패 — 목표 탓이 아니다. ⚠️ 11-01 세 번째 실물 탐색: 의자 다리가 차체 옆에 붙어 "바로 옆 미확인 물체"로
+#   거절했는데, 그 실패가 목표마다 탐색기로 넘어가 약 20개 목표가 몇 초 간격으로 실패 기록 → 후보 전부가 15분 제외됐다.
+#   이런 실패면 탐색기를 멈춘다(탐색기가 목표를 스스로 취소 → 실패 기억에 안 남음). 사람이 원인을 치우고 [탐색 시작]을 다시 누른다
+ROBOT_STATE_FAILS = ('라이다 바로 옆 미확인 물체', '로봇이 금지 구역', '지도 위 자리가 스캔과 안 맞음', '금지 구역 정보를 받지 못함',
+                     'map→base_link TF 없음', '주행기 예외')
+
+
+def robot_state_failure(msg):
+    return any(msg.startswith(k) for k in ROBOT_STATE_FAILS)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--action', default='step_navigate_to_pose')
@@ -46,16 +57,22 @@ def main():
     ap.add_argument('--label', default='')
     ap.add_argument('--dump-maps', default=os.environ.get('STEP_NAV_DUMP_MAPS', ''),
                     help='목표를 받을 때마다 그 순간의 SLAM 지도·위치·목표를 이 폴더에 떠 둔다(planner 비교용, tools/planfail_replay.py)')
+    ap.add_argument('--stuck-after', type=int, default=0, help='(시뮬 도메인 전용) 이 개수의 목표 뒤부터 모든 목표를 "라이다 바로 옆 미확인 물체(시험)"로 실패시킨다 — 로봇 상태 실패 처리 시험')
     ap.add_argument('--fail-near', default='', help='(시뮬 도메인 전용) x,y,r,초 — 이 원 안의 목표는 움직이지 않고 그 시간 뒤 실패로 돌려준다. 닫힌 문처럼 안 되는 곳을 탐색기가 어떻게 다루는지 보는 시험')
     a = ap.parse_args()
     fail_near = tuple(float(v) for v in a.fail_near.split(',')) if a.fail_near else None
-    if fail_near and os.environ.get('ROS_DOMAIN_ID', '0') == '0':      # 실물은 도메인 0
+    if (fail_near or a.stuck_after) and os.environ.get('ROS_DOMAIN_ID', '0') == '0':      # 실물은 도메인 0
         print('❌ --fail-near는 시뮬 도메인 전용'); return 2
     rclpy.init()
     sim = [Parameter('use_sim_time', Parameter.Type.BOOL, True)] if a.sim_time else []
     n = rclpy.create_node('step_navigator', parameter_overrides=sim)
     nav = StepNavigator(n, cmd_topic=a.cmd_topic, odom_topic=a.odom_topic, gyro_from_odom=a.gyro_from_odom, step_m=a.step)
     srv_node = rclpy.create_node('step_nav_action_server', parameter_overrides=sim)
+    try:
+        from frontier_exploration_ros2.srv import ControlExploration
+        explore_cli = srv_node.create_client(ControlExploration, 'control_exploration')
+    except ImportError:
+        ControlExploration = explore_cli = None
     jobs = queue.Queue(maxsize=1); busy = threading.Event(); stopping = threading.Event()
     # ⚠️ 10-09 시뮬 첫 실행: 서버가 뜨자마자 온 첫 목표가 'map→base_link TF 없음'으로 실패(TF가 아직 안 채워짐)
     #   → 위치가 잡힌 뒤에 액션 서버를 연다(탐색기는 서버가 뜰 때까지 기다린다)
@@ -143,6 +160,11 @@ def main():
                     except Exception:
                         pass
         r = box.get('r', dict(ok=False, msg='결과 없음'))
+        if not r['ok'] and box.get('explore_stop'):
+            # 탐색기에 멈춤을 요청했다 — 탐색기가 이 목표를 취소할 때까지 잠깐 기다려 '취소'로 끝낸다(실패 기억에 안 남게)
+            te = time.time()
+            while not gh.is_cancel_requested and time.time() - te < 5.0 and not stopping.is_set():
+                time.sleep(0.05)
         res = NavigateToPose.Result()
         if gh.is_cancel_requested:
             gh.canceled()
@@ -173,7 +195,9 @@ def main():
             if a.dump_maps:
                 dump_planfail(k, (x, y), here, out_dir=a.dump_maps)
             try:
-                if fail_near and math.hypot(x - fail_near[0], y - fail_near[1]) <= fail_near[2]:
+                if a.stuck_after and k > a.stuck_after:
+                    nav.spin(2.0); r = dict(ok=False, msg='라이다 바로 옆 미확인 물체 또는 가림(시험)', steps=0, secs=2.0, final_err_m=0.0)
+                elif fail_near and math.hypot(x - fail_near[0], y - fail_near[1]) <= fail_near[2]:
                     nav.path_remaining = 5.0; nav.path_pose = here; te = time.time()
                     while time.time() - te < fail_near[3] and not nav.cancel:
                         nav.spin(0.1)
@@ -185,6 +209,10 @@ def main():
                     break
                 r = dict(ok=False, msg=f'주행기 예외: {e!r}', steps=-1, secs=0.0, final_err_m=float('nan'))
             print(f'   → {"✅" if r["ok"] else "❌"} {r["msg"]} | 단계 {r["steps"]}, {r["secs"]:.1f} s, 오차 {r["final_err_m"] * 100:.1f} cm', flush=True)
+            if not r['ok'] and robot_state_failure(r['msg']) and explore_cli is not None and explore_cli.service_is_ready():
+                rq = ControlExploration.Request(); rq.action = ControlExploration.Request.ACTION_STOP
+                explore_cli.call_async(rq); box['explore_stop'] = True; r['explore_stopped'] = True
+                print(f'   ⏸ 로봇이 지금 움직일 수 없어 탐색을 멈췄다({r["msg"][:30]}…) — 원인을 치우고 [탐색 시작]', flush=True)
             if not r['ok'] and '빈 경로' in r['msg']:
                 dd = dump_planfail(k, (x, y), nav.map_pose())
                 if dd:
