@@ -131,7 +131,10 @@ def generate_launch_description():
                          map_topic='/map_explore',
                          frontier_suppression_enabled=True,
                          frontier_suppression_attempt_threshold=3,
-                         frontier_suppression_no_progress_timeout_s=30.0,
+                         # 진행 없음 감시 30 → 60초(11-07): 좁은 틈 정렬이 한 번에 약 16초, 목표당 최대 2번 + 앞뒤 대기라 30초에 걸려
+                         #   일곱 번째 탐색에서 두 번 취소됐다(한 번은 정렬을 마치고 곧게 통과하기 1.2초 전). 정렬 중엔 일부러 물러서서
+                         #   남은 거리가 느는 게 정직한 값이라 거리를 꾸미지 않고 감시를 늘린다. 막힘은 주행기 쪽(시간 제한·왕복 끊기·탐색 멈춤)이 받친다
+                         frontier_suppression_no_progress_timeout_s=60.0,
                          # ⚠️ 11-01 실물: 실패 기억이 기본 90초라 닫힌 문 쪽 목표에 7분을 되풀이했다(한 시도 60~150초).
                          #   15분이면 한 번의 탐색 안에서는 다시 안 가고, 문이 열렸으면 다음 시도에서 들어간다. 근거는 docs/motion_foundation.md
                          frontier_suppression_timeout_s=900.0,
