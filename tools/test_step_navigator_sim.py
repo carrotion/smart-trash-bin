@@ -413,6 +413,18 @@ def main():
         builtins.print = quiet
         check('엔코더 2초 끊김 → 움직이지 않고 보드 응답 없음 / 신선하면 도착',
               not r['ok'] and '모터 보드 응답 없음' in r['msg'] and not nav.log and P['x'] == 0.0 and r2['ok'], f'{r["msg"][:22]} | {r2["msg"]}')
+        builtins.print = lambda *a, **k: None
+        #  18. 좁은 돌 자리(11-07 일곱 번째 탐색, 실제 스캔 176점 tools/test_data/trap7_pts.json): 앞 물체 중심 13.5 cm, 뒤 여유 19 cm.
+        #      넓은 반경(0.24)으로는 돌 자리가 61 cm 뒤(불가) → 원래 반경(0.22)으로 다시 찾아 9~11 cm 뒤에서 돈다
+        import json as _json
+        w = [tuple(p) for p in _json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_data', 'trap7_pts.json')))]
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=w)
+        r = nav._turn(0, math.radians(90), 'turn')           # 점은 이미 차체(base_link) 좌표
+        mv = [e['arg'] for e in nav.log if e['kind'] == 'rot_clear']; rn = [e['arg'] for e in nav.log if e['kind'] == 'rot_near']
+        builtins.print = quiet
+        check('좁은 돌 자리(실제 스캔): 넓은 반경에 자리 없으면 원래 반경으로 약 10 cm 물러나 돈다',
+              r.get('ok') and bool(mv) and -0.12 <= mv[0] <= -0.08 and rn and rn[0]['radius'] == 0.22, f'물러남 {mv}, 반경 {rn[0]["radius"] if rn else None}, {r}')
+        builtins.print = lambda *a, **k: None
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')
