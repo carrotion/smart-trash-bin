@@ -425,6 +425,18 @@ def main():
         check('좁은 돌 자리(실제 스캔): 넓은 반경에 자리 없으면 원래 반경으로 약 10 cm 물러나 돈다',
               r.get('ok') and bool(mv) and -0.12 <= mv[0] <= -0.08 and rn and rn[0]['radius'] == 0.22, f'물러남 {mv}, 반경 {rn[0]["radius"] if rn else None}, {r}')
         builtins.print = lambda *a, **k: None
+        builtins.print = lambda *a, **k: None
+        #  19. 왕복 끊기 목표 근처 제외(11-08, 남은 경로 0.4 m 안)를 넣은 뒤에도: 가까운 목표엔 정상 도착 / 먼 왕복은 그대로 끊는다.
+        #      목표 근처에서 실제로 지나쳐 돌아서는 장면은 가짜 planner로 재현이 어려워 실물에서 확인한다(여기선 회귀만)
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); nav.plan = lambda here, goal: (line(here, [goal]), '')
+        r = nav.go((0.3, 0.0, None)); fl = [e for e in nav.log if e['kind'] == 'flip_stop']
+        nav3, P3 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0)
+        nav3.plan = lambda here, goal: (line(here, [goal]) if here[0] < 0.5 else line(here, [(-6.0, 0.0), (-6.0, 4.0), goal]), '')
+        r3 = nav3.go((2.0, 0.0, None))
+        builtins.print = quiet
+        check('왕복 끊기 목표 근처 제외 뒤: 가까운 목표 정상 도착 / 먼 왕복은 그대로 끊음',
+              r['ok'] and not fl and not r3['ok'] and '왕복' in r3['msg'], f'가까운 목표: {r["msg"]} | 먼 왕복: {r3["msg"][:24]}')
+        builtins.print = lambda *a, **k: None
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')

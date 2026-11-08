@@ -78,6 +78,7 @@ class StepNavigator:
     #   근거: 도착한 목표는 실물 13개·시뮬 122개 모두 이런 회전 0번, 왕복한 목표는 2~5번. 1번은 막다른 길에서 돌아서는 정상 동작일 수 있어 허용
     flip_deg = 150.0
     flip_max = 2
+    flip_near_m = 0.4
     #   시간 제한: 남은 경로 1 m당 이만큼(실측 약 20초/m의 2배)까지 늘린다. 시작값(기본 180초)보다 줄이지 않고 timeout_cap을 넘기지 않는다.
     #   ⚠️ 11-01 실물 목표 10: 왕복이 아니라 24단계를 착실히 가던 중에 180초에 끊겼다(약 9 m가 한계였다)
     route_s_per_m = 40.0
@@ -447,7 +448,10 @@ class StepNavigator:
                     if near_turns >= 2:
                         return self._done(False, f'가까운 목표 주변 진동({dist * 100:.0f} cm)', step, t0, goal)
                     near_turns += 1
-                flip = step > 0 and abs(dyaw) > math.radians(self.flip_deg) and dist > self.back_max
+                # 목표 근처(남은 경로 flip_near_m 안)는 제외: 지나쳐 돌아서는 정상 동작이다. ⚠️ 11-08 여덟 번째 탐색: 목표 15 cm·남은 경로 0.18 m에서
+                #   발동해 도착 직전 목표를 끊었다(가까운 목표 기준 back_max 15 cm를 1.2 mm 차로 넘음). 진짜 왕복은 남은 경로 0.95 m에서 났다
+                flip = (step > 0 and abs(dyaw) > math.radians(self.flip_deg) and dist > self.back_max
+                        and (self.path_remaining is None or self.path_remaining > self.flip_near_m))
                 if flip and flips + 1 >= self.flip_max:
                     self._note(step, 'flip_stop', dict(dyaw=round(math.degrees(dyaw), 1), path_m=round(self.path_remaining, 2), flips=flips + 1), None)
                     return self._done(False, f'경로가 뒤집혀 왕복 중 — {flips + 1}번째 큰 회전({math.degrees(dyaw):+.0f}°) 전에 멈춤, 남은 경로 {self.path_remaining:.1f} m', step, t0, goal)
