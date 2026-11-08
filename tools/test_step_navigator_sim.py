@@ -302,6 +302,25 @@ def main():
               and r4['ok'] and not [e for e in nav4.log if e['kind'] == 'pose_check'][0]['ok'],
               f'맞는 자리 비율 {min(e["ratio"] for e in pc):.2f}({len(pc)}회) | 어긋난 자리 비율 {pc2[0]["ratio"]:.2f} → {r2["msg"][:28]}…, 이동 {math.hypot(P2["x"], P2["y"]) * 100:.0f} cm | 재확인 뒤 {r3["msg"]} | 끔 {r4["msg"]}')
         builtins.print = lambda *a, **k: None
+        #  12b. 주행 도중 자리 검사(11-08 안방 화장실 앞에서 사람이 들어 옮김 — 3단계 0.67인데 기록만 하고 계속 걸었다):
+        #      도중에 한 번 안 맞고 다시 보니 맞으면 잇는다 / 계속 안 맞으면 그 자리에서 거절(로봇 상태 실패 문구)
+        def flaky(nav, bad):
+            real = nav._pose_check; calls = []
+            def f(here):
+                calls.append(1); r = real(here)
+                return dict(r, ok=False, why='시험', ratio=0.5) if r is not None and bad(len(calls)) else r
+            nav._pose_check = f
+            return calls
+        nav5, P5 = room(); nav5.pose_recheck_s = 2.1; flaky(nav5, lambda k: k == 2); r5 = nav5.go((1.0, 0.0, None))
+        pc5 = [e for e in nav5.log if e['kind'] == 'pose_check']
+        nav6, P6 = room(); nav6.pose_recheck_s = 2.1; flaky(nav6, lambda k: k >= 2); r6 = nav6.go((1.0, 0.0, None))
+        pc6 = [e for e in nav6.log if e['kind'] == 'pose_check']
+        builtins.print = quiet
+        check('주행 도중 자리 검사: 한 번 안 맞으면 기다렸다 이음 / 계속 안 맞으면 거절',
+              r5['ok'] and len(pc5) >= 2 and pc5[1]['ok'] and pc5[1]['waited'] > 0
+              and not r6['ok'] and '안 맞음' in r6['msg'] and len(pc6) == 2 and pc6[1]['step'] >= 1 and abs(pc6[1]['waited'] - 2.1) < 0.05 and P6['x'] < 0.9,
+              f'한 번: {r5["msg"]}(기다림 {pc5[1]["waited"] if len(pc5) > 1 else "?"} s) | 계속: {r6["msg"][:24]}…, 단계 {pc6[-1]["step"]}, 기다림 {pc6[-1]["waited"]} s, x {P6["x"]:.2f} m')
+        builtins.print = lambda *a, **k: None
         #  13. 왕복 끊기(11-01 닫힌 문 옆 틈): 위치에 따라 경로가 앞뒤로 뒤집히는 가상 planner. 2번째 큰 회전 전에 멈춘다.
         #      막다른 길에서 한 번 돌아서는 것은 그대로 도착해야 한다
         def line(here, pts):
