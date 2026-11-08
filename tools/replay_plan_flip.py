@@ -18,10 +18,14 @@ P = os.path.join(HERE, '../robot/src/smart_trash_bringup/config/nav2_params.yaml
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--bag', required=True); ap.add_argument('--server', required=True); ap.add_argument('--zones', required=True)
     ap.add_argument('--goals', type=int, nargs='+', required=True); ap.add_argument('--warm', type=float, default=25.0); ap.add_argument('--cost-png')
+    # (11-08) 빈 경로가 난 순간(plan_fail)에도 묻고, 그때 목표를 주변(반경 0.1~0.3 m, 8방향)으로 옮긴 경로도 시험한다 —
+    #   "덜 그려진 경계 근처 목표에서 NavFn이 경로 추출에 실패한다 → 목표를 옮기면 된다"는 대책 후보의 판가름
+    ap.add_argument('--probe-fail', action='store_true')
     a = ap.parse_args()
     R = [json.loads(l) for l in open(a.server)]; G = [R[k - 1] for k in a.goals]
     first, tr = truth_from_bag(a.bag, 0, 1e9); T = [q[0] for q in tr]
-    ev = sorted(((e['t'], k, e) for k, r in enumerate(G) for e in r['log'] if e['kind'] in ('turn', 'drive')), key=lambda x: x[0])
+    kinds = ('turn', 'drive', 'plan_fail') if a.probe_fail else ('turn', 'drive')
+    ev = sorted(((e['t'], k, e) for k, r in enumerate(G) for e in r['log'] if e['kind'] in kinds), key=lambda x: x[0])
     t_start = ev[0][0] - a.warm; t_end = ev[-1][0] + 3
     tmp = tempfile.mkdtemp(prefix='flip_'); zf = os.path.join(tmp, 'zones.json'); keepout.save(dict(version=1, zones=keepout.load(a.zones)['zones'], prev=[]), zf)
     procs = []
@@ -66,6 +70,18 @@ def main():
             if now < ev[i][0]:
                 continue
             t, k, e = ev[i]; i += 1
+            if e['kind'] == 'plan_fail':
+                j = min(bisect.bisect_left(T, t), len(T) - 1); _, x, y, yaw = tr[j]; g = G[k]['goal'][:2]
+                base = plan((x, y), g); alt = []
+                for rr in (0.1, 0.2, 0.3):
+                    for q in range(8):
+                        gg = (g[0] + rr * math.cos(q * math.pi / 4), g[1] + rr * math.sin(q * math.pi / 4))
+                        if plan((x, y), gg):
+                            alt.append((rr, q))
+                print(f'목표{a.goals[k]} 단계{e["step"]:2d} 빈 경로 순간 자리({x:+.2f},{y:+.2f}) → 원래 목표 경로 {"있음" if base else "없음"}, '
+                      f'옮긴 목표 24곳 중 경로 있음 {len(alt)}곳' + (f'(가장 가까운 {alt[0][0]:.1f} m)' if alt else ''), flush=True)
+                res.append(dict(goal=a.goals[k], step=e['step'], x=x, y=y, plan_fail=True, base=bool(base), alt=alt))
+                continue
             if e['kind'] != 'drive':
                 continue
             j = min(bisect.bisect_left(T, t), len(T) - 1); _, x, y, yaw = tr[j]; g = G[k]['goal'][:2]; pth = plan((x, y), g)

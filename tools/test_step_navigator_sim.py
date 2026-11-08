@@ -437,6 +437,22 @@ def main():
         check('왕복 끊기 목표 근처 제외 뒤: 가까운 목표 정상 도착 / 먼 왕복은 그대로 끊음',
               r['ok'] and not fl and not r3['ok'] and '왕복' in r3['msg'], f'가까운 목표: {r["msg"]} | 먼 왕복: {r3["msg"][:24]}')
         builtins.print = lambda *a, **k: None
+        builtins.print = lambda *a, **k: None
+        #  20. 빈 경로면 목표를 주변으로 옮겨 다시 묻는다(11-08, 덜 그려진 경계 근처 목표에서 NavFn 실패) — 원래 목표와 그 15 cm 안은 경로 없음,
+        #      더 바깥은 경로 있음 → 0.2 m 옮겨 도착 / 옮기기를 끄면(goal_shift_max 0) 예전처럼 빈 경로로 실패
+        G0 = (1.5, 0.0)
+        def picky(here, goal):
+            if math.hypot(goal[0] - G0[0], goal[1] - G0[1]) < 0.15:
+                return None, '빈 경로'
+            return line(here, [goal]), ''
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); nav.plan = picky
+        r = nav.go((G0[0], G0[1], None)); gs = [e['arg'] for e in nav.log if e['kind'] == 'goal_shift']
+        nav2, P2 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); nav2.plan = picky; nav2.goal_shift_max = 0.0
+        r2 = nav2.go((G0[0], G0[1], None))
+        builtins.print = quiet
+        check('빈 경로면 목표를 0.2 m 옮겨 도착 / 끄면 예전처럼 실패',
+              r['ok'] and '옮김' in r['msg'] and gs and gs[0]['d'] == 0.2 and math.hypot(P['x'] - G0[0], P['y'] - G0[1]) < 0.26
+              and not r2['ok'] and '빈 경로' in r2['msg'], f'{r["msg"]} {gs[:1]} | 끔: {r2["msg"][:20]}')
     finally:
         builtins.print = quiet
     print(f'\n4층 주행기 가상 시험: {sum(res)}/{len(res)} 통과')

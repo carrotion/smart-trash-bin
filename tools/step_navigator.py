@@ -79,6 +79,8 @@ class StepNavigator:
     flip_deg = 150.0
     flip_max = 2
     flip_near_m = 0.4
+    #   빈 경로면 목표를 이 거리까지 옮겨 다시 묻는다(11-08). 0이면 끔 — 사람이 정확한 자리를 준 미션에서 끄고 싶을 때
+    goal_shift_max = 0.3
     #   시간 제한: 남은 경로 1 m당 이만큼(실측 약 20초/m의 2배)까지 늘린다. 시작값(기본 180초)보다 줄이지 않고 timeout_cap을 넘기지 않는다.
     #   ⚠️ 11-01 실물 목표 10: 왕복이 아니라 24단계를 착실히 가던 중에 180초에 끊겼다(약 9 m가 한계였다)
     route_s_per_m = 40.0
@@ -297,7 +299,7 @@ class StepNavigator:
 
     def go(self, goal, max_steps=120, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
-        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0; stages = 0
+        t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0; stages = 0; goal_moved = None
         self.path_remaining = None; self.path_pose = None
         # 금지 구역 정보를 아직 못 받았으면 잠깐 기다리고, 끝내 없으면 움직이지 않는다.
         #   ⚠️ 10-10 Stage: 주행기 서버가 뜨자마자 온 첫 목표가 구역 안이었는데, 구역 목록이 아직 안 도착해 '구역 없음'으로 출발 판단
@@ -369,7 +371,7 @@ class StepNavigator:
                             final_fix += 1
                             if self._straight(step, along, 'final_fix'):
                                 continue
-                return self._done(True, '도착' if arrive_tol == self.xy_tol else '도착(근접 허용)', step, t0, goal)
+                return self._done(True, ('도착' if arrive_tol == self.xy_tol else '도착(근접 허용)') + (f'(목표를 {goal_moved:.1f} m 옮김)' if goal_moved else ''), step, t0, goal)
             path, why = self.plan(here, goal)
             if path is None:
                 # ⚠️ 10-10 Stage: 로봇이 문 A 안(문설주에서 0.15 m)에 섰을 때 "빈 경로" → 그 자리에서 이후 목표 35개가 전부 실패,
@@ -378,6 +380,21 @@ class StepNavigator:
                 path, shift = self._plan_from_nearby(here, goal)
                 if path is not None:
                     self._note(step, 'plan_shift', dict(d=shift[0], deg=round(shift[1])), None)
+            if path is None and goal_moved is None and self.goal_shift_max > 0:
+                # 목표를 주변(0.1~goal_shift_max m, 8방향)으로 옮겨 다시 묻는다. ⚠️ 11-08 여덟 번째 탐색: 덜 그려진 경계 근처 목표에서 NavFn이
+                #   "legal potential … failed"로 경로를 못 냈다(51번). 녹화를 실제 계획기에 재생하니 빈 경로 순간 6번 모두 원래 목표는 경로 없음,
+                #   0.2 m 옮긴 목표는 24곳 중 4~5곳에서 경로 있음(tools/replay_plan_flip.py --probe-fail). 탐색 목표는 경계 근처의 한 점이라 옮겨도 뜻이 같다
+                for rr in [k / 10 for k in range(1, int(round(self.goal_shift_max * 10)) + 1)]:
+                    for q in range(8):
+                        gg = (goal[0] + rr * math.cos(q * math.pi / 4), goal[1] + rr * math.sin(q * math.pi / 4), goal[2])
+                        p2, _ = self.plan(here, gg)
+                        if p2 is not None:
+                            path, goal_moved = p2, rr
+                            self._note(step, 'goal_shift', dict(d=rr, to=(round(gg[0], 2), round(gg[1], 2))), None)
+                            goal = gg; dist = math.hypot(goal[0] - here[0], goal[1] - here[1])
+                            break
+                    if path is not None:
+                        break
             if path is None:
                 # ⚠️ 10-10 Stage 스냅샷: SLAM 지도가 어긋나 문틈에 유령 벽이 그려지면 로봇이 "지도상 벽 속"에 서게 되고, 어떤 planner도
                 #   (NavFn·Smac 2D·Theta* 전부) 거기서 출발하는 경로를 못 낸다. 그 자리에 남으면 다음 목표들도 줄줄이 실패(35개 연속).
