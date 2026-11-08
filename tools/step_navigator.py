@@ -73,6 +73,7 @@ class StepNavigator:
     _map_msg = None
     _field = None
     pose_check_enforce = True
+    pose_recheck_s = 10.0     # 주행 도중 자리 검사가 안 맞을 때 선 채로 다시 보는 최대 시간(11-08 실물: 사람이 옮긴 뒤 SLAM이 9초에 고침)
     #   왕복 끊기(11-01): 출발 뒤 이 각도보다 큰 회전이 같은 목표에서 flip_max번째면 돌지 않고 끝낸다.
     #   ⚠️ 11-01 실물 탐색: 닫힌 문 옆 틈의 코스트맵이 로봇 위치에 따라 뚫렸다 막혀 경로가 2.8 m ↔ 15 m로 뒤집히며 ±175° 왕복, 7분 허비.
     #   근거: 도착한 목표는 실물 13개·시뮬 122개 모두 이런 회전 0번, 왕복한 목표는 2~5번. 1번은 막다른 길에서 돌아서는 정상 동작일 수 있어 허용
@@ -338,17 +339,23 @@ class StepNavigator:
                 return self._done(False, 'map→base_link TF 없음', step, t0, goal)
             # 지도 위 내 자리가 지금 스캔과 맞는가 — 출발 전(첫 단계)에 본다. ⚠️ 10-11: 위치 잡기를 켠 채 사람이 로봇을 58 cm 옮겼는데
             #   자세는 옮기기 전 그대로였다(경고 없음). 그대로 걸으면 틀린 자리 기준으로 걷고 금지 구역도 틀린 자리에 놓인다.
-            #   한 번 안 맞으면 새 스캔으로 두 번 더 본다(지나가는 사람). 매 단계 값은 기록만 한다 — 주행 중 거절할지는 자료가 쌓인 뒤 판단
+            #   한 번 안 맞으면 새 스캔으로 두 번 더 본다(지나가는 사람).
+            #   주행 도중(step ≥ 1)에 안 맞으면 선 채로 pose_recheck_s까지 다시 본다 — 맞아지면 잇고, 끝내 안 맞으면 거절(로봇 상태 실패 → 탐색 멈춤).
+            #   근거(11-08, 실물 주행 도중 검사 2110번): 안 맞음이 이어진 것은 11-07 17:00 보드 멈춤으로 위치가 20 m 튄 때뿐(13단계 연속) — 멈췄어야 했다.
+            #   한 번만 안 맞은 것(11-07 오전 4번, 11-08 안방 화장실 앞에서 사람이 들어 옮긴 1번 — 0.67)은 다음 단계에 전부 돌아왔다.
+            #   11-08은 기록만 하고 6초 뒤 그대로 돌고 직진했다. SLAM이 9초 만에 19 cm를 스스로 고쳤으니 기다렸다 이으면 된다
             pc = self._pose_check(here)
             if pc is not None:
-                if step == 0 and not pc['ok']:
-                    for _ in range(2):
-                        self.spin(0.7); here = self.map_pose() or here; pc = self._pose_check(here) or pc
+                waited = 0.0
+                if not pc['ok']:
+                    limit = 1.4 if step == 0 else self.pose_recheck_s
+                    while waited < limit - 1e-6:
+                        self.spin(0.7); waited += 0.7; here = self.map_pose() or here; pc = self._pose_check(here) or pc
                         if pc['ok']:
                             break
                 self.log.append(dict(step=step, kind='pose_check', t=round(time.time(), 2), ok=pc['ok'], n=pc['n'], on=pc['on'], free=pc['free'], unk=pc['unk'],
-                                     ratio=None if pc['ratio'] is None else round(pc['ratio'], 3)))
-                if step == 0 and not pc['ok'] and self.pose_check_enforce:
+                                     ratio=None if pc['ratio'] is None else round(pc['ratio'], 3), waited=round(waited, 1)))
+                if not pc['ok'] and self.pose_check_enforce:
                     return self._done(False, f'지도 위 자리가 스캔과 안 맞음 — {pc["why"]}. 로봇이 옮겨졌을 수 있다 → 자리를 다시 찾을 것(tools/relocate.py)', step, t0, goal)
             hd, hz = keepout.nearest(here[0], here[1], self._zones)
             if hd == 0.0:
