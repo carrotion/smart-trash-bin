@@ -1,0 +1,70 @@
+구동 계통 확인:
+  smart-trash-diff-drive     active
+  smart-trash-ekf            active
+  smart-trash-imu            active
+
+녹화 대상:
+  /scan_raw            OK
+  /scan                OK
+  /map                 OK
+  /odom                OK
+  /odometry/filtered   OK
+  /imu/data            OK
+  /imu/mag             OK
+  /wheel_encoders      OK
+  /tf                  OK
+  /tf_static           OK
+  /cmd_vel             OK
+
+녹화 시작 -> /home/carrotian/smart-trash-bin/bags/20261114_104750_explore9  (2700초)
+지금부터 로봇을 손으로 밀고 다니면 실제 주행 데이터가 남는다.
+[WARN] [ros2bag]: Positional "topics" argument deprecated. Please use optional "--topics" argument instead.
+stdin is not a terminal device. Keyboard handling disabled.[INFO] [1794620890.137547666] [rosbag2_recorder]: Press SPACE for pausing/resuming
+[INFO] [1794620890.137635035] [rosbag2_recorder]: Event publisher thread: Started
+[INFO] [1794620890.300991772] [rosbag2_recorder]: Starting recording to '/home/carrotian/smart-trash-bin/bags/20261114_104750_explore9'
+[INFO] [1794620890.403047278] [rosbag2_recorder]: Listening for topics...
+[INFO] [1794620890.407907235] [rosbag2_recorder]: Recording...
+[INFO] [1794620890.406710014] [rosbag2_recorder]: Topics discovery started.
+[INFO] [1794620891.177804987] [rosbag2_recorder]: Subscribed to topic '/tf'
+[INFO] [1794620891.261683180] [rosbag2_recorder]: Subscribed to topic '/cmd_vel'
+[INFO] [1794620891.281815478] [rosbag2_recorder]: Subscribed to topic '/odometry/filtered'
+[INFO] [1794620891.294033574] [rosbag2_recorder]: Subscribed to topic '/scan'
+[INFO] [1794620891.510758542] [rosbag2_recorder]: Subscribed to topic '/odom'
+[INFO] [1794620891.532862308] [rosbag2_recorder]: Subscribed to topic '/wheel_encoders'
+[INFO] [1794620892.611747764] [rosbag2_recorder]: Subscribed to topic '/scan_raw'
+[INFO] [1794620893.268425170] [rosbag2_recorder]: Subscribed to topic '/map'
+[INFO] [1794620893.984971662] [rosbag2_recorder]: Subscribed to topic '/imu/data'
+[INFO] [1794620893.997005631] [rosbag2_recorder]: Subscribed to topic '/imu/mag'
+[INFO] [1794620894.586088646] [rosbag2_recorder]: Subscribed to topic '/tf_static'
+[INFO] [1794620894.587532604] [rosbag2_recorder]: All requested topics are subscribed. Stopping discovery...
+[INFO] [1794620894.589906120] [rosbag2_recorder]: Topics discovery stopped.
+[INFO] [1794622157.199940971] [rosbag2_recorder]: Pausing recording.
+[INFO] [1794622157.200071268] [rosbag2_cpp]: Writing remaining messages from cache to the bag. It may take a while
+[INFO] [1794622157.219720089] [rosbag2_recorder]: Recording stopped
+[WARN] [1794622157.219810515] [rosbag2_recorder]: Number of messages lost on the transport layer: 1
+[INFO] [1794622157.339640066] [rosbag2_recorder]: Event publisher thread: Exited
+
+  
+  Files:             20261114_104750_explore9_0.mcap
+  Bag size:          195.9 MiB
+  Storage id:        mcap
+  ROS Distro:        jazzy
+  Duration:          1266.047100426s
+  Start:             Nov 14 2026 10:48:11.150726100 (1794620891.150726100)
+  End:               Nov 14 2026 11:09:17.197826526 (1794622157.197826526)
+  Messages:          342005
+  Topic information: Topic: /cmd_vel | Type: geometry_msgs/msg/Twist | Count: 18015 | Serialization Format: cdr
+                     Topic: /imu/data | Type: sensor_msgs/msg/Imu | Count: 63156 | Serialization Format: cdr
+                     Topic: /imu/mag | Type: sensor_msgs/msg/MagneticField | Count: 62869 | Serialization Format: cdr
+                     Topic: /map | Type: nav_msgs/msg/OccupancyGrid | Count: 253 | Serialization Format: cdr
+                     Topic: /odom | Type: nav_msgs/msg/Odometry | Count: 15877 | Serialization Format: cdr
+                     Topic: /odometry/filtered | Type: nav_msgs/msg/Odometry | Count: 37970 | Serialization Format: cdr
+                     Topic: /scan | Type: sensor_msgs/msg/LaserScan | Count: 12614 | Serialization Format: cdr
+                     Topic: /scan_raw | Type: sensor_msgs/msg/LaserScan | Count: 12613 | Serialization Format: cdr
+                     Topic: /tf | Type: tf2_msgs/msg/TFMessage | Count: 101247 | Serialization Format: cdr
+                     Topic: /tf_static | Type: tf2_msgs/msg/TFMessage | Count: 2 | Serialization Format: cdr
+                     Topic: /wheel_encoders | Type: std_msgs/msg/Int32MultiArray | Count: 17389 | Serialization Format: cdr
+  Service:           0
+  Service information: 
+
+재생: ros2 bag play /home/carrotian/smart-trash-bin/bags/20261114_104750_explore9
