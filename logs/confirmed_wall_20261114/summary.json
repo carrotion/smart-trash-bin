@@ -1,0 +1,42 @@
+[
+ {
+  "rule": "θ45 N3 길이0.00 비율0.5",
+  "wardrobe_goal_frontier": [
+   17,
+   1,
+   13
+  ],
+  "other_goals_lost": [],
+  "door_face": "18/41",
+  "added_on_free": 310,
+  "reach_area": [
+   12645,
+   12388
+  ],
+  "people": [
+   8,
+   20,
+   29
+  ]
+ },
+ {
+  "rule": "θ45 N3 길이0.20 비율0.5",
+  "wardrobe_goal_frontier": [
+   17,
+   13,
+   13
+  ],
+  "other_goals_lost": [],
+  "door_face": "17/41",
+  "added_on_free": 118,
+  "reach_area": [
+   12645,
+   12578
+  ],
+  "people": [
+   4,
+   20,
+   6
+  ]
+ }
+]
