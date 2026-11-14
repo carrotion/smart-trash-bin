@@ -36,7 +36,6 @@ def main():
     spawn([sys.executable, os.path.join(HERE, 'keepout_server.py'), '--keep', '--file', zf, '--ros-args'] + st, 'keepout.log')
     spawn(['ros2', 'run', 'tf2_ros', 'static_transform_publisher', '--x', '0.054', '--z', '0.085', '--frame-id', 'base_link', '--child-frame-id', 'base_laser', '--ros-args'] + st, 'static.log')
     spawn(['ros2', 'run', 'nav2_planner', 'planner_server', '--ros-args', '--params-file', P] + st, 'planner.log')
-    spawn(['ros2', 'run', 'nav2_lifecycle_manager', 'lifecycle_manager', '--ros-args', '-r', '__node:=lm_flip', '-p', "node_names:=['planner_server']", '-p', 'autostart:=true'] + st, 'lm.log')
     res = []
     try:
         import rclpy
@@ -49,6 +48,10 @@ def main():
         rclpy.init(); n = rclpy.create_node('flip_probe', parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)]); ac = ActionClient(n, ComputePathToPose, 'compute_path_to_pose'); cm = {}
         n.create_subscription(OccupancyGrid, '/global_costmap/costmap', lambda m: cm.update(m=m), QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.VOLATILE))
         spawn(['ros2', 'bag', 'play', a.bag, '--clock', '200', '--start-offset', str(t_start - first), '--playback-duration', str(t_end - t_start + 2), '--topics', '/scan', '/map', '/tf'], 'play.log')
+        # ⚠️ 11-14: 코스트맵을 녹화보다 먼저 켜면 map→base_link가 아직 없어 활성화가 1초 만에 실패하고, 이후 모든 요청이 "Costmap timed out"으로 빈 경로가 됐다
+        #   → 녹화를 틀고 TF가 들어온 뒤에 켠다
+        time.sleep(4)
+        spawn(['ros2', 'run', 'nav2_lifecycle_manager', 'lifecycle_manager', '--ros-args', '-r', '__node:=lm_flip', '-p', "node_names:=['planner_server']", '-p', 'autostart:=true'] + st, 'lm.log')
 
         def ps(x, y):
             m = PoseStamped(); m.header.frame_id = 'map'; m.pose.position.x, m.pose.position.y = float(x), float(y); m.pose.orientation.w = 1.0; return m

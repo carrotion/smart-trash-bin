@@ -30,7 +30,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--file', default=keepout.FILE)
     ap.add_argument('--keep', action='store_true', help='켜질 때 구역을 비우지 않는다')
-    a = ap.parse_args()
+    a, _ = ap.parse_known_args()        # --ros-args …(재생 도구의 use_sim_time)는 rclpy가 sys.argv에서 읽는다 — 11-14 재생에서 거절돼 구역 서버가 안 떴다
     if not (a.keep or os.environ.get('KEEPOUT_KEEP')):      # 저장 지도로 시작할 땐 그 지도의 구역을 그대로 쓴다(런치가 환경 변수로 알림)
         d = keepout.load(a.file)
         if d['zones']:
