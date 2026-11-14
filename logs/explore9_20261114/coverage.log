@@ -1,0 +1,253 @@
+[map_coverage_logger] /map 구독 시작 -> logs/explore9_20261114/coverage.csv (주기 5.0s, occ_threshold=65)
+  t=   5.4s  coverage=  5.8%  known=1864/32005
+  t=  10.6s  coverage=  5.8%  known=1864/32005
+  t=  15.6s  coverage=  5.8%  known=1864/32005
+  t=  20.8s  coverage=  5.8%  known=1864/32005
+  t=  25.8s  coverage=  5.8%  known=1864/32005
+  t=  30.8s  coverage=  5.8%  known=1864/32005
+  t=  36.0s  coverage=  5.8%  known=1864/32005
+  t=  41.0s  coverage= 14.7%  known=4763/32375
+  t=  46.2s  coverage= 19.8%  known=6600/33250
+  t=  51.2s  coverage= 23.0%  known=7637/33250
+  t=  56.4s  coverage= 23.0%  known=7637/33250
+  t=  61.4s  coverage= 23.0%  known=7637/33250
+  t=  66.6s  coverage= 23.0%  known=7637/33250
+  t=  71.6s  coverage= 24.9%  known=8312/33425
+  t=  76.6s  coverage= 24.9%  known=8312/33425
+  t=  81.8s  coverage= 26.7%  known=8910/33425
+  t=  86.8s  coverage= 28.8%  known=9628/33425
+  t=  92.0s  coverage= 30.7%  known=10314/33600
+  t=  97.2s  coverage= 30.7%  known=10314/33600
+  t= 102.2s  coverage= 27.6%  known=10840/39248
+  t= 107.4s  coverage= 29.8%  known=12012/40304
+  t= 112.4s  coverage= 29.8%  known=12012/40304
+  t= 117.4s  coverage= 28.6%  known=12480/43648
+  t= 122.6s  coverage= 26.7%  known=12835/48048
+  t= 127.6s  coverage= 26.7%  known=12835/48048
+  t= 132.8s  coverage= 26.7%  known=12835/48048
+  t= 137.8s  coverage= 26.7%  known=12835/48048
+  t= 143.0s  coverage= 27.7%  known=13334/48224
+  t= 148.0s  coverage= 28.4%  known=13866/48752
+  t= 153.2s  coverage= 29.4%  known=14327/48752
+  t= 158.4s  coverage= 30.0%  known=14608/48752
+  t= 163.4s  coverage= 28.4%  known=14801/52076
+  t= 168.6s  coverage= 28.4%  known=14801/52076
+  t= 173.6s  coverage= 22.3%  known=14963/67034
+  t= 178.6s  coverage= 22.8%  known=15309/67034
+  t= 183.6s  coverage= 22.8%  known=15309/67034
+  t= 188.6s  coverage= 22.8%  known=15309/67034
+  t= 193.8s  coverage= 23.7%  known=15889/67034
+  t= 198.8s  coverage= 24.3%  known=16288/67034
+  t= 204.0s  coverage= 24.9%  known=16660/67034
+  t= 209.0s  coverage= 24.9%  known=16660/67034
+  t= 214.0s  coverage= 25.1%  known=16826/67034
+  t= 219.2s  coverage= 25.1%  known=16826/67034
+  t= 224.2s  coverage= 25.2%  known=16906/67034
+  t= 229.4s  coverage= 25.2%  known=16906/67034
+  t= 234.4s  coverage= 25.3%  known=16981/67034
+  t= 239.6s  coverage= 25.4%  known=17019/67034
+  t= 244.8s  coverage= 25.4%  known=17019/67034
+  t= 250.0s  coverage= 25.5%  known=17071/67034
+  t= 255.0s  coverage= 25.5%  known=17099/67034
+  t= 260.0s  coverage= 25.5%  known=17099/67034
+  t= 265.0s  coverage= 25.5%  known=17099/67034
+  t= 270.0s  coverage= 25.5%  known=17099/67034
+  t= 275.2s  coverage= 25.5%  known=17102/67034
+  t= 280.2s  coverage= 25.5%  known=17102/67034
+  t= 285.4s  coverage= 25.5%  known=17102/67034
+  t= 290.4s  coverage= 25.5%  known=17102/67034
+  t= 295.4s  coverage= 25.5%  known=17116/67034
+  t= 300.6s  coverage= 25.5%  known=17116/67034
+  t= 305.6s  coverage= 25.5%  known=17119/67034
+  t= 310.6s  coverage= 25.5%  known=17119/67034
+  t= 315.8s  coverage= 25.5%  known=17119/67034
+  t= 320.8s  coverage= 25.5%  known=17119/67034
+  t= 326.0s  coverage= 25.5%  known=17126/67034
+  t= 331.0s  coverage= 25.5%  known=17126/67034
+  t= 336.2s  coverage= 25.6%  known=17131/67034
+  t= 341.2s  coverage= 25.6%  known=17131/67034
+  t= 346.4s  coverage= 25.6%  known=17134/67034
+  t= 351.6s  coverage= 25.6%  known=17134/67034
+  t= 356.6s  coverage= 25.6%  known=17134/67034
+  t= 361.8s  coverage= 25.6%  known=17136/67034
+  t= 367.0s  coverage= 25.6%  known=17136/67034
+  t= 372.0s  coverage= 25.6%  known=17146/67034
+  t= 377.2s  coverage= 25.6%  known=17151/67034
+  t= 382.4s  coverage= 25.7%  known=17214/67034
+  t= 387.4s  coverage= 25.8%  known=17273/67034
+  t= 392.4s  coverage= 25.9%  known=17384/67034
+  t= 397.6s  coverage= 25.9%  known=17384/67034
+  t= 402.6s  coverage= 26.1%  known=17491/67034
+  t= 407.8s  coverage= 26.1%  known=17491/67034
+  t= 412.8s  coverage= 26.2%  known=17759/67865
+  t= 418.0s  coverage= 26.2%  known=17814/67865
+  t= 423.0s  coverage= 26.4%  known=17912/67865
+  t= 428.2s  coverage= 26.5%  known=17963/67865
+  t= 433.2s  coverage= 26.5%  known=17963/67865
+  t= 438.4s  coverage= 26.6%  known=18086/67865
+  t= 443.6s  coverage= 26.6%  known=18086/67865
+  t= 448.8s  coverage= 26.9%  known=18312/68142
+  t= 453.8s  coverage= 26.9%  known=18312/68142
+  t= 459.0s  coverage= 27.3%  known=18432/67554
+  t= 464.0s  coverage= 27.4%  known=18515/67554
+  t= 469.0s  coverage= 27.7%  known=18688/67554
+  t= 474.0s  coverage= 27.9%  known=18854/67554
+  t= 479.2s  coverage= 28.2%  known=19030/67554
+  t= 484.4s  coverage= 28.2%  known=19030/67554
+  t= 489.4s  coverage= 28.6%  known=19315/67554
+  t= 494.6s  coverage= 29.0%  known=19603/67554
+  t= 499.8s  coverage= 29.0%  known=19603/67554
+  t= 504.8s  coverage= 29.6%  known=19963/67554
+  t= 509.8s  coverage= 30.5%  known=20634/67554
+  t= 514.8s  coverage= 30.5%  known=20634/67554
+  t= 520.0s  coverage= 30.8%  known=20812/67554
+  t= 525.0s  coverage= 31.1%  known=20996/67554
+  t= 530.2s  coverage= 31.1%  known=20996/67554
+  t= 535.2s  coverage= 31.5%  known=21249/67554
+  t= 540.4s  coverage= 31.9%  known=21573/67554
+  t= 545.6s  coverage= 31.9%  known=21573/67554
+  t= 550.8s  coverage= 32.6%  known=22026/67554
+  t= 556.0s  coverage= 32.6%  known=22026/67554
+  t= 561.2s  coverage= 32.7%  known=22110/67554
+  t= 566.2s  coverage= 32.7%  known=22110/67554
+  t= 571.4s  coverage= 32.8%  known=22188/67554
+  t= 576.4s  coverage= 32.9%  known=22241/67554
+  t= 581.6s  coverage= 33.0%  known=22309/67554
+  t= 586.6s  coverage= 33.0%  known=22309/67554
+  t= 591.6s  coverage= 33.0%  known=22309/67554
+  t= 596.8s  coverage= 33.0%  known=22309/67554
+  t= 601.8s  coverage= 33.1%  known=22349/67554
+  t= 606.8s  coverage= 33.1%  known=22349/67554
+  t= 612.0s  coverage= 33.1%  known=22373/67554
+  t= 617.0s  coverage= 33.2%  known=22397/67554
+  t= 622.2s  coverage= 33.2%  known=22422/67554
+  t= 627.4s  coverage= 33.3%  known=22487/67554
+  t= 632.4s  coverage= 33.3%  known=22487/67554
+  t= 637.6s  coverage= 33.5%  known=22597/67554
+  t= 642.8s  coverage= 33.8%  known=22821/67554
+  t= 647.8s  coverage= 33.8%  known=22821/67554
+  t= 653.0s  coverage= 34.3%  known=23190/67554
+  t= 658.0s  coverage= 34.3%  known=23190/67554
+  t= 663.2s  coverage= 34.7%  known=23422/67554
+  t= 668.2s  coverage= 34.7%  known=23422/67554
+  t= 673.2s  coverage= 34.7%  known=23422/67554
+  t= 678.4s  coverage= 34.7%  known=23422/67554
+  t= 683.6s  coverage= 34.8%  known=23494/67554
+  t= 688.8s  coverage= 34.8%  known=23513/67554
+  t= 693.8s  coverage= 34.9%  known=23557/67554
+  t= 699.0s  coverage= 34.9%  known=23557/67554
+  t= 704.0s  coverage= 34.9%  known=23574/67554
+  t= 709.0s  coverage= 34.9%  known=23577/67554
+  t= 714.0s  coverage= 34.9%  known=23594/67554
+  t= 719.2s  coverage= 34.9%  known=23594/67554
+  t= 724.2s  coverage= 34.9%  known=23604/67554
+  t= 729.2s  coverage= 34.9%  known=23604/67554
+  t= 734.4s  coverage= 35.0%  known=23620/67554
+  t= 739.4s  coverage= 35.0%  known=23620/67554
+  t= 744.6s  coverage= 35.0%  known=23631/67554
+  t= 749.8s  coverage= 35.0%  known=23633/67554
+  t= 754.8s  coverage= 34.0%  known=23656/69500
+  t= 760.0s  coverage= 34.1%  known=23734/69500
+  t= 765.2s  coverage= 34.1%  known=23734/69500
+  t= 770.2s  coverage= 34.4%  known=23800/69222
+  t= 775.4s  coverage= 34.5%  known=23881/69222
+  t= 780.6s  coverage= 34.6%  known=23950/69222
+  t= 785.6s  coverage= 33.9%  known=24092/71168
+  t= 790.8s  coverage= 33.9%  known=24092/71168
+  t= 795.8s  coverage= 32.2%  known=24507/76172
+  t= 800.8s  coverage= 32.1%  known=24842/77284
+  t= 805.8s  coverage= 32.1%  known=24842/77284
+  t= 810.8s  coverage= 32.7%  known=25246/77284
+  t= 816.0s  coverage= 32.7%  known=25246/77284
+  t= 821.0s  coverage= 33.2%  known=25628/77284
+  t= 826.2s  coverage= 33.5%  known=25907/77284
+  t= 831.4s  coverage= 33.5%  known=25907/77284
+  t= 836.4s  coverage= 33.5%  known=25907/77284
+  t= 841.4s  coverage= 33.5%  known=25907/77284
+  t= 846.4s  coverage= 33.5%  known=25907/77284
+  t= 851.6s  coverage= 33.5%  known=25907/77284
+  t= 856.8s  coverage= 33.8%  known=26110/77284
+  t= 861.8s  coverage= 34.0%  known=26381/77562
+  t= 867.0s  coverage= 34.0%  known=26381/77562
+  t= 872.0s  coverage= 34.2%  known=26534/77562
+  t= 877.2s  coverage= 34.2%  known=26534/77562
+  t= 882.4s  coverage= 34.2%  known=26534/77562
+  t= 887.6s  coverage= 34.4%  known=26695/77562
+  t= 892.8s  coverage= 34.4%  known=26695/77562
+  t= 898.0s  coverage= 34.4%  known=26695/77562
+  t= 903.2s  coverage= 34.4%  known=26695/77562
+  t= 908.2s  coverage= 34.6%  known=26819/77562
+  t= 913.4s  coverage= 34.6%  known=26819/77562
+  t= 918.4s  coverage= 34.6%  known=26819/77562
+  t= 923.6s  coverage= 34.6%  known=26819/77562
+  t= 928.8s  coverage= 34.6%  known=26819/77562
+  t= 933.8s  coverage= 34.6%  known=26819/77562
+  t= 939.0s  coverage= 34.6%  known=26819/77562
+  t= 944.0s  coverage= 34.6%  known=26819/77562
+  t= 949.2s  coverage= 34.6%  known=26819/77562
+  t= 954.2s  coverage= 34.6%  known=26865/77562
+  t= 959.2s  coverage= 34.6%  known=26865/77562
+  t= 964.4s  coverage= 34.6%  known=26865/77562
+  t= 969.4s  coverage= 34.7%  known=26883/77562
+  t= 974.6s  coverage= 34.7%  known=26883/77562
+  t= 979.6s  coverage= 34.7%  known=26883/77562
+  t= 984.8s  coverage= 34.7%  known=26898/77562
+  t= 989.8s  coverage= 34.7%  known=26906/77562
+  t= 995.0s  coverage= 34.7%  known=26949/77562
+  t=1000.0s  coverage= 34.7%  known=26949/77562
+  t=1005.2s  coverage= 34.8%  known=26967/77562
+  t=1010.4s  coverage= 34.8%  known=26986/77562
+  t=1015.4s  coverage= 34.8%  known=26986/77562
+  t=1020.6s  coverage= 34.8%  known=26991/77562
+  t=1025.6s  coverage= 34.8%  known=26991/77562
+  t=1030.8s  coverage= 34.8%  known=26996/77562
+  t=1035.8s  coverage= 33.7%  known=27022/80073
+  t=1041.0s  coverage= 33.7%  known=27022/80073
+  t=1046.0s  coverage= 33.8%  known=27049/80073
+  t=1051.2s  coverage= 33.8%  known=27062/80073
+  t=1056.4s  coverage= 33.8%  known=27089/80073
+  t=1061.4s  coverage= 33.9%  known=27133/80073
+  t=1066.4s  coverage= 33.8%  known=27221/80631
+  t=1071.6s  coverage= 33.8%  known=27221/80631
+  t=1076.6s  coverage= 33.6%  known=27258/81189
+  t=1081.8s  coverage= 33.6%  known=27258/81189
+  t=1086.8s  coverage= 33.4%  known=27319/81747
+  t=1092.0s  coverage= 33.4%  known=27319/81747
+  t=1097.0s  coverage= 33.4%  known=27319/81747
+  t=1102.0s  coverage= 33.4%  known=27319/81747
+  t=1107.2s  coverage= 33.4%  known=27319/81747
+  t=1112.4s  coverage= 33.4%  known=27324/81747
+  t=1117.6s  coverage= 33.4%  known=27326/81747
+  t=1122.6s  coverage= 33.4%  known=27328/81747
+  t=1127.8s  coverage= 33.4%  known=27337/81747
+  t=1132.8s  coverage= 33.4%  known=27342/81747
+  t=1137.8s  coverage= 33.5%  known=27345/81747
+  t=1143.0s  coverage= 33.5%  known=27348/81747
+  t=1148.0s  coverage= 33.5%  known=27348/81747
+  t=1153.0s  coverage= 33.5%  known=27359/81747
+  t=1158.2s  coverage= 33.5%  known=27369/81747
+  t=1163.2s  coverage= 33.5%  known=27386/81747
+  t=1168.2s  coverage= 33.6%  known=27468/81747
+  t=1173.4s  coverage= 33.6%  known=27427/81747
+  t=1178.6s  coverage= 33.6%  known=27488/81747
+  t=1183.6s  coverage= 33.6%  known=27499/81747
+  t=1188.6s  coverage= 33.7%  known=27526/81747
+  t=1193.6s  coverage= 33.7%  known=27530/81747
+  t=1198.6s  coverage= 33.7%  known=27535/81747
+  t=1203.8s  coverage= 33.7%  known=27535/81747
+  t=1208.8s  coverage= 33.7%  known=27585/81747
+  t=1214.0s  coverage= 33.7%  known=27588/81747
+  t=1219.0s  coverage= 33.7%  known=27588/81747
+  t=1224.2s  coverage= 33.8%  known=27608/81747
+  t=1229.4s  coverage= 33.8%  known=27608/81747
+  t=1234.4s  coverage= 33.8%  known=27624/81747
+  t=1239.6s  coverage= 33.9%  known=27703/81747
+  t=1244.8s  coverage= 33.9%  known=27725/81747
+  t=1249.9s  coverage= 33.9%  known=27725/81747
+  t=1255.0s  coverage= 34.0%  known=27796/81747
+  t=1260.0s  coverage= 34.0%  known=27796/81747
+  t=1265.2s  coverage= 34.0%  known=27796/81747
+  t=1270.4s  coverage= 34.0%  known=27796/81747
+  t=1275.4s  coverage= 34.0%  known=27796/81747
+  t=1280.4s  coverage= 34.0%  known=27796/81747
+[map_coverage_logger] 종료 — 251행 기록됨: logs/explore9_20261114/coverage.csv
