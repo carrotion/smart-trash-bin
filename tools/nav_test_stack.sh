@@ -25,12 +25,16 @@ case "$1" in
     if [ -n "$MAP" ]; then
       # 저장된 지도로 시작. ⚠️ 자리 찾기는 라이다 서비스의 스캔(관제 대시보드 경유)을 쓰므로 서비스를 내리기 **전에** 한다
       T=/home/carrotian/smart-trash-bin/tools; B=$HOME/maps/$MAP
+      # START_POSE=x,y,방향(도)를 주면 스캔으로 찾지 않고 그 자리로 시작(11-14: 도크 위에서 지도만 띄워 금지 구역을 그릴 때 —
+      #   자리를 확신하지 못하면 시작을 거절하는데, 로봇을 움직이지 않을 거면 자리는 상관없다). ⚠️ 그 상태로 주행하지 말 것
+      if [ -n "$START_POSE" ]; then POSE="$START_POSE"; echo "자리를 찾지 않고 주어진 자리 $POSE 로 시작(주행 금지)"; else
       POSE=$(python3 $T/locate_on_map.py --map "$B" --whole --json | python3 -c "
 import sys, json, math
 r = json.load(sys.stdin); b = r[0]
 if b['on_wall'] < 0.85 or (len(r) > 1 and r[1]['score'] > 0.85 * b['score']):
     sys.stderr.write('자리를 확신하지 못함: 벽 위 %.0f%%, 1등 %.2f / 2등 %.2f\\n' % (b['on_wall'] * 100, b['score'], r[1]['score'] if len(r) > 1 else 0)); sys.exit(1)
 print('%.3f,%.3f,%.2f' % (b['x'], b['y'], math.degrees(b['yaw'])))") || { echo "❌ 저장된 지도에서 지금 자리를 찾지 못했다 — 로봇을 벽이 잘 보이는 곳으로 옮기거나 MAP 없이(새 지도) 시작"; exit 1; }
+      fi
       python3 $T/localize_params.py --map "$B" --pose="$POSE" --out /tmp/slam_localize.yaml || exit 1
       python3 -c "
 import sys; sys.path.insert(0, '$T'); import keepout
