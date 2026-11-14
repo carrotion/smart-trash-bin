@@ -31,9 +31,12 @@ def main():
         name, xy = g.rsplit(':', 1); x, y = xy.split(','); goals.append((name, float(x), float(y)))
     if not goals:
         print(__doc__); return 2
-    rclpy.init(); n = rclpy.create_node('mission_go'); ac = ActionClient(n, NavigateToPose, 'step_navigate_to_pose')
+    # ⚠️ 11-14: Ctrl-C(SIGINT)에 rclpy 기본 처리기가 먼저 컨텍스트를 닫아, 취소 요청을 보내지 못한 채 죽었다 → 로봇은 목표로 계속 갔다(비상정지로 세움).
+    #   rclpy의 신호 처리를 끄고 SIGINT도 SIGTERM처럼 "멈춤 표시"만 하게 해서, finally에서 살아 있는 컨텍스트로 목표를 취소한다
+    from rclpy.signals import SignalHandlerOptions
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO); n = rclpy.create_node('mission_go'); ac = ActionClient(n, NavigateToPose, 'step_navigate_to_pose')
     tfb = Buffer(); TransformListener(tfb, n); stop = []; current = []
-    signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+    signal.signal(signal.SIGTERM, lambda *_: stop.append(1)); signal.signal(signal.SIGINT, lambda *_: stop.append(1))
 
     def pose():
         try:
