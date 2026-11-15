@@ -80,7 +80,7 @@
  "source": "voice", "ttl_s": 29.8}
 ```
 
-- **`ttl_s`**: 로봇이 받은 순간부터 이 초가 지나면 하지 않는다. 시작 전에 지나면 `finished/expired`로 알린다.
+- **`ttl_s`**: 로봇이 받은 순간부터 이 초가 지나면 하지 않는다. 서버는 1초보다 짧은 값을 1초로 올려 잡는다(11-15 서버 구현). 시작 전에 지나면 `finished/expired`로 알린다.
   - 이미 시작한 명령은 유효 시간이 지나도 계속한다. 유효 시간은 "언제까지 시작해도 되나"이다. [C1]
 - 서버는 `received`가 올 때까지 5초마다 같은 명령을 다시 준다. 로봇은 번호로 중복을 거른다.
   - 로봇은 본 번호를 최근 200개까지 기억한다. 켤 때 비우는데, 그 사이 다시 온 옛 명령은 `ttl_s`가 막는다.
@@ -221,7 +221,7 @@
 - 이름 붙인 장소: 저장 지도에 장소 이름을 붙이는 방법(지도 대시보드에서 사용자가 찍는다?), 지도를 다시 그릴 때 옮기는 방법.
 - 호출어냐 버튼이냐(3.5절).
 - 로봇 쪽 구현 순서(설계 확정 뒤):
-  1. `hello`·`status`·`ack`·`event`와 쌓아 두기. 명령은 `get_status`·`cancel`만. — **구현함(11-15, `tools/server_link.py`, 시험 `tools/test_server_link.py` 15항목 합격, 서비스 `smart-trash-server-link`로 늘 켜 둠 — 11-15 사용자 "계속 켜 놓는 게 맞다")**. 쌓아 두는 상한은 잠정 2000건이고, 넘치면 오래된 것부터 버리고 그 수를 `status.link.outbox_dropped`에 싣는다. `cancel`은 `tools/mission_go.py`에 SIGINT를 보내 끝을 확인한다. 탐색 멈춤은 2단계에서 한다.
+  1. `hello`·`status`·`ack`·`event`와 쌓아 두기. 명령은 `get_status`·`cancel`만. — **구현함, 실제 서버로 끝까지 확인(11-15 20:00: `get_status` 받음→시작→끝 67~80 ms, `cancel` done, `go_to` rejected/invalid). `tools/server_link.py`, 시험 `tools/test_server_link.py` 15항목 합격, 서비스 `smart-trash-server-link`로 늘 켜 둠 — 11-15 사용자 "계속 켜 놓는 게 맞다")**. 쌓아 두는 상한은 잠정 2000건이고, 넘치면 오래된 것부터 버리고 그 수를 `status.link.outbox_dropped`에 싣는다. `cancel`은 `tools/mission_go.py`에 SIGINT를 보내 끝을 확인한다. 탐색 멈춤은 2단계에서 한다.
   2. `go_to`·`return_home`(지금 `tools/mission_go.py`가 하는 일).
   3. `plan`.
   4. 마이크·스피커를 단 뒤 `say`·`ask`·`hear`·로컬 "멈춰".
