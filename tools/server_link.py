@@ -245,7 +245,8 @@ class Link:
         while not self.stop.is_set():
             code, body = self.call('GET', self.path(f'commands?timeout={POLL_S}'), timeout=POLL_S + 10)
             if code == 200 and body.get('command'):
-                self.handle(body['command']); back = 1.0
+                c = body['command']; r = self.handle(c); back = 1.0
+                print(f"명령 {c.get('id')} {c.get('type')} {json.dumps(c.get('args') or {}, ensure_ascii=False)} → {r}", flush=True)
             elif code in (200, 204):
                 back = 1.0
             else:
