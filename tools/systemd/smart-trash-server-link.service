@@ -1,0 +1,17 @@
+[Unit]
+Description=Smart Trash Bin - robot-server link, stage 1 (hello/status/ack/event, get_status and cancel only)
+After=network-online.target tailscaled.service smart-trash-motor-dashboard.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec python3 tools/server_link.py'
+Restart=on-failure
+RestartSec=5
+# 서버 연결은 보조 — 주행·SLAM보다 뒤로. 끊겨도 로봇의 다른 일은 멈추지 않는다
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
