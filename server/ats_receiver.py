@@ -35,8 +35,8 @@
 
 확인
 ----
-    curl http://192.168.0.170:8080/           # 보관 현황
-    curl http://192.168.0.170:8080/api/list   # JSON
+    curl http://192.168.0.x:8080/           # 보관 현황
+    curl http://192.168.0.x:8080/api/list   # JSON
 """
 
 import argparse

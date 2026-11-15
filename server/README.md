@@ -1,7 +1,7 @@
 # ATS 서버 쪽 작업 — 인계 문서
 
 > 로봇(Pi5, `smart-bin-01`)에서 작업하는 에이전트가 2026-08-17에 작성.
-> 서버(윈도우 PC, `192.168.0.170`)에서 작업할 에이전트를 위한 문서다.
+> 서버(윈도우 PC, `192.168.0.x`)에서 작업할 에이전트를 위한 문서다.
 
 ## 0. 협업 방식 — 계약을 먼저 고정한다
 
@@ -51,7 +51,7 @@ python server\ats_receiver.py --root "C:\Users\carro\projects\smart-trash-bin\ar
 - 보관 경로를 `artifacts\` 하위로 둔 이유: 프로젝트 폴더에 기존 산출물이 이미
   있어서, 자동 업로드분과 섞이면 나중에 구분이 안 된다
 
-확인: `http://192.168.0.170:8080/` (보관 현황), `/api/list` (JSON)
+확인: `http://192.168.0.x:8080/` (보관 현황), `/api/list` (JSON)
 
 ### 2.2 그다음 — 우선순위 순
 
@@ -111,8 +111,8 @@ GET /api/list    {unit: {kind: [{name, bytes, mtime}, ...]}}
 
 | 항목 | 값 |
 |---|---|
-| 로봇 | `smart-bin-01`, `192.168.0.189`, Ubuntu 24.04, ROS 2 Jazzy, Pi 5 (RAM 3.9GB) |
-| 서버 | 윈도우, `192.168.0.170` (고정), 24/7 가동, `carrotwifi` |
+| 로봇 | `smart-bin-01`, `192.168.0.x`, Ubuntu 24.04, ROS 2 Jazzy, Pi 5 (RAM 3.9GB) |
+| 서버 | 윈도우, `192.168.0.x` (고정), 24/7 가동, `집 Wi-Fi` |
 | 로봇→서버 SSH | **불가** (22번 포트 닫힘). 그래서 배포는 git 경유 |
 | 서버 보관 경로 | `C:\Users\carro\projects\smart-trash-bin\artifacts` |
 

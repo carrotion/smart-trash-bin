@@ -343,7 +343,7 @@ clean_orphan_shm()`(파이썬 함수로 직접 import해서 씀)으로 DDS 고�
 **실시간 시각화**: `ros-jazzy-foxglove-bridge` 설치, 도메인 42에서
 `ros2 run foxglove_bridge foxglove_bridge -p port:=8785`로 띄움(8765는
 power_monitor가 이미 씀). PC에서 app.foxglove.dev → Open connection →
-Foxglove WebSocket → `ws://192.168.0.189:8785`.
+Foxglove WebSocket → `ws://192.168.0.x:8785`.
 
 ### 시뮬레이션으로 확인된 것 (전부 오늘 밤 재현·비교 완료)
 
