@@ -46,16 +46,16 @@ def server_url(arg):
     sys.exit('서버 주소가 없어요: --server, ROBOT_SERVER_URL, 또는 ~/.config/smart-trash-bin/server_url')
 
 
-def wifi_dbm():
-    """가장 센 무선 연결의 신호(dBm). 없으면 None."""
+def wifi_dbm(iface='wlan0'):
+    """그 무선 연결의 신호(dBm). 없으면 None. 기본은 기본 경로인 내장 Wi-Fi — 11-15 드레스룸 기록은 '가장 센 연결'을 써서
+    실제로 쓰이지 않던 핫스팟 동글(−47)이 찍혔다(실제 길인 wlan0은 −65~−71)."""
     try:
-        best = None
         for line in open('/proc/net/wireless').read().splitlines()[2:]:
-            v = float(line.split()[3].rstrip('.'))
-            best = v if best is None else max(best, v)
-        return best
+            if line.split(':')[0].strip() == iface:
+                return float(line.split()[3].rstrip('.'))
     except Exception:
-        return None
+        pass
+    return None
 
 
 def pct(v, q):
