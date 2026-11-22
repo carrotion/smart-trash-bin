@@ -88,6 +88,26 @@ class Detector:
         return frame
 
 
+FLOOR = {'a': 347.0, 'b': 96.0}      # 줄 = a + b/거리(m) — 2026-11-22 실측(docs/calibration/camera_floor_20261122.json)
+
+
+def row_to_distance(row, height=480, floor=FLOOR):
+    """화면 줄 → 바닥까지 거리(m). 지평선(a)보다 아래일 때만 뜻이 있다. 카메라를 기울이거나 높이를 바꾸면 다시 잰다."""
+    if row <= floor['a'] or row > height:
+        return None
+    return floor['b'] / (row - floor['a'])
+
+
+def objects_on_floor(dets, height=480, max_m=2.0):
+    """검출 상자들 중 '바닥 가까이(아래 끝)에 있고 2 m 안'인 것을 (상자, 거리)로. 낮은 물체 판단의 재료."""
+    out = []
+    for d in dets:
+        dist = row_to_distance(d[3], height)
+        if dist is not None and dist <= max_m:
+            out.append((d, round(dist, 2)))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--still'); ap.add_argument('--test', action='store_true')
