@@ -426,9 +426,15 @@ def main():
         nav2, P2 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); r = nav2.go((1.5, 0.0, None))
         drives = [e['arg'] for e in nav2.log if e['kind'] == 'drive']
         builtins.print = quiet
-        check('상황별 걸음: 트이면 0.5 / 옆 장애물이면 0.4 / 옆 물체 직후 0.4, 두 단계 뒤 0.5 / 트인 1.5 m는 0.5 m 세 걸음',
+        nav3, P3 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); nav3.S.world.extend(bottle(0.3, -0.30))
+        nav3.step_open_m = nav3.step_m; r3 = nav3.go((1.5, 0.0, None)); v_tight = nav3.driver.v_max
+        nav4, _ = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); r4 = nav4.go((1.5, 0.0, None)); v_open = nav4.driver.v_max
+        vm = [e.get('v_max') for e in nav4.log if e['kind'] == 'drive']
+        check('상황별 걸음: 트이면 0.5 / 옆 장애물이면 0.4 / 옆 물체 직후 0.4, 두 단계 뒤 0.5 / 트인 1.5 m는 0.5 m 세 걸음 / 속도도 트이면 0.20, 좁으면 0.15',
               (open_, near, after, later) == (nav.step_open_m, nav.step_m, nav.step_m, nav.step_open_m) and r['ok'] and len(drives) == 3
-              and all(abs(d - 0.5) < 0.02 for d in drives), f'{(open_, near, after, later)}, 걸음 {drives}')
+              and all(abs(d - 0.5) < 0.02 for d in drives)
+              and v_open == nav4.drive_v_max and v_tight == nav3.drive_v_tight and r3['ok'] and vm and all(v == nav4.drive_v_max for v in vm),
+              f'{(open_, near, after, later)}, 걸음 {drives}, 속도 트임 {v_open} / 좁음 {v_tight}, 기록 {vm}')
         builtins.print = lambda *a, **k: None
         #  16. 벽과 의자 다리 사이(11-07 다섯 번째 탐색): 왼쪽 벽이 차체 옆(중심 20 cm)을 x −0.2~0.45로 따라 이어지고 오른쪽 다리가 옆면 4 cm.
         #      뒤쪽 목표라 돌아야 한다 → 곧게 뒤로 빠져 돌 자리를 찾아(25 cm 안에는 없음) 돌고 도착 / 뒤도 막혔으면 움직이지 않고 실패

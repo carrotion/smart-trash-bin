@@ -153,6 +153,9 @@ def generate_launch_description():
     # 금지 구역 서버(파이썬 도구) — 항상 뜬다. 켜질 때 지난 구역을 치워 둔다(SLAM이 새 원점으로 새 지도를 그리므로)
     keepout_server = ExecuteProcess(
         cmd=['python3', '-u', os.path.join(repo_tools, 'keepout_server.py')], output='screen')
+    # 라이다 데이터가 끊기면 드라이버만 다시 여는 감시(11-22, todo #13) — 11번째 탐색이 끊김으로 끝난 뒤
+    lidar_watchdog = ExecuteProcess(
+        cmd=['python3', '-u', os.path.join(repo_tools, 'lidar_watchdog.py')], output='screen')
 
     # 탐색기용 지도 필터(파이썬 도구) — 탐색 구성(navigator:=step)에서만. 원래 /map은 그대로 두고 /map_explore를 따로 낸다
     explore_map_filter = ExecuteProcess(
@@ -185,5 +188,6 @@ def generate_launch_description():
     ld.add_action(frontier_step_node)
     ld.add_action(step_server)
     ld.add_action(keepout_server)
+    ld.add_action(lidar_watchdog)
     ld.add_action(explore_map_filter)
     return ld

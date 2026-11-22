@@ -99,8 +99,12 @@ class StepNavigator:
     #   10번째 탐색 시간의 49%가 직진, 걸음마다 거리와 무관한 1.8 s가 든다 → 둘 다 올리면 직진 535 → 약 437 s 예상.
     #   ②' 바닥 시험(같은 자리·같은 날): 0.15/0.17 2 cm 안 75%(8번), 0.20/0.17 62%, 0.20/0.22 80%(20번) — 둘 다 기준 90% 미달,
     #   빗나간 것은 거의 쉬었다가 첫 몇 걸음의 더 감(2.7~4.2 cm). 속도 때문에 나빠지지 않아 올림. 첫 걸음 더 감은 따로 조사
-    drive_v_max = 0.20
+    drive_v_max = 0.20          # 트인 곳(아래 상황별 걸음이 step_open_m을 고를 때)
     drive_coast_s = 0.22
+    # (11-22 사용자 지적 "드레스룸 쪽은 공간이 좁아서 0.15 m/s로 움직였어야 했는데") 속도도 상황별로 — 처음엔 걸음만 상황별이고 속도는 어디서나 0.20이었다.
+    #   11번째 탐색에서 안방 화장실 앞 슬리퍼·옷과 부딪힐 때 0.19~0.27 m/s였다. 좁은 곳은 ②' 합격 설정(0.15 m/s, 관성 0.17 s)으로
+    drive_v_tight = 0.15
+    drive_coast_tight = 0.17
     # 걸음 길이를 상황별로(11-22 사용자 제안 "장애물이 많을 때는 낮추고, 여유 있을 때는 늘리자"): 기본 step_m(0.4)은 촘촘한 걸음이다.
     #   라이다 바로 옆 물체(의자 다리 등) 검사는 걸음 사이 멈췄을 때만 돈다 → 걸음이 길면 멈춤 사이에 확인 못 하는 구간이 생긴다
     #   (지도 시험: 0.5 m 걸음이면 의자 다리 옆을 그냥 지나감). 그래서 앞으로 갈 구간 양옆이 트였고(차체 바깥 open_side_m 안에 스캔 점 없음)
@@ -163,7 +167,7 @@ class StepNavigator:
         self.planner = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
         self.turner = TurnToAngle(self.pub, self.spin, lambda: self.S['pose'][2], lambda: self.S['gz'])
         self.driver = DriveDistance(self.pub, self.spin, lambda: self.S['pose'], lambda: self.S['v'], clear_fn=self._clear_now,
-                                    v_max=self.drive_v_max, coast_s=self.drive_coast_s)
+                                    v_max=self.drive_v_tight, coast_s=self.drive_coast_tight)
         self.log = []
 
     def _on_odom(self, m):
@@ -531,7 +535,8 @@ class StepNavigator:
                 if blocked >= self.blocked_max:
                     return self._done(False, f'앞 여유 부족 {blocked}회({room:.2f} m)', step, t0, goal)
                 self.spin(1.0); continue
-            r = self.driver.drive_by(seg); self._note(step, 'drive', round(seg, 3), r)
+            self._set_speed(stp > self.step_m)
+            r = self.driver.drive_by(seg); self._note(step, 'drive', round(seg, 3), dict(r, v_max=self.driver.v_max))
             self.last_fwd = seg if r['ok'] else 0.0
             if not r['ok']:
                 blocked += 1
@@ -791,12 +796,17 @@ class StepNavigator:
         dx, dy = goal[0] - here[0], goal[1] - here[1]; c, s = math.cos(here[2]), math.sin(here[2])
         return c * dx + s * dy, -s * dx + c * dy
 
+    def _set_speed(self, open_):
+        """트인 곳이면 빠른 설정, 아니면 좁은 곳 설정(위 drive_v_* 주석)."""
+        self.driver.v_max, self.driver.coast_s = ((self.drive_v_max, self.drive_coast_s) if open_ else (self.drive_v_tight, self.drive_coast_tight))
+
     def _straight(self, step, d, kind, margin=None):
         """돌지 않고 앞(+)/뒤(−)로 d m. 가는 쪽 여유가 |d| + margin(기본 clear_margin) 이상일 때만. 실행했으면 True."""
         room = corridor_clearance(self._scan(), d > 0, 0.0 if d > 0 else 0.1, self.side_margin)
         if room < abs(d) + (self.clear_margin if margin is None else margin):
             self._note(step, kind + '_blocked', dict(d=round(d, 3), room=round(room, 2)), None)
             return False
+        self._set_speed(False)      # 후진·되돌아가기·정렬은 늘 좁은 곳 속도
         r = self.driver.drive_by(d); self._note(step, kind, round(d, 3), r)
         self.last_fwd = d if d > 0 and r.get('ok') else 0.0
         return True
@@ -804,7 +814,7 @@ class StepNavigator:
     def _note(self, step, kind, arg, r):
         e = dict(step=step, kind=kind, arg=arg, t=round(time.time(), 2))
         if r:
-            e.update({k: v for k, v in r.items() if k in ('ok', 'msg', 'err_deg', 'err_m', 'fixes', 'secs')})
+            e.update({k: v for k, v in r.items() if k in ('ok', 'msg', 'err_deg', 'err_m', 'fixes', 'secs', 'v_max')})
         self.log.append(e)
         print(f'  단계 {step}: {kind} {arg}' + (f' → {"✅" if r.get("ok") else "❌"} {r.get("msg","")}' if r else ''), flush=True)
 

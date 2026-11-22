@@ -105,7 +105,10 @@ def generate_launch_description():
             'enable_angle_crop_func': False,
             'angle_crop_min': 135.0,
             'angle_crop_max': 225.0,
-        }]
+        }],
+        # 2026-11-22: 드라이버가 죽으면(예: tools/lidar_watchdog.py가 끊김으로 끝냈을 때) 다시 띄운다.
+        #   드라이버는 대개 죽지 않고 데이터만 멈추므로 그건 와치독이 끝내고, 여기서 다시 뜬다
+        respawn=True, respawn_delay=1.0,
     )
 
     # 로봇 자기 구조물 반사 제거 (scan_raw -> scan).
