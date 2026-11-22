@@ -32,7 +32,8 @@ class Detector:
         self.name = self.sess.get_inputs()[0].name
         self.size, self.conf, self.keep = size, conf, set(keep)
         self.grids = np.concatenate([self._grid(size // s) for s in STRIDES]).astype(np.float32)
-        self.strides = np.repeat([size // s for s in STRIDES], [(size // s) ** 2 for s in STRIDES]).astype(np.float32)
+        # ⚠️ 11-22: 여기에 size//stride(52·26·13)를 넣어 상자가 4분의 1로 작게 나왔다 — 디코딩에 쓰는 값은 픽셀 스트라이드(8·16·32)다
+        self.strides = np.repeat(list(STRIDES), [(size // s) ** 2 for s in STRIDES]).astype(np.float32)
 
     @staticmethod
     def _grid(n):

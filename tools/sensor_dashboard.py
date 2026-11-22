@@ -862,6 +862,9 @@ class Handler(BaseHTTPRequestHandler):
         if fr is None:
             self._send(503, json.dumps({"ok": False, "error": "카메라 화면이 아직 없다"}, ensure_ascii=False).encode(), "application/json"); return
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        if (q.get("raw") or [""])[0]:                       # 상자 없는 원본(인식 시험용)
+            ok, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            self._send(200, buf.tobytes(), "image/jpeg"); return
         if (q.get("save") or [""])[0]:
             d = os.path.expanduser("~/camera_shots"); os.makedirs(d, exist_ok=True)
             name = os.path.join(d, "cam_" + time.strftime("%Y%m%d_%H%M%S") + ".jpg")
