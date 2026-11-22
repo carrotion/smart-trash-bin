@@ -13,6 +13,7 @@ import argparse
 import gzip
 import json
 import os
+import sys
 import urllib.parse
 import math
 import signal
@@ -686,7 +687,7 @@ tick();
     try {
       const r = await (await fetch('/api/camera')).json();
       dot.style.background = r.ok ? 'var(--good)' : 'var(--critical)';
-      info = r.ok ? `${r.w}×${r.h} · ${Math.round(r.fps)}장/초 · ${r.device}` : '';
+      info = r.ok ? `${r.w}×${r.h} · ${Math.round(r.fps)}장/초 · 사람 ${r.people ?? 0}명` + (r.detect_ms ? ` · 인식 ${Math.round(r.detect_ms)}ms` : ' · 인식 꺼짐') : '';
       st.textContent = r.ok ? info : (r.error || '카메라 없음');
     } catch (e) { dot.style.background = 'var(--critical)'; st.textContent = '카메라 상태를 못 읽음'; }
   }
@@ -719,6 +720,44 @@ import cv2
 cam_lock = threading.Lock()
 cam = {"frame": None, "jpg": None, "n": 0, "info": None, "err": None}
 _cam_thread = {"t": None}
+_det_thread = {"t": None}
+det_lock = threading.Lock()
+det = {"dets": [], "t": 0.0, "ms": 0.0, "people": 0}
+
+
+def _det_worker():
+    """최신 화면을 받아 사람을 찾는다(3~4장/초). 잡는 스레드와 분리 — 잡는 쪽이 느려지지 않게(11-22)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from camera_detect import Detector
+        d = Detector()
+    except Exception as e:
+        with det_lock:
+            det["ms"] = -1.0
+        print(f'사람 인식 비활성: {type(e).__name__} {e}', flush=True)
+        return
+    while True:
+        with cam_lock:
+            fr = None if cam.get("frame") is None else cam["frame"].copy()
+        if fr is None:
+            time.sleep(0.2); continue
+        t0 = time.time()
+        try:
+            ds = d.detect(fr)
+        except Exception:
+            ds = []
+        with det_lock:
+            det.update(dets=ds, t=time.time(), ms=(time.time() - t0) * 1000,
+                       people=sum(1 for x in ds if x[5] == 0))
+        with state_lock:
+            state["camera"] = dict(state.get("camera") or {}, connected=True, n=cam.get("n", 0), people=det["people"])
+        time.sleep(0.15)
+
+
+def _det_start():
+    if _det_thread["t"] is None and os.path.exists("/dev/video0"):
+        _det_thread["t"] = threading.Thread(target=_det_worker, daemon=True)
+        _det_thread["t"].start()
 
 
 def _cam_worker():
@@ -735,6 +774,14 @@ def _cam_worker():
             with cam_lock:
                 cam["err"] = "read failed"
             time.sleep(0.5); continue
+        with det_lock:
+            ds = list(det["dets"]) if time.time() - det["t"] < 1.5 else []
+        if ds:
+            from camera_detect import COCO
+            for x1, y1, x2, y2, sc, c in ds:
+                cv2.rectangle(fr, (int(x1), int(y1)), (int(x2), int(y2)), (60, 200, 60), 2)
+                cv2.putText(fr, f'{COCO[c]} {sc:.2f}', (int(x1), max(12, int(y1) - 6)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 200, 60), 1, cv2.LINE_AA)
         ok2, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 75])
         with cam_lock:
             cam["frame"] = fr; cam["jpg"] = buf.tobytes() if ok2 else cam["jpg"]; cam["n"] += 1; cam["err"] = None
@@ -805,6 +852,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         with cam_lock:
             info = dict(cam.get("info") or {})
+        with det_lock:
+            info.update(people=det["people"], detect_ms=round(det["ms"], 1) if det["ms"] >= 0 else None)
         self._send(200, json.dumps(dict(ok=True, device="/dev/video0", stream="/camera.mjpg", **info), ensure_ascii=False).encode(), "application/json")
 
     def _send_camera_jpeg(self):
@@ -864,6 +913,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     _cam_start()   # 켜질 때부터 카메라를 열어 둔다(허브 카드·대시보드가 바로 보이게)
+    _det_start()   # 사람 인식도 함께(모델이 없으면 조용히 꺼진다)
     # global 선언은 이름을 쓰기 **전에** 와야 한다 (아래 add_argument의 default에서
     # 이미 읽으므로, 뒤에 두면 SyntaxError).
     global DECLINATION_DEG
