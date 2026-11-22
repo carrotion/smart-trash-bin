@@ -21,6 +21,7 @@ def main():
     # (11-08) 빈 경로가 난 순간(plan_fail)에도 묻고, 그때 목표를 주변(반경 0.1~0.3 m, 8방향)으로 옮긴 경로도 시험한다 —
     #   "덜 그려진 경계 근처 목표에서 NavFn이 경로 추출에 실패한다 → 목표를 옮기면 된다"는 대책 후보의 판가름
     ap.add_argument('--probe-fail', action='store_true')
+    ap.add_argument('--params', default=P, help='planner_server 설정 파일(기본: 실물 nav2_params.yaml) — planner·코스트맵 설정을 바꿔 비교할 때')
     a = ap.parse_args()
     R = [json.loads(l) for l in open(a.server)]; G = [R[k - 1] for k in a.goals]
     first, tr = truth_from_bag(a.bag, 0, 1e9); T = [q[0] for q in tr]
@@ -35,7 +36,7 @@ def main():
     st = ['-p', 'use_sim_time:=true']
     spawn([sys.executable, os.path.join(HERE, 'keepout_server.py'), '--keep', '--file', zf, '--ros-args'] + st, 'keepout.log')
     spawn(['ros2', 'run', 'tf2_ros', 'static_transform_publisher', '--x', '0.054', '--z', '0.085', '--frame-id', 'base_link', '--child-frame-id', 'base_laser', '--ros-args'] + st, 'static.log')
-    spawn(['ros2', 'run', 'nav2_planner', 'planner_server', '--ros-args', '--params-file', P] + st, 'planner.log')
+    spawn(['ros2', 'run', 'nav2_planner', 'planner_server', '--ros-args', '--params-file', a.params] + st, 'planner.log')
     res = []
     try:
         import rclpy
@@ -81,9 +82,18 @@ def main():
                         gg = (g[0] + rr * math.cos(q * math.pi / 4), g[1] + rr * math.sin(q * math.pi / 4))
                         if plan((x, y), gg):
                             alt.append((rr, q))
+                # (11-22) 목표를 어디로 옮겨도 안 되면 막힌 쪽은 출발점이다 — 출발점에서 사방 0.5 m로도 물어 보고, 그 순간 코스트맵을 남긴다
+                near = [q for q in range(8) if plan((x, y), (x + 0.5 * math.cos(q * math.pi / 4), y + 0.5 * math.sin(q * math.pi / 4)))]
+                c = cm.get('m'); cmf = None
+                if c is not None:
+                    cmf = f'cm_fail_{a.goals[k]}_{e["step"]}.npy'
+                    np.save(os.path.join(tmp, cmf), np.array(c.data, np.int8).reshape(c.info.height, c.info.width))
+                    gc = (c.info.origin.position.x, c.info.origin.position.y, c.info.resolution)
                 print(f'목표{a.goals[k]} 단계{e["step"]:2d} 빈 경로 순간 자리({x:+.2f},{y:+.2f}) → 원래 목표 경로 {"있음" if base else "없음"}, '
-                      f'옮긴 목표 24곳 중 경로 있음 {len(alt)}곳' + (f'(가장 가까운 {alt[0][0]:.1f} m)' if alt else ''), flush=True)
-                res.append(dict(goal=a.goals[k], step=e['step'], x=x, y=y, plan_fail=True, base=bool(base), alt=alt))
+                      f'옮긴 목표 24곳 중 경로 있음 {len(alt)}곳' + (f'(가장 가까운 {alt[0][0]:.1f} m)' if alt else '')
+                      + f', 출발점에서 사방 0.5 m 중 경로 있음 {len(near)}/8', flush=True)
+                res.append(dict(goal=a.goals[k], step=e['step'], x=x, y=y, plan_fail=True, base=bool(base), alt=alt, near=near,
+                                cm=cmf, origin=gc if cmf else None))
                 continue
             if e['kind'] != 'drive':
                 continue
