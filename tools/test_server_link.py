@@ -22,7 +22,7 @@ from server_link import Link
 
 class Fake:
     def __init__(self):
-        self.log = []; self.caps = None; self.force_409 = False
+        self.log = []; self.caps = None; self.force_409 = False; self.missing = set()   # missing: 아직 없는 받는 곳(404)
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -36,6 +36,8 @@ class Fake:
                 code = 200
                 if leaf == 'hello':
                     fake.caps = body['caps_version']
+                elif leaf in fake.missing:
+                    code = 404
                 elif leaf == 'status' and (fake.force_409 or body.get('caps_version') != fake.caps):
                     code = 409
                 self.send_response(code); self.send_header('Content-Length', '2'); self.end_headers(); self.wfile.write(b'{}')
@@ -142,6 +144,32 @@ def main():
     r = L3.handle({'id': 'k2', 'type': 'cancel', 'args': {'target': 'speech'}, 'ttl_s': 30})
     check('⑧ cancel target=speech는 스피커가 없어 그냥 done', r == 'done')
     f3.close()
+
+    # ⑨~⑪ 지도·자리(규약 3.9) — ROS 없이 가짜 원천으로
+    class Geo:
+        def __init__(self):
+            self.mov = False; self.png = b'PNG-A'
+        def map_snapshot(self):
+            return {'map_id': 'live-abcdef01-01', 'kind': 'live', 'resolution': 0.05, 'origin': [-1.0, -2.0, 0.0],
+                    'width': 3, 'height': 2, 'png': self.png}
+        def moving(self):
+            return self.mov
+        def pose(self):
+            return {'map_id': 'live-abcdef01-01', 'x': 1.0, 'y': 2.0, 'yaw_deg': 10.0, 'age_ms': 30}
+    import base64
+    f4 = Fake(); geo = Geo(); L4 = mk(f4.url, geo_source=geo); L4.hello(); f4.log.clear()
+    r1 = L4.send_map(geo.map_snapshot()); r2 = L4.send_map(geo.map_snapshot()); geo.png = b'PNG-B'; r3 = L4.send_map(geo.map_snapshot())
+    maps = f4.kinds('map')
+    check('⑨ 지도: 바뀌었을 때만 보내고 map_version이 는다', (r1, r2, r3) == (200, 'same', 200) and [m['map_version'] for m in maps] == [1, 2]
+          and maps[0]['encoding'] == 'png_gray_occupancy' and base64.b64decode(maps[1]['image_b64']) == b'PNG-B'
+          and maps[0]['origin'] == [-1.0, -2.0, 0.0] and maps[0]['kind'] == 'live', (r1, r2, r3, [m.get('map_version') for m in maps]))
+    p1 = L4.send_pose(); geo.mov = True; p2 = L4.send_pose(); poses = f4.kinds('pose')
+    check('⑩ 자리: 서 있으면 보내지 않고, 움직이면 map_id·도·age_ms와 moving을 보냄', p1 == 'still' and p2 == 200 and len(poses) == 1
+          and poses[0] == {'map_id': 'live-abcdef01-01', 'x': 1.0, 'y': 2.0, 'yaw_deg': 10.0, 'age_ms': 30, 'moving': True}, (p1, p2, poses))
+    f4.missing = {'pose'}; f4.log.clear(); q1 = L4.send_pose(); q2 = L4.send_pose(); n_posts = len(f4.kinds('pose'))
+    check('⑪ 받는 곳이 아직 없으면(404) 1분 쉬고 쌓지 않음', q1 == 404 and q2 == 'backoff' and n_posts == 1
+          and not any(i['kind'] == 'pose' for i in L4.outbox.items), (q1, q2, n_posts))
+    f4.close()
 
     print('합격' if not fails else f'불합격 {len(fails)}건: {fails}')
     return 1 if fails else 0

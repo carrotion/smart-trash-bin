@@ -19,7 +19,7 @@
     python3 tools/server_link.py                  # 실행(Ctrl-C로 끝)
     python3 tools/test_server_link.py             # 하드웨어·서버 없이 시험
 """
-import collections, hashlib, json, os, signal, stat, statistics, subprocess, sys, threading, time, urllib.error, urllib.request
+import base64, collections, hashlib, json, os, signal, stat, statistics, subprocess, sys, threading, time, urllib.error, urllib.request
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +32,9 @@ STATUS_S = 5.0
 POLL_S = 20
 OUTBOX_MAX = 2000       # 잠정: 사건은 드물다(배터리 단계·미션 결과). 음영 지역에 몇 시간 있어도 넘지 않을 양. Wi-Fi 지도를 보고 다시 정한다
 SEEN_MAX = 200
+MAP_S = 10.0           # 그리는 중인 지도를 올리는 주기(바뀌었을 때만) — 규약 3.9
+POSE_S = 0.5           # 움직이는 동안 자리를 올리는 주기
+NOT_FOUND_BACKOFF_S = 60.0   # 받는 곳이 아직 없으면(404) 그만큼 쉰다
 COMMANDS = {
     'get_status': {'args': {}, 'rejects': []},
     'cancel': {'args': {'id': '명령 번호(없으면 지금 하는 것)', 'target': 'mission|speech|all'}, 'rejects': []},
@@ -89,7 +92,7 @@ class Outbox:
 
 class Link:
     def __init__(self, base, device, token, outbox_path=None, status_source=None, boot_id=None,
-                 clock=time.monotonic, wall=time.time):
+                 clock=time.monotonic, wall=time.time, geo_source=None):
         self.base, self.device, self.token = base.rstrip('/'), device, token
         self.clock, self.wall = clock, wall
         self.status_source = status_source or (lambda: {})
@@ -102,6 +105,9 @@ class Link:
         self.last_phase = collections.OrderedDict()     # 명령 번호 → 마지막으로 보낸 ack 본문
         self.rtts = collections.deque(maxlen=20); self.fails = collections.deque(maxlen=20)
         self.lock = threading.Lock(); self.stop = threading.Event(); self.doing = None
+        self.geo = geo_source                 # 지도·자리(map_snapshot(), moving(), pose()) — 규약 3.9. 없으면 지도·자리를 올리지 않는다
+        self.map_sent = {}                    # map_id → (map_version, 내용 해시)
+        self.backoff = {}                     # 받는 곳 이름 → 이 시각(clock)까지 쉼
 
     # ---- HTTP
     def call(self, method, path, body=None, timeout=10.0):
@@ -235,6 +241,52 @@ class Link:
             return {'outcome': 'failed', 'ok': False, 'reason': '탐색 멈춤은 1단계 밖 — 지도 대시보드의 [탐색 멈춤]'}
         return {'outcome': 'done', 'ok': True, 'stopped_missions': len(missions)}
 
+    # ---- 지도·자리(규약 3.9) — 쌓아 두지 않는다. 끊겨 있으면 버리고 다음 것을 보낸다
+    def _post_live(self, leaf, body):
+        if self.clock() < self.backoff.get(leaf, 0):
+            return 'backoff'
+        code = self.call('POST', self.path(leaf), body)[0]
+        if code == 404:
+            self.backoff[leaf] = self.clock() + NOT_FOUND_BACKOFF_S
+        return code
+
+    def send_map(self, snap):
+        """snap = {map_id, kind, resolution, origin, width, height, png}. 내용이 같으면 보내지 않는다."""
+        h = hashlib.sha1(snap['png']).hexdigest(); prev = self.map_sent.get(snap['map_id'])
+        if prev and prev[1] == h:
+            return 'same'
+        ver = prev[0] + 1 if prev else 1
+        body = {k: snap[k] for k in ('map_id', 'kind', 'resolution', 'origin', 'width', 'height')}
+        body.update(map_version=ver, encoding='png_gray_occupancy', image_b64=base64.b64encode(snap['png']).decode())
+        code = self._post_live('map', body)
+        if code == 200:
+            self.map_sent[snap['map_id']] = (ver, h)
+        return code
+
+    def send_pose(self):
+        if not self.geo.moving():
+            return 'still'
+        p = self.geo.pose()
+        return self._post_live('pose', dict(p, moving=True)) if p else 'no_map'
+
+    def map_loop(self):
+        while not self.stop.is_set():
+            try:
+                snap = self.geo.map_snapshot()
+                if snap:
+                    self.send_map(snap)
+            except Exception as e:
+                print(f'지도 올리기 실패: {type(e).__name__} {e}', flush=True)
+            self.stop.wait(MAP_S)
+
+    def pose_loop(self):
+        while not self.stop.is_set():
+            try:
+                self.send_pose()
+            except Exception as e:
+                print(f'자리 올리기 실패: {type(e).__name__} {e}', flush=True)
+            self.stop.wait(POSE_S)
+
     # ---- 돌리기
     def status_loop(self):
         while not self.stop.is_set():
@@ -254,7 +306,8 @@ class Link:
 
     def run(self):
         print(f'hello → {self.hello()}  (caps {self.caps_version}, 쌓인 것 {len(self.outbox.items)}건)', flush=True)
-        threads = [threading.Thread(target=f, daemon=True) for f in (self.status_loop, self.poll_loop)]
+        loops = [self.status_loop, self.poll_loop] + ([self.map_loop, self.pose_loop] if self.geo else [])
+        threads = [threading.Thread(target=f, daemon=True) for f in loops]
         for t in threads:
             t.start()
         return threads
@@ -266,11 +319,18 @@ class RobotState:
 
     def __init__(self, on_battery_stage=None):
         self.on_battery_stage = on_battery_stage; self.stage = None; self.tf = None; self.node = None; self.spin = None
+        self.boot = open('/proc/sys/kernel/random/boot_id').read().strip()[:8]
+        self.map_msg = None; self.map_t = 0.0; self.session = 0; self.odom = (0.0, 0.0, 0.0)   # (v, w, 받은 시각)
         try:
             import rclpy, tf2_ros
             from rclpy.signals import SignalHandlerOptions
+            from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
+            from nav_msgs.msg import OccupancyGrid, Odometry
             rclpy.init(signal_handler_options=SignalHandlerOptions.NO); self.node = rclpy.create_node('server_link')
             self.tf = tf2_ros.Buffer(); tf2_ros.TransformListener(self.tf, self.node)
+            self.node.create_subscription(OccupancyGrid, '/map', self._on_map, QoSProfile(
+                depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
+            self.node.create_subscription(Odometry, '/odometry/filtered', self._on_odom, 10)
             self.spin = threading.Thread(target=rclpy.spin, args=(self.node,), daemon=True); self.spin.start()
         except Exception as e:
             print(f'ROS 없이 실행(자세 없음): {e}', flush=True)
@@ -289,14 +349,50 @@ class RobotState:
             self.spin.join(timeout=3)
         self.node.destroy_node()
 
+    # 지도: SLAM이 그리는 /map(탐색 중 5초마다). 20초 넘게 안 오다가 다시 오면 새 지도(새 좌표계)로 본다 → map_id가 바뀐다
+    def _on_map(self, m):
+        now = time.monotonic()
+        if now - self.map_t > 20.0:
+            self.session += 1
+        self.map_msg, self.map_t = m, now
+
+    def _on_odom(self, m):
+        self.odom = (m.twist.twist.linear.x, m.twist.twist.angular.z, time.monotonic())
+
+    @property
+    def map_id(self):
+        return f'live-{self.boot}-{self.session:02d}'
+
+    def map_ok(self):
+        return self.map_msg is not None and time.monotonic() - self.map_t < 30.0
+
+    def map_snapshot(self):
+        """규약 3.9 지도: 8비트 회색 PNG(0 벽, 254 빈칸, 205 모름 — map_server 저장과 같은 문턱), 행 0이 맨 위."""
+        if not self.map_ok():
+            return None
+        import cv2, numpy as np
+        m = self.map_msg; w, h = m.info.width, m.info.height
+        d = np.frombuffer(bytes(m.data), np.int8).reshape(h, w).astype(np.int16)
+        img = np.full((h, w), 205, np.uint8); img[(d >= 0) & (d <= 19)] = 254; img[d >= 65] = 0
+        ok, png = cv2.imencode('.png', img[::-1])
+        o = m.info.origin.position
+        return {'map_id': self.map_id, 'kind': 'live', 'resolution': round(m.info.resolution, 4),
+                'origin': [round(o.x, 4), round(o.y, 4), 0.0], 'width': w, 'height': h, 'png': png.tobytes()} if ok else None
+
+    def moving(self):
+        v, w, t = self.odom
+        return time.monotonic() - t < 1.0 and (abs(v) > 0.02 or abs(w) > 0.05)
+
     def pose(self):
-        if not self.tf:
+        if not self.tf or not self.map_ok():
             return None
         try:
             import math, rclpy.time
             t = self.tf.lookup_transform('map', 'base_link', rclpy.time.Time()); q = t.transform.rotation
-            return {'x': round(t.transform.translation.x, 2), 'y': round(t.transform.translation.y, 2),
-                    'yaw_deg': round(math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y ** 2 + q.z ** 2))), 1)}
+            age = (self.node.get_clock().now() - rclpy.time.Time.from_msg(t.header.stamp)).nanoseconds / 1e6
+            return {'map_id': self.map_id, 'x': round(t.transform.translation.x, 2), 'y': round(t.transform.translation.y, 2),
+                    'yaw_deg': round(math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y ** 2 + q.z ** 2))), 1),
+                    'age_ms': int(max(0, age))}
         except Exception:
             return None
 
@@ -342,7 +438,7 @@ def main():
         if link:
             link.event('battery_stage', {'from': old, 'to': new, 'v': v})
     state = RobotState(battery_stage)
-    link = Link(base, 'trashbin', token, os.path.join(STATE, 'server_outbox.jsonl'), state)
+    link = Link(base, 'trashbin', token, os.path.join(STATE, 'server_outbox.jsonl'), state, geo_source=state)
     signal.signal(signal.SIGTERM, lambda *_: link.stop.set()); signal.signal(signal.SIGINT, lambda *_: link.stop.set())
     link.run()
     while not link.stop.is_set():
