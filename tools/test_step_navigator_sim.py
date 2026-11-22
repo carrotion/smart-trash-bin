@@ -416,6 +416,26 @@ def main():
               and len(boB) == 1 and rB['ok'] and not boC and '미확인' in rC['msg'] and not boD,
               f'A 후진 {[e["arg"] for e in boA]}, {rA["msg"][:16]} | B {rB["msg"]} | C 후진 {len(boC)}번, {rC["msg"][:16]} | D 후진 {len(boD)}번')
         builtins.print = lambda *a, **k: None
+        #  16c. 좁은 곳 앞에서 후진해 바닥 확인(11-22): 물체가 있으면 멈추고, 없으면 그대로 들어간다
+        def look(found):
+            nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[])
+            calls = []
+            nav.floor_check = lambda: (calls.append(1), found)[1]
+            # 앞이 좁은 곳: 통로 양옆에 벽을 놓아 여유를 줄인다
+            nav.S.world = [(0.6, y / 100) for y in range(-40, 41, 5)] + [(0.6, -0.4 + y / 200) for y in range(0, 80)]
+            r = nav.go((2.0, 0.0, None))
+            kinds = [e['kind'] for e in nav.log]
+            return r, kinds, calls, P
+        rA, kA, cA, PA = look([(0.8, 0.1, 'bottle')])
+        rB, kB, cB, PB = look([])
+        builtins.print = quiet
+        # B는 확인 뒤에도 좁은 통로라 끝까지 못 갈 수 있다 — 여기서 볼 것은 "확인은 했고, 물체 때문에 멈추지는 않았다"이다
+        check('좁은 곳 앞 후진 확인: 물체가 있으면 그 이유로 멈추고, 없으면 확인만 하고 진행을 막지 않는다',
+              'look_back' in kA and rA['msg'].startswith('바닥에 물체')
+              and 'look_back' in kB and not rB['msg'].startswith('바닥에 물체'),
+              f'A: {rA["msg"][:24]} {kA[:6]} | B: {rB["msg"][:16]} {kB[:6]}')
+        builtins.print = lambda *a, **k: None
+
         #  16b. 상황별 걸음(11-22): 트였으면 step_open_m, 경로 옆에 장애물이 있으면 step_m, 라이다 바로 옆 물체 직후 두 단계는 step_m
         nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); nav._nu_step = -99
         path = [(k / 20, 0.0) for k in range(41)]

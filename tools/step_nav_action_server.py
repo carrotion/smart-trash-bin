@@ -67,6 +67,8 @@ def main():
     sim = [Parameter('use_sim_time', Parameter.Type.BOOL, True)] if a.sim_time else []
     n = rclpy.create_node('step_navigator', parameter_overrides=sim)
     nav = StepNavigator(n, cmd_topic=a.cmd_topic, odom_topic=a.odom_topic, gyro_from_odom=a.gyro_from_odom, step_m=a.step)
+    import floor_watch
+    nav.floor_check = floor_watch.make_check(step_m=a.step)   # 좁은 곳 앞에서 후진해 바닥 확인(카메라 없으면 None → 동작 안 함)
     srv_node = rclpy.create_node('step_nav_action_server', parameter_overrides=sim)
     try:
         from frontier_exploration_ros2.srv import ControlExploration
