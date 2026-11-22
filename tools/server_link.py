@@ -40,7 +40,7 @@ SAVED_SCAN_S = 30.0          # 저장 지도 폴더를 살피는 주기
 COMMANDS = {
     'get_status': {'args': {}, 'rejects': []},
     'cancel': {'args': {'id': '명령 번호(없으면 지금 하는 것)', 'target': 'mission|speech|all'}, 'rejects': []},
-    'go_to': {'args': {'x': 'm', 'y': 'm'}, 'rejects': ['no_stack', 'battery', 'busy', 'invalid']},
+    'go_to': {'args': {'place': '장소 이름', 'x': 'm', 'y': 'm'}, 'rejects': ['no_stack', 'battery', 'busy', 'invalid']},
     'return_home': {'args': {}, 'rejects': ['no_stack', 'battery', 'busy']},
 }
 
@@ -143,6 +143,28 @@ class Link:
         except ValueError:
             return code, {}
 
+    def places(self):
+        """지금 지도에 붙인 장소 이름 목록. 장소는 지도 좌표라 그 지도 위에서만 뜻이 있다(`~/maps/<지도>.places.json`)."""
+        mid = getattr(self.geo, 'map_id', None) if self.geo else None
+        if not mid or mid.startswith('live-'):
+            return []
+        try:
+            d = json.load(open(os.path.join(SAVED_DIR, mid + '.places.json')))
+            return sorted(p['name'] for p in d.get('places', []))
+        except Exception:
+            return []
+
+    def place_xy(self, name):
+        mid = getattr(self.geo, 'map_id', None) if self.geo else None
+        try:
+            d = json.load(open(os.path.join(SAVED_DIR, mid + '.places.json')))
+            for p in d['places']:
+                if p['name'] == name:
+                    return float(p['x']), float(p['y'])
+        except Exception:
+            pass
+        return None
+
     @staticmethod
     def _read_home():
         """출발점(충전 자리). 설정 파일이 없으면 지금 지도의 원점(0, 0) — 지도를 그리기 시작한 자리다."""
@@ -159,7 +181,7 @@ class Link:
     def hello(self):
         return self.call('POST', self.path('hello'), {
             'protocol': PROTOCOL, 'software': self.software, 'caps_version': self.caps_version, 'name': '쓰레기통',
-            'devices': {'mic': False, 'speaker': False, 'camera': False}, 'commands': COMMANDS, 'places': [],
+            'devices': {'mic': False, 'speaker': False, 'camera': False}, 'commands': COMMANDS, 'places': self.places(),
             'status_interval_s': STATUS_S})[0]
 
     def status_body(self):
@@ -262,10 +284,16 @@ class Link:
     def go(self, typ, args):
         """go_to·return_home: 주행기 도구(tools/mission_go.py)로 미션을 띄우고, 끝날 때까지 지켜본다."""
         if typ == 'go_to':
-            try:
-                x, y = float(args['x']), float(args['y'])
-            except (KeyError, TypeError, ValueError):
-                return {'outcome': 'failed', 'ok': False, 'reason': 'invalid'}
+            if args.get('place'):
+                xy = self.place_xy(str(args['place']))
+                if xy is None:
+                    return {'outcome': 'failed', 'ok': False, 'reason': 'invalid'}
+                x, y = xy
+            else:
+                try:
+                    x, y = float(args['x']), float(args['y'])
+                except (KeyError, TypeError, ValueError):
+                    return {'outcome': 'failed', 'ok': False, 'reason': 'invalid'}
         else:
             x, y = float(self.home[0]), float(self.home[1])
         why = self.reject_reason(typ)

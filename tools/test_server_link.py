@@ -212,6 +212,26 @@ def main():
           and maps[0]['origin'] == [-1.0, -2.0, 0.0] and L7.scan_saved_maps() == 0, (n, maps[:1]))
     f6.close()
 
+    # ⑰ 장소 이름: 저장 지도에 붙인 이름으로 go_to, hello의 places에도 실린다
+    d2 = tempfile.mkdtemp()
+    json.dump({'places': [{'name': '주방', 'x': -1.71, 'y': 4.73}, {'name': '거실', 'x': 4.14, 'y': 2.73}]},
+              open(os.path.join(d2, 'mymap.places.json'), 'w'), ensure_ascii=False)
+    server_link.SAVED_DIR = d2
+    class Geo3(Geo2):
+        map_id = 'mymap'
+    f7 = Fake(); calls2 = []
+    L8 = mk(f7.url, geo_source=Geo3(), mission=lambda x, y, l: (calls2.append((round(x, 2), round(y, 2))), subprocess.Popen([sys.executable, '-c', 'pass']))[1])
+    L8.navigator_present = True; L8.hello()
+    pl = f7.kinds('hello')[-1]['places']
+    r = L8.handle({'id': 'p1', 'type': 'go_to', 'args': {'place': '주방'}, 'ttl_s': 30})
+    r2 = L8.handle({'id': 'p2', 'type': 'go_to', 'args': {'place': '없는방'}, 'ttl_s': 30})
+    check('⑰ hello에 장소 목록, go_to는 이름으로 좌표를 찾고 모르는 이름은 invalid', pl == ['거실', '주방'] and r == 'done'
+          and calls2 == [(-1.71, 4.73)] and r2 == 'failed' and f7.kinds('ack')[-1]['result']['reason'] == 'invalid', (pl, r, calls2, r2))
+    class Geo4(Geo2):
+        map_id = 'live-abcd-01'
+    L10 = mk(f7.url, geo_source=Geo4()); check('⑱ live 지도면 장소 없음', L10.places() == [])
+    f7.close()
+
     print('합격' if not fails else f'불합격 {len(fails)}건: {fails}')
     return 1 if fails else 0
 
