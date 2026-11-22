@@ -12,6 +12,8 @@ imu_publisher_node와 ldlidar_stl_ros2_node가 퍼블리시하는 토픽을 구�
 import argparse
 import gzip
 import json
+import os
+import urllib.parse
 import math
 import signal
 import threading
@@ -351,6 +353,18 @@ __FAVICON__
 <h1>센서 대시보드</h1>
 
 <div class="card">
+  <div class="card-head"><span class="dot" id="camDot"></span> 카메라 (로지텍 C270)</div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start">
+    <img id="camImg" alt="로봇 카메라 화면" style="width:100%;max-width:640px;border-radius:8px;border:1px solid var(--border);background:#111" src="">
+    <div class="msg" id="camState" style="min-width:12em"></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="mini" id="camSnap">한 장 찍어 저장</button>
+    <span class="msg" id="camSnapMsg"></span>
+  </div>
+</div>
+
+<div class="card">
   <div class="card-head"><span class="dot" id="imuDot"></span> IMU (ICM-20948)</div>
   <table id="imuTable"></table>
 </div>
@@ -647,6 +661,44 @@ occBtn.addEventListener('click', async () => {
 pollOcc();
 
 tick();
+// 카메라: 0.25초마다 한 장씩 받아 <img>에 그린다. MJPEG 스트림은 헤드리스 브라우저에서 안 그려져서(11-22) 한 장씩 받는 쪽으로
+(function () {
+  const img = document.getElementById('camImg'), dot = document.getElementById('camDot'), st = document.getElementById('camState');
+  let url = null, stop = false, info = '';
+  async function frame() {
+    if (stop) return;
+    try {
+      const r = await fetch('/camera.jpg?t=' + Date.now());
+      if (!r.ok) throw new Error(r.status);
+      const blob = await r.blob();
+      if (url) URL.revokeObjectURL(url);
+      url = URL.createObjectURL(blob); img.src = url;
+      dot.style.background = 'var(--good)'; st.textContent = info || '실시간 화면';
+    } catch (e) {
+      dot.style.background = 'var(--critical)'; st.textContent = '카메라 화면 없음 — 다시 시도';
+    }
+    setTimeout(frame, 250);
+  }
+  frame();
+  window.addEventListener('beforeunload', () => { stop = true; });
+  async function camTick() {
+    try {
+      const r = await (await fetch('/api/camera')).json();
+      dot.style.background = r.ok ? 'var(--good)' : 'var(--critical)';
+      info = r.ok ? `${r.w}×${r.h} · ${Math.round(r.fps)}장/초 · ${r.device}` : '';
+      st.textContent = r.ok ? info : (r.error || '카메라 없음');
+    } catch (e) { dot.style.background = 'var(--critical)'; st.textContent = '카메라 상태를 못 읽음'; }
+  }
+  camTick(); setInterval(camTick, 3000);
+  document.getElementById('camSnap').onclick = async () => {
+    const m = document.getElementById('camSnapMsg');
+    try { const r = await (await fetch('/camera.jpg?save=1')).json();
+      m.textContent = r.ok ? '저장: ' + r.file : (r.error || '실패'); }
+    catch (e) { m.textContent = '실패'; }
+    setTimeout(() => { m.textContent = ''; }, 6000);
+  };
+})();
+
 setInterval(tick, 500);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) tick();
@@ -659,6 +711,50 @@ document.addEventListener('visibilitychange', () => {
 # 파비콘 및 홈 아이콘 삽입. PAGE가 일반 문자열이라 f-string 치환을 못 쓰므로 여기서 바꾼다.
 PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__HOME_ICON__", HOME_ICON_TAG)
 
+
+
+import cv2
+
+cam_lock = threading.Lock()
+cam = {"frame": None, "jpg": None, "n": 0, "info": None, "err": None}
+_cam_thread = {"t": None}
+
+
+def _cam_worker():
+    """카메라를 한 번 열어 10장/초로 받아 최신 화면만 남긴다. 열기가 4초쯤 걸려서 대시보드 요청마다 열면 응답이 끊긴다(11-22)."""
+    cap = cv2.VideoCapture("/dev/video0", cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480); cap.set(cv2.CAP_PROP_FPS, 10)
+    with cam_lock:
+        cam["info"] = {"w": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), "h": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                       "fps": float(cap.get(cv2.CAP_PROP_FPS))}
+    while True:
+        ok, fr = cap.read()
+        if not ok or fr is None:
+            with cam_lock:
+                cam["err"] = "read failed"
+            time.sleep(0.5); continue
+        ok2, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        with cam_lock:
+            cam["frame"] = fr; cam["jpg"] = buf.tobytes() if ok2 else cam["jpg"]; cam["n"] += 1; cam["err"] = None
+
+
+def _cam_start():
+    if _cam_thread["t"] is None and os.path.exists("/dev/video0"):
+        _cam_thread["t"] = threading.Thread(target=_cam_worker, daemon=True)
+        _cam_thread["t"].start()
+
+
+def _cam_latest(wait_s=3.0):
+    _cam_start()
+    end = time.time() + wait_s
+    while time.time() < end:
+        with cam_lock:
+            fr = cam.get("frame")
+        if fr is not None:
+            return fr
+        time.sleep(0.1)
+    return None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -687,11 +783,61 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             with state_lock:
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
+        elif self.path == "/api/camera":
+            self._send_camera_info()
+        elif self.path == "/camera.mjpg":
+            self._stream_camera()
+        elif self.path.startswith("/camera.jpg"):
+            self._send_camera_jpeg()
         elif self.path == "/api/occlusion/status":
             with occ_lock:
                 self._send(200, json.dumps(occ_state).encode("utf-8"), "application/json")
         else:
             self._send(404, b"not found", "text/plain")
+
+    def _send_camera_info(self):
+        if not os.path.exists("/dev/video0"):
+            self._send(503, json.dumps({"ok": False, "error": "카메라 없음(/dev/video0)"}).encode(), "application/json")
+            return
+        with cam_lock:
+            info = dict(cam.get("info") or {})
+        self._send(200, json.dumps(dict(ok=True, device="/dev/video0", stream="/camera.mjpg", **info), ensure_ascii=False).encode(), "application/json")
+
+    def _send_camera_jpeg(self):
+        """가장 최근 한 장(JPEG). ?save=1이면 파일로 남긴다."""
+        fr = _cam_latest(3.0)
+        if fr is None:
+            self._send(503, json.dumps({"ok": False, "error": "카메라 화면이 아직 없다"}, ensure_ascii=False).encode(), "application/json"); return
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        if (q.get("save") or [""])[0]:
+            d = os.path.expanduser("~/camera_shots"); os.makedirs(d, exist_ok=True)
+            name = os.path.join(d, "cam_" + time.strftime("%Y%m%d_%H%M%S") + ".jpg")
+            cv2.imwrite(name, fr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            self._send(200, json.dumps({"ok": True, "file": name, "w": fr.shape[1], "h": fr.shape[0]}, ensure_ascii=False).encode(), "application/json")
+            return
+        ok, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        self._send(200, buf.tobytes(), "image/jpeg")
+
+    def _stream_camera(self):
+        """MJPEG — 이미 받아 둔 최신 화면을 흘려보낸다(카메라는 스레드 하나만 연다)."""
+        if _cam_latest(5.0) is None:
+            self._send(404, b"no camera", "text/plain"); return
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        last = None
+        try:
+            while True:
+                with cam_lock:
+                    jpg = cam.get("jpg"); n = cam.get("n")
+                if jpg and n != last:
+                    last = n
+                    self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
+                    self.wfile.flush()
+                time.sleep(0.05)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_POST(self):
         if self.path == "/api/occlusion/start":
