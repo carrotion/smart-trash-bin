@@ -396,7 +396,7 @@ class Link:
             names = {f[:-4] for f in os.listdir(SAVED_DIR) if f.endswith('.pgm')}
         except OSError:
             return 0
-        n = 0
+        n = 0; newest = None
         if not self.saved_seed and names:       # 켤 때 한 번은 가장 최근 저장 지도를 올린다(서버에 지도가 없으면 화면이 빈다)
             self.saved_seed = True
             pick = {n for n in names if n != 'latest'} or names      # 자동 저장본(latest)보다 이름 붙인 지도를 먼저
@@ -446,18 +446,25 @@ class Link:
             return 'none'
         jpg, box = got
         p = self.geo.pose() if self.geo else None
-        body = {'jpeg_b64': base64.b64encode(jpg).decode(), 'box': box,
+        body = {'jpeg': base64.b64encode(jpg).decode(), 'box': box,   # 받는 곳이 'jpeg'(또는 image_b64)를 읽는다(11-22 확인)
                 'ago_ms': int(max(0.0, self.clock() - box.get('t', self.clock())) * 1000) if box.get('t') else 0,
                 'pose': {k: p[k] for k in ('x', 'y', 'yaw_deg')} if p else None, 'camera': 'logitech_c270'}
         return self._post_live('seen', body)
 
     def seen_loop(self):
-        was = False
+        """사람이 보이면 2초마다 올린다. 검출이 한두 번 흔들려도 로그·상태가 왔다 갔다 하지 않게 **두 번 연속** 같을 때만 알린다."""
+        was = False; hits = 0; misses = 0
         while not self.stop.is_set():
             try:
                 r = self.send_seen()
-                if (r == 200) != was:
-                    print(f'사람 {"보임" if r == 200 else "안 보임"}(seen {r})', flush=True); was = r == 200
+                if r == 200:
+                    hits += 1; misses = 0
+                    if not was and hits >= 1:
+                        print('사람 보임(seen 200)', flush=True); was = True
+                else:
+                    misses += 1; hits = 0
+                    if was and misses >= 2:
+                        print(f'사람 안 보임(seen {r})', flush=True); was = False
             except Exception as e:
                 print(f'seen 실패: {type(e).__name__} {e}', flush=True)
             self.stop.wait(SEEN_S)
