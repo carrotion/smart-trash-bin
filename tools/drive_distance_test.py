@@ -47,6 +47,7 @@ def main():
     ap.add_argument('--reps', type=int, default=2)
     ap.add_argument('--coast', type=float, default=None, help='정지 명령 뒤 관성 시간(s) 추정')
     ap.add_argument('--head-kp', type=float, default=None)
+    ap.add_argument('--v-max', type=float, default=None, help='순항 속도(m/s, 기본 drive_distance 0.15) — 11-22 0.20 합격 시험용')
     ap.add_argument('--label', default='')
     a = ap.parse_args()
     rclpy.init(); n = rclpy.create_node('drive_distance_test')
@@ -73,7 +74,7 @@ def main():
     t0 = time.time()
     while (S['scan'] is None or S['pose'] is None) and time.time() - t0 < 10:
         spin(0.1)
-    kw = {k: v for k, v in dict(coast_s=a.coast, head_kp=a.head_kp).items() if v is not None}
+    kw = {k: v for k, v in dict(coast_s=a.coast, head_kp=a.head_kp, v_max=a.v_max).items() if v is not None}
     dd = DriveDistance(pub, spin, lambda: S['pose'], lambda: S['v'], clear_fn=clear, **kw)
     rows = []; first = True; aborted = False
     try:
