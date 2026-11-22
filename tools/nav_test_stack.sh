@@ -119,6 +119,15 @@ PY
       fi
     fi
     if [ -n "$STRAY" ]; then
+      # 11-22: 남은 것은 전부 이 런치의 아이들이다(서비스 소속은 killproc이 이미 건너뛴다). 남겨 두면 다음 시작이 거절되고
+      #   라이다 서비스도 못 켜서 자리 찾기가 실패한다 → 한 번 더 죽이고, 그래도 남으면 그때 멈춘다
+      echo "남은 프로세스 정리: $(echo "$STRAY" | awk '{print $2}' | sort -u | tr '\n' ' ')"
+      echo "$STRAY" | awk '{print $1}' | xargs -r kill -KILL 2>/dev/null
+      sleep 2
+      SVC=$(cat /sys/fs/cgroup/system.slice/smart-trash-*.service/cgroup.procs 2>/dev/null | tr '\n' ' ')
+      STRAY=$(ps -eo pid,comm,args | grep -v grep | grep -E "$(echo $NODES | tr ' ' '|')" | awk -v svc=" $SVC " '$2 !~ /^(bash|sh|dash|awk|timeout|sudo)$/ && index(svc, " "$1" ")==0 {print $1, $3}')
+    fi
+    if [ -n "$STRAY" ]; then
       echo "❌ 서비스 밖 관련 프로세스가 남아 있다 — 라이다 서비스 켜지 않음:"; echo "$STRAY" | sed 's/^/    /'
       exit 1
     fi
