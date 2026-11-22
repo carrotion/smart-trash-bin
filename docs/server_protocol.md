@@ -224,6 +224,7 @@
 - `map_version`은 같은 `map_id` 안에서 1씩 는다. 서버는 마지막 것만 두면 된다.
 - 쌓아 두지 않는다. 끊겨 있으면 버리고, 다시 붙으면 그때의 지도를 올린다(그림은 마지막 것만 의미가 있다).
 - 이미지는 PGM 값 그대로의 8비트 회색 PNG다(0 벽, 254 빈칸, 205 모름).
+- **저장 지도(`saved`)도 올린다(11-22 구현)**: `~/maps/<이름>.yaml`·`.pgm`을 map_server 형식 그대로 읽어 `map_id` = 이름으로 보낸다. 로봇이 켜질 때 가장 최근 것 하나(`latest` 자동 저장본보다 이름 붙인 지도를 먼저)와, 그 뒤 새로 저장되는 지도를 올린다(같은 지도는 한 번만).
 
 **`POST /v1/robots/{기기}/pose`** (로봇 → 서버, 움직이는 동안만)
 
@@ -264,7 +265,10 @@
 - 호출어냐 버튼이냐(3.5절).
 - 로봇 쪽 구현 순서(설계 확정 뒤):
   1. `hello`·`status`·`ack`·`event`와 쌓아 두기. 명령은 `get_status`·`cancel`만. — **구현함, 실제 서버로 끝까지 확인(11-15 20:00: `get_status` 받음→시작→끝 67~80 ms, `cancel` done, `go_to` rejected/invalid). `tools/server_link.py`, 시험 `tools/test_server_link.py` 15항목 합격, 서비스 `smart-trash-server-link`로 늘 켜 둠 — 11-15 사용자 "계속 켜 놓는 게 맞다")**. 쌓아 두는 상한은 잠정 2000건이고, 넘치면 오래된 것부터 버리고 그 수를 `status.link.outbox_dropped`에 싣는다. `cancel`은 `tools/mission_go.py`에 SIGINT를 보내 끝을 확인한다. 탐색 멈춤은 2단계에서 한다.
-  2. `go_to`·`return_home`(지금 `tools/mission_go.py`가 하는 일).
+  2. `go_to`·`return_home`(지금 `tools/mission_go.py`가 하는 일). — **구현함(11-22, 시험 ⑫~⑮ 합격, 실물 미시험)**
+     - 좌표만 받는다(장소 이름은 아직 없다). 받을 수 없는 상태면 `failed`의 이유로 `no_stack`(지도·자리 없음 또는 주행기 서버 없음)·`battery`(warn2 아래)·`busy`(미션 진행 중)·`invalid`(좌표)를 돌려준다.
+     - `return_home`은 설정 파일 `~/.config/smart-trash-bin/home_pose.json`의 `x`·`y`로 가고, 없으면 지금 지도의 원점(0, 0)(지도를 그리기 시작한 자리)이다.
+     - 미션은 `tools/mission_go.py`로 띄우고 끝날 때까지 지켜본다(상한 600초). `cancel`은 그 미션에 SIGINT를 보낸다.
   3. `plan`.
   4. 마이크·스피커를 단 뒤 `say`·`ask`·`hear`·로컬 "멈춰".
   5. 카메라를 단 뒤 `seen`·`infer`.

@@ -35,9 +35,13 @@ SEEN_MAX = 200
 MAP_S = 10.0           # 그리는 중인 지도를 올리는 주기(바뀌었을 때만) — 규약 3.9
 POSE_S = 0.5           # 움직이는 동안 자리를 올리는 주기
 NOT_FOUND_BACKOFF_S = 60.0   # 받는 곳이 아직 없으면(404) 그만큼 쉰다
+SAVED_DIR = os.path.expanduser('~/maps')
+SAVED_SCAN_S = 30.0          # 저장 지도 폴더를 살피는 주기
 COMMANDS = {
     'get_status': {'args': {}, 'rejects': []},
     'cancel': {'args': {'id': '명령 번호(없으면 지금 하는 것)', 'target': 'mission|speech|all'}, 'rejects': []},
+    'go_to': {'args': {'x': 'm', 'y': 'm'}, 'rejects': ['no_stack', 'battery', 'busy', 'invalid']},
+    'return_home': {'args': {}, 'rejects': ['no_stack', 'battery', 'busy']},
 }
 
 
@@ -92,7 +96,7 @@ class Outbox:
 
 class Link:
     def __init__(self, base, device, token, outbox_path=None, status_source=None, boot_id=None,
-                 clock=time.monotonic, wall=time.time, geo_source=None):
+                 clock=time.monotonic, wall=time.time, geo_source=None, mission=None):
         self.base, self.device, self.token = base.rstrip('/'), device, token
         self.clock, self.wall = clock, wall
         self.status_source = status_source or (lambda: {})
@@ -108,6 +112,14 @@ class Link:
         self.geo = geo_source                 # 지도·자리(map_snapshot(), moving(), pose()) — 규약 3.9. 없으면 지도·자리를 올리지 않는다
         self.map_sent = {}                    # map_id → (map_version, 내용 해시)
         self.backoff = {}                     # 받는 곳 이름 → 이 시각(clock)까지 쉼
+        self.started_at = self.wall()          # 이 프로세스가 켜진 때(저장 지도는 그 뒤에 바뀐 것만 올린다)
+        self.saved_sent = set(); self.saved_seed = False
+        self.mission = mission                # 미션 띄우기: mission(x, y, label) → pid (2단계). 없으면 go_to를 거절한다
+        self.mission_pid = None
+        self.mission_timeout_s = 600.0        # 미션 하나의 상한(주행기 자체 상한과 별개로 여기서도 끊는다)
+        self.status_battery = None            # 마지막으로 본 배터리(단계로 go_to를 거절할 때 쓴다)
+        self.navigator_present = None          # 시험에서 주행기 서버 유무를 정해 준다(실제로는 killproc로 본다)
+        self.home = self._read_home()
 
     # ---- HTTP
     def call(self, method, path, body=None, timeout=10.0):
@@ -131,6 +143,15 @@ class Link:
         except ValueError:
             return code, {}
 
+    @staticmethod
+    def _read_home():
+        """출발점(충전 자리). 설정 파일이 없으면 지금 지도의 원점(0, 0) — 지도를 그리기 시작한 자리다."""
+        try:
+            d = json.load(open(os.path.join(CONF, 'home_pose.json')))
+            return float(d['x']), float(d['y'])
+        except Exception:
+            return 0.0, 0.0
+
     def path(self, leaf):
         return f'/v1/robots/{self.device}/{leaf}'
 
@@ -152,6 +173,7 @@ class Link:
                          'outbox': len(self.outbox.items), 'outbox_dropped': self.outbox.dropped}}
         try:
             body.update(self.status_source())
+            self.status_battery = body.get('battery')
         except Exception as e:                       # 상태 읽기가 실패해도 보내기는 계속한다
             body['source_error'] = type(e).__name__
         if 'link_wifi_dbm' in body:
@@ -214,12 +236,56 @@ class Link:
         try:
             if typ == 'get_status':
                 self.status(); result = {'outcome': 'done', 'ok': True}
+            elif typ in ('go_to', 'return_home'):
+                result = self.go(typ, cmd.get('args') or {})
             else:
                 result = self.cancel(cmd.get('args') or {})
         finally:
             self.doing = None
         self.ack(cid, 'finished', result=result)
         return result['outcome']
+
+    def reject_reason(self, typ):
+        """움직이는 명령을 받을 수 있는 상태인가(규약 3.2 거절 사유). keepout·자리 검사는 주행기가 직접 거절한다."""
+        if self.mission is None or not self.geo or not self.geo.map_ok():
+            return 'no_stack'            # 지도·자리가 없거나(자율 스택 꺼짐) 미션을 띄울 수단이 없다
+        nav = self.navigator_present if self.navigator_present is not None else bool(killproc.find(['step_nav_action_server'], include_services=True))
+        if not nav:
+            return 'no_stack'            # 주행기 서버가 없으면(비상정지가 껐거나 스택이 안 떴다) 움직이지 않는다
+        st = (self.status_battery or {}).get('stage')
+        if st in ('warn2', 'critical'):
+            return 'battery'
+        if self.mission_pid is not None and alive_pid(self.mission_pid):
+            return 'busy'
+        return None
+
+    def go(self, typ, args):
+        """go_to·return_home: 주행기 도구(tools/mission_go.py)로 미션을 띄우고, 끝날 때까지 지켜본다."""
+        if typ == 'go_to':
+            try:
+                x, y = float(args['x']), float(args['y'])
+            except (KeyError, TypeError, ValueError):
+                return {'outcome': 'failed', 'ok': False, 'reason': 'invalid'}
+        else:
+            x, y = float(self.home[0]), float(self.home[1])
+        why = self.reject_reason(typ)
+        if why:
+            return {'outcome': 'failed', 'ok': False, 'reason': why}
+        label = '서버' + ('목표' if typ == 'go_to' else '출발점')
+        self.mission_pid = self.mission(x, y, label)
+        if not self.mission_pid:
+            return {'outcome': 'failed', 'ok': False, 'reason': 'no_stack'}
+        ok, msg = self.wait_mission()
+        return {'outcome': 'done', 'ok': True} if ok else {'outcome': 'failed', 'ok': False, 'reason': msg}
+
+    def wait_mission(self):
+        """미션이 끝날 때까지(최대 mission_timeout_s) 기다린다. 취소·비상정지로 죽으면 그 사실을 돌려준다."""
+        end = self.clock() + self.mission_timeout_s
+        while self.clock() < end and self.mission_pid and alive_pid(self.mission_pid):
+            time.sleep(0.2)
+        if self.mission_pid and alive_pid(self.mission_pid):
+            return False, 'mission_timeout'
+        return True, ''
 
     def cancel(self, args):
         target = args.get('target', 'all')
@@ -269,12 +335,61 @@ class Link:
         p = self.geo.pose()
         return self._post_live('pose', dict(p, moving=True)) if p else 'no_map'
 
+    def saved_map(self, name):
+        """~/maps/<이름>.pgm|.yaml을 map_server 형식 그대로 읽어 서버 형식으로. 없거나 깨졌으면 None."""
+        import cv2
+        try:
+            import yaml
+            d = yaml.safe_load(open(os.path.join(SAVED_DIR, name + '.yaml')))
+            img = cv2.imread(os.path.join(SAVED_DIR, name + '.pgm'), cv2.IMREAD_GRAYSCALE)
+            if img is None or not d.get('resolution'):
+                return None
+            ok, png = cv2.imencode('.png', img)
+            if not ok:
+                return None
+            return {'map_id': name, 'kind': 'saved', 'resolution': round(float(d['resolution']), 4),
+                    'origin': [round(float(d['origin'][0]), 4), round(float(d['origin'][1]), 4), 0.0],
+                    'width': int(img.shape[1]), 'height': int(img.shape[0]), 'png': png.tobytes()}
+        except Exception:
+            return None
+
+    def scan_saved_maps(self):
+        """새로 저장된 지도(이름.pgm 이 이 프로세스가 켜진 뒤에 바뀐 것)를 찾아 올린다."""
+        try:
+            names = {f[:-4] for f in os.listdir(SAVED_DIR) if f.endswith('.pgm')}
+        except OSError:
+            return 0
+        n = 0
+        if not self.saved_seed and names:       # 켤 때 한 번은 가장 최근 저장 지도를 올린다(서버에 지도가 없으면 화면이 빈다)
+            self.saved_seed = True
+            pick = {n for n in names if n != 'latest'} or names      # 자동 저장본(latest)보다 이름 붙인 지도를 먼저
+            newest = max(pick, key=lambda x: os.path.getmtime(os.path.join(SAVED_DIR, x + '.pgm')))
+            snap = self.saved_map(newest)
+            if snap and self.send_map(snap) == 200:
+                self.saved_sent.add(newest); n += 1
+                print(f'저장 지도 올림(최근 것): {newest} {snap["width"]}x{snap["height"]}', flush=True)
+        for name in sorted(names):
+            try:
+                mt = os.path.getmtime(os.path.join(SAVED_DIR, name + '.pgm'))
+            except OSError:
+                continue
+            if name in self.saved_sent or (mt <= self.started_at and name != newest):
+                continue
+            snap = self.saved_map(name)
+            if snap and self.send_map(snap) == 200:
+                self.saved_sent.add(name); n += 1
+                print(f'저장 지도 올림: {name} {snap["width"]}x{snap["height"]} {len(snap["png"])}바이트', flush=True)
+        return n
+
     def map_loop(self):
+        last_saved = -1e9
         while not self.stop.is_set():
             try:
                 snap = self.geo.map_snapshot()
                 if snap:
                     self.send_map(snap)
+                if self.clock() - last_saved > SAVED_SCAN_S:
+                    self.scan_saved_maps(); last_saved = self.clock()
             except Exception as e:
                 print(f'지도 올리기 실패: {type(e).__name__} {e}', flush=True)
             self.stop.wait(MAP_S)
@@ -437,8 +552,18 @@ def main():
     def battery_stage(old, new, v):
         if link:
             link.event('battery_stage', {'from': old, 'to': new, 'v': v})
+
+    def spawn_mission(x, y, label):
+        """주행기 도구로 미션 하나. 반환 pid가 끝나면 미션이 끝난 것이다(취소는 SIGINT — mission_go가 스스로 목표를 취소한다)."""
+        os.makedirs(STATE, exist_ok=True)
+        p = subprocess.Popen([sys.executable, '-u', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mission_go.py'),
+                              f'{label}:{x:.2f},{y:.2f}'], stdout=open(os.path.join(STATE, 'mission.log'), 'ab'),
+                             stderr=subprocess.STDOUT)
+        print(f'미션 띄움: {label} ({x:.2f}, {y:.2f}) pid {p.pid}', flush=True)
+        return p.pid
+
     state = RobotState(battery_stage)
-    link = Link(base, 'trashbin', token, os.path.join(STATE, 'server_outbox.jsonl'), state, geo_source=state)
+    link = Link(base, 'trashbin', token, os.path.join(STATE, 'server_outbox.jsonl'), state, geo_source=state, mission=spawn_mission)
     signal.signal(signal.SIGTERM, lambda *_: link.stop.set()); signal.signal(signal.SIGINT, lambda *_: link.stop.set())
     link.run()
     while not link.stop.is_set():

@@ -1,5 +1,5 @@
 [Unit]
-Description=Smart Trash Bin - robot-server link, stage 1 (hello/status/ack/event, get_status and cancel only)
+Description=Smart Trash Bin - robot-server link (hello/status/ack/event/map/pose; commands get_status, cancel, go_to, return_home)
 After=network-online.target tailscaled.service smart-trash-motor-dashboard.service
 Wants=network-online.target
 

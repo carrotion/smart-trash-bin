@@ -17,6 +17,7 @@ import json, os, subprocess, sys, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import server_link
 from server_link import Link
 
 
@@ -93,9 +94,9 @@ def main():
           and not f.kinds('status'), acks)
 
     # ④
-    f.log.clear(); r = L.handle({'id': 'c2', 'type': 'go_to', 'args': {'x': 1, 'y': 2}, 'ttl_s': 30})
+    f.log.clear(); r = L.handle({'id': 'c2', 'type': 'say', 'args': {'text': '안녕'}, 'ttl_s': 30})   # 11-22부터 go_to는 실제 명령이라 '아직 없는 명령'으로 바꿈
     acks = f.kinds('ack')
-    check('④ 움직이는 명령은 rejected/invalid', r == 'rejected' and [(a['phase'], a.get('reason')) for a in acks] == [('rejected', 'invalid')], acks)
+    check('④ 아직 없는 명령(say 등)은 rejected/invalid', r == 'rejected' and [(a['phase'], a.get('reason')) for a in acks] == [('rejected', 'invalid')], acks)
 
     # ⑤
     f.log.clear(); r = L.handle({'id': 'c3', 'type': 'get_status', 'ttl_s': 0.5}, received_at=time.monotonic() - 2)
@@ -170,6 +171,46 @@ def main():
     check('⑪ 받는 곳이 아직 없으면(404) 1분 쉬고 쌓지 않음', q1 == 404 and q2 == 'backoff' and n_posts == 1
           and not any(i['kind'] == 'pose' for i in L4.outbox.items), (q1, q2, n_posts))
     f4.close()
+
+    # ⑫~⑮ 2단계: go_to·return_home(주행기 미션) + 저장 지도 올리기
+    f5 = Fake(); calls = []
+    def spawn(x, y, label):
+        calls.append((round(x, 2), round(y, 2), label)); return subprocess.Popen([sys.executable, '-c', 'pass'])
+    class Geo2(Geo):
+        def map_ok(self):
+            return True
+    g5 = Geo2(); g5.mov = False
+    L5 = mk(f5.url, geo_source=g5, mission=spawn); L5.navigator_present = True; L5.hello(); f5.log.clear()
+    r = L5.handle({'id': 'g1', 'type': 'go_to', 'args': {'x': 1.5, 'y': -2.0}, 'ttl_s': 30})
+    fin = f5.kinds('ack')[-1]
+    check('⑫ go_to가 주행기 미션을 띄우고 끝나면 done', r == 'done' and calls == [(1.5, -2.0, '서버목표')] and fin['result']['outcome'] == 'done', (r, calls, fin))
+    r = L5.handle({'id': 'g2', 'type': 'return_home', 'args': {}, 'ttl_s': 30})
+    check('⑬ return_home은 출발점(설정 없으면 지도 원점 0,0)으로', r == 'done' and calls[-1] == (0.0, 0.0, '서버출발점'), (r, calls[-1]))
+    r = L5.handle({'id': 'g3', 'type': 'go_to', 'args': {'x': 'abc'}, 'ttl_s': 30})
+    fin = f5.kinds('ack')[-1]
+    check('⑭ 좌표가 틀린 go_to는 failed(invalid)', r == 'failed' and fin['result']['reason'] == 'invalid' and len(calls) == 2, (r, fin))
+    L5.status_battery = {'stage': 'warn2'}
+    r = L5.handle({'id': 'g4', 'type': 'go_to', 'args': {'x': 1, 'y': 1}, 'ttl_s': 30})
+    check('⑮ 배터리 2차 단계면 go_to를 battery로 거절', r == 'failed' and f5.kinds('ack')[-1]['result']['reason'] == 'battery' and len(calls) == 2)
+    L5.status_battery = {'stage': 'ok'}
+    L6 = mk(f5.url, geo_source=Geo2()); L6.navigator_present = True   # 미션 띄울 수단 없음
+    r = L6.handle({'id': 'g5', 'type': 'go_to', 'args': {'x': 1, 'y': 1}, 'ttl_s': 30})
+    check('⑮ 미션 수단이 없으면 no_stack', r == 'failed' and f5.kinds('ack')[-1]['result']['reason'] == 'no_stack')
+    f5.close()
+
+    # ⑯ 저장 지도: ~/maps의 새 .pgm|.yaml을 saved로 올린다
+    import numpy as np, cv2, yaml
+    d = tempfile.mkdtemp(); img = np.full((4, 5), 254, np.uint8); img[0, 0] = 0
+    cv2.imwrite(os.path.join(d, 'testmap.pgm'), img)
+    yaml.safe_dump({'image': 'testmap.pgm', 'resolution': 0.05, 'origin': [-1.0, -2.0, 0.0]}, open(os.path.join(d, 'testmap.yaml'), 'w'))
+    os.utime(os.path.join(d, 'testmap.pgm'), (time.time() + 5, time.time() + 5))
+    server_link.SAVED_DIR = d
+    f6 = Fake(); L7 = mk(f6.url, geo_source=Geo2()); L7.hello(); f6.log.clear()
+    n = L7.scan_saved_maps(); maps = f6.kinds('map')
+    check('⑯ 저장 지도(saved)를 이름·해상도·원점 그대로 올리고 두 번은 안 올림', n == 1 and len(maps) == 1
+          and maps[0]['map_id'] == 'testmap' and maps[0]['kind'] == 'saved' and maps[0]['width'] == 5 and maps[0]['height'] == 4
+          and maps[0]['origin'] == [-1.0, -2.0, 0.0] and L7.scan_saved_maps() == 0, (n, maps[:1]))
+    f6.close()
 
     print('합격' if not fails else f'불합격 {len(fails)}건: {fails}')
     return 1 if fails else 0
