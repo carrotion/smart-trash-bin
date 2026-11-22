@@ -175,7 +175,7 @@ def main():
     # ⑫~⑮ 2단계: go_to·return_home(주행기 미션) + 저장 지도 올리기
     f5 = Fake(); calls = []
     def spawn(x, y, label):
-        calls.append((round(x, 2), round(y, 2), label)); return subprocess.Popen([sys.executable, '-c', 'pass'])
+        calls.append((round(x, 2), round(y, 2), label)); return subprocess.Popen([sys.executable, '-c', 'pass'])   # 종료 코드 0 = 성공
     class Geo2(Geo):
         def map_ok(self):
             return True
@@ -234,6 +234,11 @@ def main():
     empty = L10.places()
     json.dump({'places': [{'name': '주방', 'x': 9.0, 'y': 9.0}]}, open(server_link.ACTIVE_PLACES, 'w'), ensure_ascii=False)
     check("⑱ live 지도면 옮겨 둔 active_places.json을 읽는다(없으면 빈 목록)", empty == [] and L10.places() == ['주방'])
+    L11 = mk(f7.url, geo_source=Geo3(), mission=lambda x, y, l: subprocess.Popen([sys.executable, '-c', 'raise SystemExit(1)']))
+    L11.navigator_present = True; L11.status_battery = {'stage': 'ok'}
+    r = L11.handle({'id': 'f1', 'type': 'go_to', 'args': {'place': '주방'}, 'ttl_s': 30})
+    check('⑲ 미션이 실패(종료 코드 1)면 done이 아니라 failed로 알린다', r == 'failed'
+          and f7.kinds('ack')[-1]['result']['reason'].startswith('mission_failed'), (r, f7.kinds('ack')[-1]))
     f7.close()
 
     print('합격' if not fails else f'불합격 {len(fails)}건: {fails}')

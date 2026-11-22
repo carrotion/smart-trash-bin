@@ -41,6 +41,17 @@ print('%.3f,%.3f,%.2f' % (b['x'], b['y'], math.degrees(b['yaw'])))") || { echo "
 import sys; sys.path.insert(0, '$T'); import keepout
 z = keepout.load('$B.keepout.json')['zones']; keepout.save(dict(keepout.load(), zones=z, prev=[])); print('금지 구역 %d개를 지도에서 불러옴' % len(z))"
       export KEEPOUT_KEEP=1
+      # 방 이름(장소)도 그 지도 것으로 바꾼다 — 저장 지도로 다니는 동안 이름으로 갈 수 있게(11-22)
+      python3 - "$B.places.json" <<'PY' || true
+import json, os, shutil, sys
+src = sys.argv[1]; dst = os.path.expanduser('~/maps/active_places.json')
+if os.path.exists(src):
+    shutil.copyfile(src, dst); print('장소 %d개를 그 지도에서 불러옴' % len(json.load(open(src)).get('places', [])))
+else:
+    try: os.remove(dst)
+    except OSError: pass
+    print('그 지도에 붙인 장소 없음')
+PY
       EXTRA="slam_launch:=localization_launch.py slam_params_file:=/tmp/slam_localize.yaml"
     fi
     if [ -n "$ZONES_FROM" ]; then
@@ -97,6 +108,16 @@ z = keepout.load('$B.keepout.json')['zones']; keepout.save(dict(keepout.load(), 
     SVC=$(cat /sys/fs/cgroup/system.slice/smart-trash-*.service/cgroup.procs 2>/dev/null | tr '\n' ' ')
     # 부르는 셸은 뺀다: 명령줄에 노드 이름이 들어 있으면 셸 자신이 떠돌이로 잡혀 라이다 서비스를 안 켰다(11-01)
     STRAY=$(ps -eo pid,comm,args | grep -v grep | grep -E "$(echo $NODES | tr ' ' '|')" | awk -v svc=" $SVC " '$2 !~ /^(bash|sh|dash|awk|timeout|sudo)$/ && index(svc, " "$1" ")==0 {print $1, $3}')
+    if [ -n "$STRAY" ]; then
+      # 11-22: 라이다 드라이버는 respawn=True라 런치를 내리는 사이 한 번 더 떠 남는다. 그래도 라이다 서비스는 켜야 한다
+      #   (켜지 않으면 다음 시작의 자리 찾기가 스캔을 못 받아 실패한다). 드라이버(PID가 /proc에 있는지)면 한 번 더 죽이고 다시 본다
+      ONLY_DRIVER=$(echo "$STRAY" | awk '$2 ~ /ldlidar_stl_ros2_node/ {print $1}')
+      if [ -n "$ONLY_DRIVER" ] && [ "$(echo "$STRAY" | wc -l)" = "$(echo "$ONLY_DRIVER" | wc -l)" ]; then
+        kill -KILL $ONLY_DRIVER 2>/dev/null; sleep 2
+        SVC=$(cat /sys/fs/cgroup/system.slice/smart-trash-*.service/cgroup.procs 2>/dev/null | tr '\n' ' ')
+        STRAY=$(ps -eo pid,comm,args | grep -v grep | grep -E "$(echo $NODES | tr ' ' '|')" | awk -v svc=" $SVC " '$2 !~ /^(bash|sh|dash|awk|timeout|sudo)$/ && index(svc, " "$1" ")==0 {print $1, $3}')
+      fi
+    fi
     if [ -n "$STRAY" ]; then
       echo "❌ 서비스 밖 관련 프로세스가 남아 있다 — 라이다 서비스 켜지 않음:"; echo "$STRAY" | sed 's/^/    /'
       exit 1

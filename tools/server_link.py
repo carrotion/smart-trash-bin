@@ -116,7 +116,7 @@ class Link:
         self.started_at = self.wall()          # 이 프로세스가 켜진 때(저장 지도는 그 뒤에 바뀐 것만 올린다)
         self.saved_sent = set(); self.saved_seed = False
         self.mission = mission                # 미션 띄우기: mission(x, y, label) → pid (2단계). 없으면 go_to를 거절한다
-        self.mission_pid = None
+        self.mission_proc = None
         self.mission_timeout_s = 600.0        # 미션 하나의 상한(주행기 자체 상한과 별개로 여기서도 끊는다)
         self.status_battery = None            # 마지막으로 본 배터리(단계로 go_to를 거절할 때 쓴다)
         self.navigator_present = None          # 시험에서 주행기 서버 유무를 정해 준다(실제로는 killproc로 본다)
@@ -278,7 +278,7 @@ class Link:
         st = (self.status_battery or {}).get('stage')
         if st in ('warn2', 'critical'):
             return 'battery'
-        if self.mission_pid is not None and alive_pid(self.mission_pid):
+        if self.mission_proc is not None and self.mission_proc.poll() is None:
             return 'busy'
         return None
 
@@ -301,20 +301,25 @@ class Link:
         if why:
             return {'outcome': 'failed', 'ok': False, 'reason': why}
         label = '서버' + ('목표' if typ == 'go_to' else '출발점')
-        self.mission_pid = self.mission(x, y, label)
-        if not self.mission_pid:
+        self.mission_proc = self.mission(x, y, label)
+        if not self.mission_proc:
             return {'outcome': 'failed', 'ok': False, 'reason': 'no_stack'}
         ok, msg = self.wait_mission()
         return {'outcome': 'done', 'ok': True} if ok else {'outcome': 'failed', 'ok': False, 'reason': msg}
 
     def wait_mission(self):
-        """미션이 끝날 때까지(최대 mission_timeout_s) 기다린다. 취소·비상정지로 죽으면 그 사실을 돌려준다."""
+        """미션이 끝날 때까지 기다린다(최대 mission_timeout_s). **끝난 뒤 종료 코드로 성패를 가른다** — 11-22 실물에서
+        주행기 액션 서버가 없어 곧바로 죽었는데 살아 있지 않은 것만 보고 성공으로 보고했다. mission_go는 실패하면 1을 돌려준다."""
         end = self.clock() + self.mission_timeout_s
-        while self.clock() < end and self.mission_pid and alive_pid(self.mission_pid):
+        proc = getattr(self, 'mission_proc', None)
+        while self.clock() < end and proc is not None and proc.poll() is None:
             time.sleep(0.2)
-        if self.mission_pid and alive_pid(self.mission_pid):
+        if proc is None:
+            return False, 'no_mission'
+        rc = proc.poll()
+        if rc is None:
             return False, 'mission_timeout'
-        return True, ''
+        return (True, '') if rc == 0 else (False, f'mission_failed(code {rc})')
 
     def cancel(self, args):
         target = args.get('target', 'all')
@@ -589,7 +594,7 @@ def main():
                               f'{label}:{x:.2f},{y:.2f}'], stdout=open(os.path.join(STATE, 'mission.log'), 'ab'),
                              stderr=subprocess.STDOUT)
         print(f'미션 띄움: {label} ({x:.2f}, {y:.2f}) pid {p.pid}', flush=True)
-        return p.pid
+        return p
 
     state = RobotState(battery_stage)
     link = Link(base, 'trashbin', token, os.path.join(STATE, 'server_outbox.jsonl'), state, geo_source=state, mission=spawn_mission)
