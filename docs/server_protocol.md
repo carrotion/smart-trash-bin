@@ -51,7 +51,7 @@
 서버(대화 AI)는 이 목록만 보고 로봇에게 줄 명령을 만든다. 그래서 다른 로봇이 붙어도 서버를 고치지 않는다.
 
 ```json
-{"protocol": "0.2", "software": "dac0801", "caps_version": "c3f9",
+{"protocol": "0.2", "software": "8eb99a7", "caps_version": "c3f9",
  "name": "쓰레기통",
  "devices": {"mic": false, "speaker": false, "camera": false},
  "commands": {
@@ -128,7 +128,7 @@
 5초마다, 그리고 모드가 바뀌면 바로 보낸다.
 
 ```json
-{"protocol": "0.2", "software": "dac0801", "caps_version": "c3f9", "boot_id": "…", "uptime_s": 3812.4,
+{"protocol": "0.2", "software": "8eb99a7", "caps_version": "c3f9", "boot_id": "…", "uptime_s": 3812.4,
  "robot_time": "2026-11-14T19:10:02+09:00",
  "mode": "idle", "pose": {"x": 1.79, "y": -2.78, "yaw_deg": 12.0, "map": "home_20261114_explore9"},
  "battery": {"v": 12.07, "stage": "ok"},

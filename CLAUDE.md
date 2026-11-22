@@ -377,13 +377,13 @@ PC 세션(Resie)과 git 기반 협업 시작).
 
 1. ~~`home_real` "Failed to make progress" 원인 규명~~ **무의미해짐** — `our_home`
    지도로 전환하며 폐기.
-2. ~~Davi IMU 커밋 3건(`01f5a38`,`4fe270a`,`5ed0bd5`) 팩트체크~~ **완료
-   (2026-08-24)**: `01f5a38`(지자기 X축 부호반전)은 근거("차체 전후 180°
-   반전")가 문서 어디에도 없는 사건이었고, 같은 밤 별개 커밋 `dfb71af`(대시보드
+2. ~~Davi IMU 커밋 3건(`a9e98ed`,`a0cf1b0`,`388fd65`) 팩트체크~~ **완료
+   (2026-08-24)**: `a9e98ed`(지자기 X축 부호반전)은 근거("차체 전후 180°
+   반전")가 문서 어디에도 없는 사건이었고, 같은 밤 별개 커밋 `f53da80`(대시보드
    atan2 부호 되돌림)와 겹쳐 방위가 정확히 180°(+잔차) 틀어지는 걸 실측으로
    발견 — 사용자가 실제로 동쪽을 보는데 대시보드가 282° 표시. 둘 다 되돌려서
-   2026-08-17에 폰으로 검증했던 원래 공식 복원, 실측 재확인 완료. `4fe270a`
-   (AK09916 STOP 조건 레지스터)/`5ed0bd5`(정지 상태 오탐 방지)는 문제없음 —
+   2026-08-17에 폰으로 검증했던 원래 공식 복원, 실측 재확인 완료. `a0cf1b0`
+   (AK09916 STOP 조건 레지스터)/`388fd65`(정지 상태 오탐 방지)는 문제없음 —
    둘을 합치면 멈춤판정 로직 자체는 순정 그대로고 I2C 레지스터 설정만 순수
    추가분, 기존 단위테스트 9/9 재실행 확인.
 3. ~~회전 중 한쪽 바퀴가 몇 초씩 안 도는 현상~~ **원인 확정·수정 완료
@@ -1766,7 +1766,7 @@ EXT4-fs (sda2): Remounting filesystem read-only
 - **접속 주소** (Pi IP는 유동적일 수 있음, `hostname -I`로 확인): 허브 `http://<Pi IP>:8764` (여기서 시작, 카드 클릭하면 상세로 이동), 전원 `:8765`, 모터 `:8766`.
 - **관리 명령**: `sudo systemctl status/restart/stop smart-trash-{power-monitor,motor-dashboard,dashboard-hub}.service`, 로그는 `sudo journalctl -u smart-trash-motor-dashboard -f` 식으로.
 - ~~motor_dashboard.py가 시리얼 포트를 독점 소유함~~ **2026-08-24 정정: 낡은 문서 —
-  이미 리팩터링 완료됨.** `motor_dashboard.py`는 `340fdc5` 커밋에서 시리얼 직결이
+  이미 리팩터링 완료됨.** `motor_dashboard.py`는 `ab8f489` 커밋에서 시리얼 직결이
   아니라 `/cmd_vel` 발행 방식으로 바뀌었다(`tools/motor_dashboard.py:131`
   `self.pub = self.create_publisher(Twist, 'cmd_vel', 1)`). **지금은
   `smart_trash_motion`(diff_drive_node)과 동시 실행해도 포트 경합이 없다** —

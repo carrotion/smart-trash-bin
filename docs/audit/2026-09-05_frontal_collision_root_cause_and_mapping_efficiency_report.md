@@ -4,7 +4,7 @@
 - **작성일**: 2026-09-05
 - **작성자**: Davi (시스템 감사 & 물리 역학/진단 전문가)
 - **수신**: Unkle Karrot (리드 아키텍트), Remi (메인 SW 개발)
-- **참조**: Commit `d6490f3`, `81c63ac`, `docs/midterm_review_20260829.md`, `CLAUDE.md`
+- **참조**: Commit `e0b677f`, `89d57a4`, `docs/midterm_review_20260829.md`, `CLAUDE.md`
 
 ---
 
@@ -30,7 +30,7 @@
 
 ## 2. Remi의 핵심 발견 및 4대 충돌 원인 심층 분석
 
-### 2.1 [원인 1: 규명 완료] Nav2 `obstacle_min_range` 기준점 오류 (Commit `d6490f3`)
+### 2.1 [원인 1: 규명 완료] Nav2 `obstacle_min_range` 기준점 오류 (Commit `e0b677f`)
 * **메커니즘**: `nav2_costmap_2d/obstacle_layer.cpp` 소스 분석 결과, `obstacle_min_range`의 컷오프 기준점은 `base_link`가 아니라 **라이다 센서 원점(`obs.origin_`)**이었습니다.
 * **영향**:
   * 라이다는 `base_link` 전방 $5.4\text{cm}$에 장착되어 있고, 로봇 앞범퍼는 `base_link` 전방 $11.0\text{cm}$(라이다 렌즈 앞 $5.6\text{cm}$)에 위치합니다.
