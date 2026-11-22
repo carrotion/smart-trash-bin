@@ -50,3 +50,12 @@ robot/src/frontier_exploration_ros2/
 # ⚠️ 실행 시 반드시 publish_tf:=False — 기본값 True면 EKF의 odom→base_link TF와 충돌
 robot/src/rf2o_laser_odometry/
 logs/battery/   # 배터리 전압 CSV(motor_dashboard, 09-27) — 로컬 사후 분석용
+
+# 카메라로 찍은 사진은 저장소에 올리지 않는다(2026-11-22 사용자 확인) — 집 안 사진이라 공개 저장소에 두면 안 된다.
+# 사진은 파이의 ~/camera_shots/ 에만 두고, 대시보드가 그 자리에서 보여 준다.
+camera_shots/
+**/camera_shots/
+logs/**/*.jpg
+logs/**/*.jpeg
+logs/**/*.png
+*.jpg.tmp
