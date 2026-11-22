@@ -372,6 +372,51 @@ def list_maps():
     return out
 
 
+PLACES_DIR = os.path.expanduser("~/maps")
+
+
+def _places_file(map_name):
+    """장소 파일 경로. 저장 지도는 <지도>.places.json, 실시간(live)은 active_places.json(출발 때 옮겨 둔 것)."""
+    import re as _re
+    if not map_name or map_name == "live":
+        return os.path.join(PLACES_DIR, "active_places.json")
+    if not _re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", map_name):
+        return None
+    return os.path.join(PLACES_DIR, map_name + ".places.json")
+
+
+def places_payload(map_name):
+    path = _places_file(map_name)
+    if not path or not os.path.exists(path):
+        return {"map": map_name or "live", "places": []}
+    try:
+        return {"map": map_name or "live", "places": json.load(open(path)).get("places", [])}
+    except Exception:
+        return {"map": map_name or "live", "places": []}
+
+
+def places_save(map_name, places):
+    """이름과 좌표만 남긴다. 이름은 1~24자, 같은 이름은 하나만."""
+    path = _places_file(map_name)
+    if not path:
+        return False, "지도 이름이 올바르지 않다"
+    out, seen = [], set()
+    for p in places or []:
+        name = str(p.get("name", "")).strip()[:24]
+        if not name or name in seen:
+            continue
+        try:
+            x, y = float(p["x"]), float(p["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        seen.add(name); out.append({"name": name, "x": round(x, 3), "y": round(y, 3)})
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"map": map_name or "live", "places": out}, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+    return True, None
+
+
 def read_saved_map(name):
     """저장된 맵을 **라이브 맵과 같은 형식**으로 돌려준다.
     그래야 브라우저의 그리기 코드를 그대로 재사용할 수 있다."""
@@ -597,6 +642,12 @@ __FAVICON__
   <div id="mapWrap"><canvas id="mapCanvas" width="10" height="10"></canvas><canvas id="ovl"></canvas></div>
   <p id="zoneHint"></p>
   <table id="zoneList"></table>
+  <div class="zonebar" style="margin-top:14px">
+    <button id="placeBtn" disabled>장소 찍기</button>
+    <span id="placeState" class="msg"></span>
+  </div>
+  <p id="placeHint" class="msg">장소는 그 지도에만 붙는 이름입니다. 저장된 맵을 열어 [장소 찍기]를 누르고 지도 위를 클릭하면 이름을 물어봅니다.</p>
+  <table id="placeList"></table>
   <div id="prevBox" style="display:none"></div>
   <div id="emptyMsg" class="empty">맵 데이터 없음 — SLAM Toolbox(mapping.launch.py)를 실행하면 여기 실시간으로 채워집니다.</div>
   <div class="status-row">
@@ -638,6 +689,7 @@ const ovl = document.getElementById('ovl'), octx = ovl.getContext('2d');
 let G = null;                 // {w,h,res,ox,oy,live,stale}
 let K = null;                 // /api/keepout 응답(파일의 구역 + 서버 상태 + 로봇 자세)
 let zones = [], sel = null, mode = 'idle', drag = null, dirty = false, zoneErr = '', seq = 0;
+let places = [], placeMap = null, pmode = false, placeErr = '';      // 장소(방 이름): 지도마다 따로
 const HANDLE = 14;            // 모서리 손잡이를 잡는 반경(px)
 
 function fitMap() {           // 격자를 카드 폭과 화면 높이 70%에 맞춰 키우거나 줄인다(작은 지도도 크게, 긴 지도는 화면 안에)
@@ -660,10 +712,21 @@ function sizeText(p) { const xs = p.map(q => q[0]), ys = p.map(q => q[1]);
   return `${(Math.max(...xs) - Math.min(...xs)).toFixed(1)} × ${(Math.max(...ys) - Math.min(...ys)).toFixed(1)} m`; }
 const canEdit = () => G && G.live && viewing === null && K && K.server;
 
+function drawPlaces() {                                                    // 장소는 저장 지도에서도 그린다(그 지도 좌표라서)
+  for (const p of places) {
+    const [x, y] = toPx(p.x, p.y);
+    octx.beginPath(); octx.arc(x, y, 6, 0, Math.PI * 2);
+    octx.fillStyle = 'rgba(36,110,200,.85)'; octx.fill();
+    octx.strokeStyle = '#fff'; octx.lineWidth = 1.5; octx.stroke();
+    octx.fillStyle = '#123a6b'; octx.font = '600 12px system-ui, sans-serif'; octx.textAlign = 'center';
+    octx.fillText(p.name, x, y - 10); octx.textAlign = 'start';
+  }
+}
+
 function drawOverlay() {
   if (!G) return;
   const dpr = devicePixelRatio || 1; octx.setTransform(dpr, 0, 0, dpr, 0, 0); octx.clearRect(0, 0, ovl.width, ovl.height);
-  if (!G.live || viewing !== null) return;                                // 저장된 지도는 좌표가 달라 구역·로봇을 겹치지 않는다
+  if (!G.live || viewing !== null) { drawPlaces(); return; }               // 저장된 지도는 좌표가 달라 구역·로봇을 겹치지 않는다(장소는 그 지도 것이라 그린다)
   const path = p => { octx.beginPath(); p.forEach((q, i) => { const [x, y] = toPx(q[0], q[1]); i ? octx.lineTo(x, y) : octx.moveTo(x, y); }); octx.closePath(); };
   for (const z of ((K && K.prev) || [])) {                                // 지난 지도의 구역: 흐린 점선(지금 지도와 맞는지 눈으로 보라고)
     path(z.poly); octx.setLineDash([6, 5]); octx.strokeStyle = 'rgba(82,81,78,.8)'; octx.lineWidth = 1.5; octx.stroke(); octx.setLineDash([]);
@@ -687,6 +750,7 @@ function drawOverlay() {
     octx.beginPath(); octx.moveTo(0.16 * k, 0); octx.lineTo(0.095 * k, -0.06 * k); octx.lineTo(0.095 * k, 0.06 * k); octx.closePath(); octx.fill();
     octx.restore();
   }
+  drawPlaces();
 }
 
 function renderZoneUI() {
@@ -738,6 +802,11 @@ async function saveZones() {
 function nextId() { return zones.reduce((m, z) => Math.max(m, z.id), 0) + 1; }
 
 ovl.addEventListener('pointerdown', ev => {
+  if (pmode && G) {                                                       // 장소 찍기: 클릭한 자리에 이름을 붙인다
+    const p = toMap(ev), name = (window.prompt('이 자리의 이름 (예: 주방)', '') || '').trim().slice(0, 24);
+    if (name) { places = places.filter(q => q.name !== name).concat([{name, x: +p[0].toFixed(3), y: +p[1].toFixed(3)}]); savePlaces(); }
+    pmode = false; renderPlaceUI(); ev.preventDefault(); return;
+  }
   if (!canEdit()) return;
   const p = toMap(ev), k = scale();
   if (mode === 'draw') { drag = {type: 'new', a: p, b: p}; }
@@ -776,7 +845,7 @@ function endDrag(ev) {
   renderZoneUI(); drawOverlay();
 }
 ovl.addEventListener('pointerup', endDrag); ovl.addEventListener('pointercancel', endDrag);
-document.getElementById('drawBtn').onclick = () => { mode = mode === 'draw' ? 'idle' : 'draw'; sel = null; renderZoneUI(); drawOverlay(); };
+document.getElementById('drawBtn').onclick = () => { mode = mode === 'draw' ? 'idle' : 'draw'; pmode = false; sel = null; renderZoneUI(); renderPlaceUI(); drawOverlay(); };
 function removeZone(i) { zones.splice(i, 1); sel = null; saveZones(); }
 document.getElementById('delBtn').onclick = () => { if (sel !== null) removeZone(sel); };
 document.addEventListener('keydown', ev => {
@@ -784,6 +853,40 @@ document.addEventListener('keydown', ev => {
   if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel !== null && canEdit()) { ev.preventDefault(); removeZone(sel); }
   if (ev.key === 'Escape') { mode = 'idle'; sel = null; drag = null; renderZoneUI(); drawOverlay(); }
 });
+async function loadPlaces() {
+  placeMap = viewing || 'live';
+  try { const d = await (await fetch('/api/places?map=' + encodeURIComponent(placeMap))).json(); places = d.places || []; }
+  catch (e) { places = []; }
+  renderPlaceUI(); drawOverlay();
+}
+async function savePlaces() {
+  const r = await fetch('/api/places', {method: 'POST', body: JSON.stringify({map: placeMap || 'live', places})});
+  const d = await r.json();
+  if (!d.ok) { placeErr = d.error || '저장 실패'; setTimeout(() => { placeErr = ''; renderPlaceUI(); }, 4000); return; }
+  places = d.places || []; renderPlaceUI(); drawOverlay();
+}
+function renderPlaceUI() {
+  const btn = document.getElementById('placeBtn');
+  btn.disabled = !G; btn.classList.toggle('on', pmode);
+  btn.textContent = pmode ? '찍기 취소' : '장소 찍기';
+  document.getElementById('placeState').textContent =
+    (placeErr ? placeErr + ' · ' : '') + `${placeMap === 'live' ? '지금 지도' : placeMap} · 장소 ${places.length}개` + (placeMap === 'live' ? ' (실시간 지도에서는 저장 지도에 붙인 이름을 못 씀)' : '');
+  const t = document.getElementById('placeList');
+  t.innerHTML = places.length ? '<tr><th>장소</th><th>x</th><th>y</th><th></th></tr>' + places.map((p, i) =>
+    `<tr><td><input data-pname="${i}" value="${p.name.replace(/"/g, '&quot;')}" style="width:9em"></td>` +
+    `<td style="text-align:right">${p.x.toFixed(2)}</td><td style="text-align:right">${p.y.toFixed(2)}</td>` +
+    `<td><button class="mini" data-pdel="${i}">지우기</button></td></tr>`).join('') : '';
+}
+document.getElementById('placeList').addEventListener('click', ev => {
+  const del = ev.target.getAttribute('data-pdel');
+  if (del !== null) { places.splice(+del, 1); savePlaces(); }
+});
+document.getElementById('placeList').addEventListener('change', ev => {
+  const i = ev.target.getAttribute('data-pname');
+  if (i !== null) { places[+i].name = ev.target.value.trim().slice(0, 24); savePlaces(); }
+});
+document.getElementById('placeBtn').onclick = () => { pmode = !pmode; mode = 'idle'; renderPlaceUI(); drawOverlay(); };
+
 document.getElementById('zoneList').addEventListener('click', ev => {
   const del = ev.target.getAttribute('data-zdel');
   if (del !== null) { removeZone(+del); return; }
@@ -797,6 +900,7 @@ document.getElementById('prevBox').addEventListener('click', async ev => {
   if (!url) return;
   try { K = await (await fetch(url, {method: 'POST', body: '{}'})).json(); } catch (e) { return; }
   dirty = false; loadKeepout();
+renderPlaceUI(); loadPlaces();
 });
 // ---------------- 탐색 시작·멈춤 ----------------
 // 탐색기는 켜질 때 멈춰 있다(런치 explore_autostart 기본 false) — 지도를 보고 금지 구역을 먼저 그린 뒤 시작한다.
@@ -934,6 +1038,7 @@ function drawPayload(d) {
   document.getElementById('emptyMsg').style.display = 'none';
   document.getElementById('mapWrap').style.display = 'block';
   renderGrid(d);
+  loadPlaces();
 }
 
 async function viewSaved(name) {
@@ -953,6 +1058,7 @@ async function viewSaved(name) {
   };
   drawPayload(d);
   loadMapList();
+  loadPlaces();
 }
 
 document.getElementById('mapTable').addEventListener('click', async (e) => {
@@ -1057,9 +1163,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/maps":
             self._send(200, json.dumps(list_maps()).encode("utf-8"),
                        "application/json")
+        elif self.path.startswith("/api/places"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send(200, json.dumps(places_payload((q.get("map") or [""])[0]), ensure_ascii=False).encode("utf-8"),
+                       "application/json")
         elif self.path.startswith("/api/maps/data"):
-            from urllib.parse import parse_qs, urlparse
-            q = parse_qs(urlparse(self.path).query)
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             d = read_saved_map((q.get("name") or [""])[0])
             if d is None:
                 self._send(404, json.dumps({"error": "맵을 읽을 수 없다"}).encode(),
@@ -1106,6 +1215,15 @@ class Handler(BaseHTTPRequestHandler):
                 keepout.save(dict(keepout.load(), prev=[])); ok, err = True, None
             self._send(200 if ok else 400, json.dumps(dict(keepout_payload(), ok=ok, error=err), ensure_ascii=False).encode("utf-8"),
                        "application/json")
+        elif self.path == "/api/places":
+            try:
+                ln = int(self.headers.get("Content-Length", "0") or 0)
+                body = json.loads(self.rfile.read(ln) or b"{}")
+            except (ValueError, OSError):
+                body = {}
+            ok, err = places_save(body.get("map") or "live", body.get("places"))
+            self._send(200 if ok else 400, json.dumps(dict(places_payload(body.get("map") or "live"), ok=ok, error=err),
+                                                      ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path in ("/api/maps/save", "/api/maps/delete"):
             try:
                 ln = int(self.headers.get("Content-Length", "0") or 0)
