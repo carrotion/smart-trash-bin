@@ -36,6 +36,9 @@ def yaw_of(q):
 class TurnToAngle:
     """get_yaw(): EKF 방향(rad), get_gyro(): 최신 자이로 z(rad/s), spin(t): t초 동안 콜백 처리."""
 
+    # 2026-11-22 실물: 가속 제한 0.3 → 0.5 rad/s². 0.3은 최고 속도까지 2.7초가 걸려 회전이 평균 11°/s로 느렸다(12번째 탐색 시간의 28%가 회전).
+    #   바닥 ④ 시험(45°·90°, 같은 날): 0.3은 8번 모두 통과(90° 3.7~4.7초), 0.5는 8번 모두 통과(90° 3.2~4.2초)이며 최대 속도 0.82~1.05 rad/s로 기준 1.2 아래.
+    #   0.6·0.8은 8번 중 1번 최대 1.25~1.28 rad/s로 기준을 넘었다 → 0.5 채택. w_max(0.8/시계 0.6)는 그대로(1.0은 1.50으로 초과).
     # 기본값: 2026-09-27 ④ 비교(docs/motion_foundation.md) D 설정 — w_max 0.8(차체 자연 회전 속도, 낮추면 오히려 튐 증가),
     #   명령 가속 0.3 rad/s²(튐 7/8 기준 내), kp 3·w_min 0.25·settle 0.2(시간 단축). coast 0.17: 능동 제동 뒤
 #   0.23이면 첫 회전 평균 −3°(덜 돎), 0.12면 +2.6°(더 돎) → 0.17에서 −1.7~+2.4°로 치우침 없음(09-27).
@@ -46,7 +49,7 @@ class TurnToAngle:
     #   w_max 0.8 → 최대 1.03~1.46 rad/s(1.2 초과 2/5), 0.6 → 0.79~0.89(0/5). 시계방향 회전표가 0.44→0.71로 건너뛰는
     #   경계(미끄럼 상태로 넘어감) 바로 위가 0.8이라 넘어가면 1.0~1.4로 튄다. 반시계는 0.8에서 0.86~1.07이라 그대로
     def __init__(self, pub, spin, get_yaw, get_gyro, kp=3.0, w_min=0.25, w_max=0.8, w_max_cw=0.6,
-                 coast_s=0.20, tol_deg=2.0, max_fix=2, settle_gyro=0.03, settle_s=0.2, accel=0.3):
+                 coast_s=0.20, tol_deg=2.0, max_fix=2, settle_gyro=0.03, settle_s=0.2, accel=0.5):
         self.pub, self.spin, self.get_yaw, self.get_gyro = pub, spin, get_yaw, get_gyro
         self.kp, self.w_min, self.w_max, self.coast_s = kp, w_min, w_max, coast_s
         self.w_max_cw = w_max if w_max_cw is None else min(w_max, w_max_cw)
