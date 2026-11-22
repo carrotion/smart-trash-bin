@@ -834,6 +834,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             with state_lock:
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
+        elif self.path == "/api/detect":
+            with det_lock:
+                ds = [dict(x1=round(d[0]), y1=round(d[1]), x2=round(d[2]), y2=round(d[3]),
+                           score=round(d[4], 3), cls=int(d[5]), name=(__import__('camera_detect').COCO[int(d[5])])) for d in det["dets"]]
+                self._send(200, json.dumps({"people": det["people"], "ms": round(det["ms"], 1),
+                                            "age_s": round(time.time() - det["t"], 2), "dets": ds},
+                                           ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path == "/api/camera":
             self._send_camera_info()
         elif self.path == "/camera.mjpg":

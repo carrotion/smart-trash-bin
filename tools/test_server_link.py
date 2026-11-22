@@ -241,6 +241,18 @@ def main():
           and f7.kinds('ack')[-1]['result']['reason'].startswith('mission_failed'), (r, f7.kinds('ack')[-1]))
     f7.close()
 
+    # ⑳ seen: 사람이 보이면 얼굴 부분(잘린 JPEG)과 상자를 올리고, 안 보이면 올리지 않는다
+    f8 = Fake(); calls3 = []
+    def seen_src():
+        calls3.append(1)
+        return (b'JPEGCROP', {'x1': 10, 'y1': 20, 'x2': 110, 'y2': 320, 'score': 0.8, 't': time.monotonic()}) if len(calls3) % 2 else None
+    L12 = mk(f8.url, geo_source=Geo3(), seen_source=seen_src); L12.hello(); f8.log.clear()
+    r1 = L12.send_seen(); r2 = L12.send_seen(); seen = f8.kinds('seen')
+    check('⑳ seen: 사람이 보일 때만 얼굴 부분(잘린 JPEG)과 상자를 올린다', r1 == 200 and r2 == 'none' and len(seen) == 1
+          and seen[0]['jpeg_b64'] == base64.b64encode(b'JPEGCROP').decode() and seen[0]['box']['score'] == 0.8
+          and seen[0]['camera'] == 'logitech_c270', (r1, r2, seen[:1]))
+    f8.close()
+
     print('합격' if not fails else f'불합격 {len(fails)}건: {fails}')
     return 1 if fails else 0
 

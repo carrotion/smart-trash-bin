@@ -38,6 +38,8 @@ NOT_FOUND_BACKOFF_S = 60.0   # 받는 곳이 아직 없으면(404) 그만큼 쉰
 SAVED_DIR = os.path.expanduser('~/maps')
 SAVED_SCAN_S = 30.0          # 저장 지도 폴더를 살피는 주기
 ACTIVE_PLACES = os.path.expanduser('~/maps/active_places.json')   # 새 지도를 그릴 때 옮겨 둔 장소(tools/carry_places.py)
+SEEN_S = 2.0              # 사람이 보이는 동안 얼굴 부분을 올리는 간격(규약 3.8)
+CAMERA_API = 'http://127.0.0.1:8767'
 COMMANDS = {
     'get_status': {'args': {}, 'rejects': []},
     'cancel': {'args': {'id': '명령 번호(없으면 지금 하는 것)', 'target': 'mission|speech|all'}, 'rejects': []},
@@ -97,7 +99,7 @@ class Outbox:
 
 class Link:
     def __init__(self, base, device, token, outbox_path=None, status_source=None, boot_id=None,
-                 clock=time.monotonic, wall=time.time, geo_source=None, mission=None):
+                 clock=time.monotonic, wall=time.time, geo_source=None, mission=None, seen_source=None):
         self.base, self.device, self.token = base.rstrip('/'), device, token
         self.clock, self.wall = clock, wall
         self.status_source = status_source or (lambda: {})
@@ -116,6 +118,7 @@ class Link:
         self.started_at = self.wall()          # 이 프로세스가 켜진 때(저장 지도는 그 뒤에 바뀐 것만 올린다)
         self.saved_sent = set(); self.saved_seed = False
         self.mission = mission                # 미션 띄우기: mission(x, y, label) → pid (2단계). 없으면 go_to를 거절한다
+        self.seen_source = seen_source        # 사람이 보이면 (jpeg, 상자)를 돌려주는 함수. 없으면 seen을 안 보낸다
         self.mission_proc = None
         self.mission_timeout_s = 600.0        # 미션 하나의 상한(주행기 자체 상한과 별개로 여기서도 끊는다)
         self.status_battery = None            # 마지막으로 본 배터리(단계로 go_to를 거절할 때 쓴다)
@@ -436,6 +439,29 @@ class Link:
                 print(f'자리 올리기 실패: {type(e).__name__} {e}', flush=True)
             self.stop.wait(POSE_S)
 
+    # ---- 사람이 보이면 서버에 (규약 3.8). 얼굴 부분을 잘라 올리고, 답은 기다리지 않는다
+    def send_seen(self):
+        got = self.seen_source()
+        if not got:
+            return 'none'
+        jpg, box = got
+        p = self.geo.pose() if self.geo else None
+        body = {'jpeg_b64': base64.b64encode(jpg).decode(), 'box': box,
+                'ago_ms': int(max(0.0, self.clock() - box.get('t', self.clock())) * 1000) if box.get('t') else 0,
+                'pose': {k: p[k] for k in ('x', 'y', 'yaw_deg')} if p else None, 'camera': 'logitech_c270'}
+        return self._post_live('seen', body)
+
+    def seen_loop(self):
+        was = False
+        while not self.stop.is_set():
+            try:
+                r = self.send_seen()
+                if (r == 200) != was:
+                    print(f'사람 {"보임" if r == 200 else "안 보임"}(seen {r})', flush=True); was = r == 200
+            except Exception as e:
+                print(f'seen 실패: {type(e).__name__} {e}', flush=True)
+            self.stop.wait(SEEN_S)
+
     # ---- 돌리기
     def status_loop(self):
         while not self.stop.is_set():
@@ -456,6 +482,8 @@ class Link:
     def run(self):
         print(f'hello → {self.hello()}  (caps {self.caps_version}, 쌓인 것 {len(self.outbox.items)}건)', flush=True)
         loops = [self.status_loop, self.poll_loop] + ([self.map_loop, self.pose_loop] if self.geo else [])
+        if self.seen_source:
+            loops.append(self.seen_loop)
         threads = [threading.Thread(target=f, daemon=True) for f in loops]
         for t in threads:
             t.start()
@@ -587,6 +615,30 @@ def main():
         if link:
             link.event('battery_stage', {'from': old, 'to': new, 'v': v})
 
+    def seen_frame():
+        """사람이 보이면 (얼굴 부분 JPEG, 상자) — 대시보드의 인식 결과와 원본 화면을 쓴다(카메라는 그쪽이 잡고 있다)."""
+        try:
+            d = json.load(urllib.request.urlopen(CAMERA_API + '/api/detect', timeout=2))
+            people = [q for q in d.get('dets', []) if q.get('cls') == 0 and q.get('score', 0) >= 0.5]
+            if not people:
+                return None
+            q = max(people, key=lambda z: z['score'])
+            raw = urllib.request.urlopen(CAMERA_API + '/camera.jpg?raw=1', timeout=3).read()
+            import cv2, numpy as np
+            fr = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+            if fr is None:
+                return None
+            h, w = fr.shape[:2]
+            x1, y1 = max(0, int(q['x1'])), max(0, int(q['y1']))
+            x2, y2 = min(w, int(q['x2'])), min(h, int(q['y2']))
+            cut = fr[y1:y1 + max(1, int((y2 - y1) * 0.45)), x1:x2]      # 사람 상자의 위쪽 절반 ≈ 얼굴 부분
+            if cut.size == 0:
+                return None
+            ok, buf = cv2.imencode('.jpg', cut, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return (buf.tobytes(), {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2, 'score': q['score'], 'frame': [w, h], 't': time.monotonic()}) if ok else None
+        except Exception:
+            return None
+
     def spawn_mission(x, y, label):
         """주행기 도구로 미션 하나. 반환 pid가 끝나면 미션이 끝난 것이다(취소는 SIGINT — mission_go가 스스로 목표를 취소한다)."""
         os.makedirs(STATE, exist_ok=True)
@@ -597,7 +649,7 @@ def main():
         return p
 
     state = RobotState(battery_stage)
-    link = Link(base, 'trashbin', token, os.path.join(STATE, 'server_outbox.jsonl'), state, geo_source=state, mission=spawn_mission)
+    link = Link(base, 'trashbin', token, os.path.join(STATE, 'server_outbox.jsonl'), state, geo_source=state, mission=spawn_mission, seen_source=seen_frame)
     signal.signal(signal.SIGTERM, lambda *_: link.stop.set()); signal.signal(signal.SIGINT, lambda *_: link.stop.set())
     link.run()
     while not link.stop.is_set():
