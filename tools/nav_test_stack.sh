@@ -7,6 +7,7 @@
 #   MAP=home_20261011 tools/nav_test_stack.sh start [explore]   # **저장된 지도로 시작**(10-11): 지금 스캔으로 지도 위 자리를 찾아
 #                                           # (locate_on_map.py) 거기서 위치 잡기를 켜고, 그 지도의 금지 구역을 불러온다. 새 지도를 그리지 않는다
 #   ZONES_FROM=home_20261011 tools/nav_test_stack.sh start explore   # **새 지도를 그리되 저장 지도의 금지 구역을 옮겨 와 처음부터 적용**(11-01, tools/carry_zones.py)
+#        (11-22) 같은 출처의 방 이름(장소)도 새 좌표로 옮긴다(tools/carry_places.py → ~/maps/active_places.json)
 #   tools/nav_test_stack.sh stop    # 런치와 자식 노드 전부 종료 확인 → 라이다 서비스 복구
 #
 # ⚠️ 2026-09-27: ros2 launch 본체에 SIGINT를 보냈더니 본체만 죽고 자식 노드 9개(라이다 드라이버 포함)가
@@ -46,6 +47,8 @@ z = keepout.load('$B.keepout.json')['zones']; keepout.save(dict(keepout.load(), 
       # 새 지도를 그리되 저장 지도의 금지 구역을 처음부터 적용(스캔으로 자리를 찾아 좌표를 옮김). 라이다 서비스를 내리기 전에 한다
       python3 /home/carrotian/smart-trash-bin/tools/carry_zones.py --map "$ZONES_FROM" --write || { echo "❌ 구역을 옮기지 못했다 — 시작하지 않음"; exit 1; }
       export KEEPOUT_KEEP=1
+      # 방 이름(장소)도 새 지도 좌표로 옮긴다(11-22). 실패해도 시작은 한다 — 장소가 없으면 이름으로 가는 명령만 거절된다
+      python3 /home/carrotian/smart-trash-bin/tools/carry_places.py --map "$ZONES_FROM" --write || echo "⚠️ 장소를 옮기지 못했다 — 이름으로 가는 명령은 이번에 안 된다"
     fi
     sudo -n systemctl stop smart-trash-lidar || exit 1
     if [ "$2" = explore ]; then

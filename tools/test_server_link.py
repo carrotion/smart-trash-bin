@@ -229,7 +229,11 @@ def main():
           and calls2 == [(-1.71, 4.73)] and r2 == 'failed' and f7.kinds('ack')[-1]['result']['reason'] == 'invalid', (pl, r, calls2, r2))
     class Geo4(Geo2):
         map_id = 'live-abcd-01'
-    L10 = mk(f7.url, geo_source=Geo4()); check('⑱ live 지도면 장소 없음', L10.places() == [])
+    server_link.ACTIVE_PLACES = os.path.join(d2, 'active_places.json')
+    L10 = mk(f7.url, geo_source=Geo4())
+    empty = L10.places()
+    json.dump({'places': [{'name': '주방', 'x': 9.0, 'y': 9.0}]}, open(server_link.ACTIVE_PLACES, 'w'), ensure_ascii=False)
+    check("⑱ live 지도면 옮겨 둔 active_places.json을 읽는다(없으면 빈 목록)", empty == [] and L10.places() == ['주방'])
     f7.close()
 
     print('합격' if not fails else f'불합격 {len(fails)}건: {fails}')

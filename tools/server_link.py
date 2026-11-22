@@ -37,6 +37,7 @@ POSE_S = 0.5           # 움직이는 동안 자리를 올리는 주기
 NOT_FOUND_BACKOFF_S = 60.0   # 받는 곳이 아직 없으면(404) 그만큼 쉰다
 SAVED_DIR = os.path.expanduser('~/maps')
 SAVED_SCAN_S = 30.0          # 저장 지도 폴더를 살피는 주기
+ACTIVE_PLACES = os.path.expanduser('~/maps/active_places.json')   # 새 지도를 그릴 때 옮겨 둔 장소(tools/carry_places.py)
 COMMANDS = {
     'get_status': {'args': {}, 'rejects': []},
     'cancel': {'args': {'id': '명령 번호(없으면 지금 하는 것)', 'target': 'mission|speech|all'}, 'rejects': []},
@@ -145,24 +146,24 @@ class Link:
 
     def places(self):
         """지금 지도에 붙인 장소 이름 목록. 장소는 지도 좌표라 그 지도 위에서만 뜻이 있다(`~/maps/<지도>.places.json`)."""
+        d = self._places_doc()
+        return sorted(p['name'] for p in d.get('places', []))
+
+    def _places_doc(self):
+        """지금 지도의 장소 문서. 저장 지도면 그 지도 파일, 탐색 중(live)이면 출발 때 옮겨 둔 active_places.json."""
         mid = getattr(self.geo, 'map_id', None) if self.geo else None
-        if not mid or mid.startswith('live-'):
-            return []
+        if not mid:
+            return {}
+        src = ACTIVE_PLACES if mid.startswith('live-') else os.path.join(SAVED_DIR, mid + '.places.json')
         try:
-            d = json.load(open(os.path.join(SAVED_DIR, mid + '.places.json')))
-            return sorted(p['name'] for p in d.get('places', []))
+            return json.load(open(src))
         except Exception:
-            return []
+            return {}
 
     def place_xy(self, name):
-        mid = getattr(self.geo, 'map_id', None) if self.geo else None
-        try:
-            d = json.load(open(os.path.join(SAVED_DIR, mid + '.places.json')))
-            for p in d['places']:
-                if p['name'] == name:
-                    return float(p['x']), float(p['y'])
-        except Exception:
-            pass
+        for p in self._places_doc().get('places', []):
+            if p['name'] == name:
+                return float(p['x']), float(p['y'])
         return None
 
     @staticmethod
