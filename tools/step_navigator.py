@@ -95,6 +95,19 @@ class StepNavigator:
     #   그 좁은 곳 gap_stage_m 앞의 경로 점으로 정확히 가서 경로 방향으로 돌아선 뒤 곧게 들어간다(목표당 2번까지).
     #   ⚠️ 11-07 실물 탐색: 폭 38~39 cm 의자 통로를 가운데로 가면 양옆 8 cm인데, 0.4 m 걸음으로 모서리를 질러 4~7 cm 치우쳐
     #   들어가 옆 여유(5 cm)에 걸려 우상단을 못 갔다. 지도 시험(의자 통로 40 cm, 무작위 20번): 이 동작 없이 통과 5/20
+    # 2026-11-22 탐색 속도(사용자 결정 "1"): 직진 순항 0.15 → 0.20 m/s, 정지 뒤 관성 시간 0.17 → 0.22 s, 걸음은 아래 "상황별 걸음"(트인 곳 0.5, 아니면 0.4).
+    #   10번째 탐색 시간의 49%가 직진, 걸음마다 거리와 무관한 1.8 s가 든다 → 둘 다 올리면 직진 535 → 약 437 s 예상.
+    #   ②' 바닥 시험(같은 자리·같은 날): 0.15/0.17 2 cm 안 75%(8번), 0.20/0.17 62%, 0.20/0.22 80%(20번) — 둘 다 기준 90% 미달,
+    #   빗나간 것은 거의 쉬었다가 첫 몇 걸음의 더 감(2.7~4.2 cm). 속도 때문에 나빠지지 않아 올림. 첫 걸음 더 감은 따로 조사
+    drive_v_max = 0.20
+    drive_coast_s = 0.22
+    # 걸음 길이를 상황별로(11-22 사용자 제안 "장애물이 많을 때는 낮추고, 여유 있을 때는 늘리자"): 기본 step_m(0.4)은 촘촘한 걸음이다.
+    #   라이다 바로 옆 물체(의자 다리 등) 검사는 걸음 사이 멈췄을 때만 돈다 → 걸음이 길면 멈춤 사이에 확인 못 하는 구간이 생긴다
+    #   (지도 시험: 0.5 m 걸음이면 의자 다리 옆을 그냥 지나감). 그래서 앞으로 갈 구간 양옆이 트였고(차체 바깥 open_side_m 안에 스캔 점 없음)
+    #   최근 open_quiet_steps 단계 안에 라이다 바로 옆 물체가 없었을 때만 step_open_m으로 늘린다
+    step_open_m = 0.5
+    open_side_m = 0.40   # 지도 시험(11-22): 0.25면 의자 통로 75%·무작위 98%로 나빠짐, 0.40이면 옛 설정과 같음(85%·100%)에 걸음 13.2→12.5
+    open_quiet_steps = 2
     gap_narrow = 0.24
     gap_stage_m = 0.40
     #   회전 전 반경 검사에 더하는 여유: 실제 회전 중심은 base_link와 다르다(09-27 큰 회전 뒤 앞뒤로 3.7~10.3 cm 밀림, 부호도 바뀜 → 2~5 cm).
@@ -149,7 +162,8 @@ class StepNavigator:
         self.tfb = Buffer(); self.tfl = TransformListener(self.tfb, node)
         self.planner = ActionClient(node, ComputePathToPose, 'compute_path_to_pose')
         self.turner = TurnToAngle(self.pub, self.spin, lambda: self.S['pose'][2], lambda: self.S['gz'])
-        self.driver = DriveDistance(self.pub, self.spin, lambda: self.S['pose'], lambda: self.S['v'], clear_fn=self._clear_now)
+        self.driver = DriveDistance(self.pub, self.spin, lambda: self.S['pose'], lambda: self.S['v'], clear_fn=self._clear_now,
+                                    v_max=self.drive_v_max, coast_s=self.drive_coast_s)
         self.log = []
 
     def _on_odom(self, m):
@@ -266,16 +280,16 @@ class StepNavigator:
         path = [(ps.pose.position.x, ps.pose.position.y) for ps in r.result().result.path.poses]
         return (path if len(path) >= 2 else None), ('' if len(path) >= 2 else '빈 경로')
 
-    def carrot(self, path, here, ahead=None):
+    def carrot(self, path, here, ahead=None, step_len=None):
         """경로에서 here와 가장 가까운 점부터 한 걸음 앞 지점. 걸음 = 남은 경로를 step_m 이하로 **균등 분할**한 길이
         (ahead를 주면 그 거리 앞 지점 — 좁은 곳에서 경로를 더 바짝 따라갈 때).
         ⚠️ 09-27 합격 시험: step_m(0.4)로 자르면 1.28 m 복귀가 0.4×3 뒤 8 cm 남기고 xy_tol(10 cm) 안이라 멈춤
         — 3회 모두 실제 복귀 9.7~11.0 cm(SLAM도 7.8~8.3 cm로 알고 있었음). 균등 분할이면 마지막 걸음이 목표에 떨어진다."""
         i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
         segs = [math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) for i in range(i0, len(path) - 1)]
-        step = self.step_m
+        base = step_len or self.step_m; step = base
         if sum(segs) > 0:
-            step = sum(segs) / math.ceil(sum(segs) / self.step_m - 1e-9)
+            step = sum(segs) / math.ceil(sum(segs) / base - 1e-9)
         if ahead is not None:
             step = min(step, ahead)
         acc = 0.0
@@ -300,6 +314,7 @@ class StepNavigator:
 
     def go(self, goal, max_steps=120, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
+        self._nu_step = -99; self.open_steps = 0
         t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0; stages = 0; goal_moved = None
         self.path_remaining = None; self.path_pose = None
         # 금지 구역 정보를 아직 못 받았으면 잠깐 기다리고, 끝내 없으면 움직이지 않는다.
@@ -326,7 +341,7 @@ class StepNavigator:
             self.settle()
             nu = self._near_unknown()
             if nu:
-                blocked += 1; self._note(step, 'near_unknown', dict(sectors=nu[:12]), None)
+                blocked += 1; self._nu_step = step; self._note(step, 'near_unknown', dict(sectors=nu[:12]), None)
                 # 두 번째로도 보이면(지나가는 손이 아니면) 방금 들어온 직진을 되돌린다 — 물체가 뒤쪽 방향이면 하지 않는다
                 if blocked >= 2 and backouts < 1 and self.last_fwd > 0.03 and not any(135 <= d <= 225 for d, _ in nu):
                     if self._straight(step, -min(self.last_fwd, self.back_out_max), 'back_out', margin=0.05):
@@ -425,8 +440,11 @@ class StepNavigator:
             if self.path_remaining > longest:
                 longest = self.path_remaining
                 timeout = min(max(timeout, time.time() - t0 + self.route_s_per_m * longest), max(timeout, self.timeout_cap))
-            c = self.carrot(path, here)
-            seg = min(self.step_m + 0.01, math.hypot(c[0] - here[0], c[1] - here[1]))   # 균등 분할 걸음은 step_m 이하(반올림 여유 1 cm)
+            stp = self._step_len(step, path, here)
+            if stp > self.step_m:
+                self.open_steps += 1
+            c = self.carrot(path, here, step_len=stp)
+            seg = min(stp + 0.01, math.hypot(c[0] - here[0], c[1] - here[1]))   # 균등 분할 걸음은 stp 이하(반올림 여유 1 cm)
             head = math.atan2(c[1] - here[1], c[0] - here[0])
             dyaw = wrap(head - here[2])
             # 가까운 목표(back_max 안)가 뒤쪽이면 돌지 말고 후진 — ⚠️ 09-27: 5 cm 뒤 목표에 174° 돌고 5 cm 가고 다시 돎
@@ -451,9 +469,9 @@ class StepNavigator:
             #   가까운 지점일수록 경로를 그대로 따라가므로, 좁은 틈 앞에서 먼저 경로 위로 올라선 뒤 똑바로 들어간다.
             #   ⚠️ 10-09 our_home 시뮬 (4.8, −1.2): 폭 0.40~0.45 m 문틈을 문설주 밑에서 0.35 m 앞 지점으로 질러가려다
             #   −26° 돌고 막힘 → +23° 돌고 막힘 → 다시 −24° … 3회 포기. 돌아 본 뒤에야 막힌 걸 알던 헛회전도 없앤다
-            for ahead in (None, self.step_m / 2, self.step_m / 4):
+            for ahead in (None, stp / 2, stp / 4):
                 c2 = c if ahead is None else self.carrot(path, here, ahead)
-                seg2 = min(self.step_m + 0.01, math.hypot(c2[0] - here[0], c2[1] - here[1]))
+                seg2 = min(stp + 0.01, math.hypot(c2[0] - here[0], c2[1] - here[1]))
                 if seg2 < 0.03:
                     continue
                 dyaw2 = wrap(math.atan2(c2[1] - here[1], c2[0] - here[0]) - here[2])
@@ -522,6 +540,33 @@ class StepNavigator:
             else:
                 blocked = 0
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
+
+    def _step_len(self, step, path, here, lidar_x=0.054):
+        """이번 걸음 길이: 트인 곳이면 step_open_m, 아니면 step_m(위 설정 주석). 앞으로 갈 경로(step_open_m + 0.1 m) 위 점마다
+        지금 스캔의 장애물 점이 차체 반폭 + open_side_m 안에 있으면 트이지 않은 것으로 본다."""
+        if self.step_open_m <= self.step_m or step - getattr(self, '_nu_step', -99) < self.open_quiet_steps:
+            return self.step_m
+        m = self._scan()
+        if m is None or len(path) < 2:
+            return self.step_m
+        c, s = math.cos(here[2]), math.sin(here[2]); reach = 0.11 + self.open_side_m; pts = []
+        for i, r in enumerate(m.ranges):
+            if m.range_min <= r <= min(m.range_max, self.step_open_m + reach + 0.3):
+                a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
+                if not (abs(x) <= 0.11 and abs(y) <= 0.11):
+                    pts.append((here[0] + c * x - s * y, here[1] + s * x + c * y))
+        i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
+        acc, probe = 0.0, [(here[0], here[1])]
+        for i in range(i0, len(path)):
+            if i > i0:
+                acc += math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1])
+            if acc > self.step_open_m + 0.1:
+                break
+            probe.append(path[i])
+        for qx, qy in probe:
+            if any((px - qx) ** 2 + (py - qy) ** 2 < reach * reach for px, py in pts):
+                return self.step_m
+        return self.step_open_m
 
     def _gap_stage(self, step, path, here, lidar_x=0.054):
         """경로 앞 1.2 m 안에서 양옆이 다 막힌 가장 좁은 틈을 지금 스캔으로 찾아, 그 틈 가운데 선의 gap_stage_m 앞으로 가서

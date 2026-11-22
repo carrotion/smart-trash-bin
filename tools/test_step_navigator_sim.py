@@ -51,7 +51,10 @@ def bottle(cx, cy, rad=0.033):
 
 def make(rot_off=0.04, turn_scale=1.02, drive_scale=1.01, rear_block=None, world=None):
     nav = StepNavigator.__new__(StepNavigator)
-    nav.step_m, nav.xy_tol, nav.yaw_tol, nav.turn_tol = 0.4, 0.05, math.radians(5), math.radians(5)
+    # 걸음 길이는 주행기의 기본값을 그대로 쓴다(11-22: 0.4로 박혀 있어 0.5로 바꾼 주행기를 시험하지 못했다)
+    import inspect
+    nav.step_m = inspect.signature(StepNavigator.__init__).parameters['step_m'].default
+    nav.xy_tol, nav.yaw_tol, nav.turn_tol = 0.05, math.radians(5), math.radians(5)
     nav.settle_s, nav.blocked_max, nav.clear_margin, nav.back_max, nav.side_margin = 0.5, 3, 0.25, 0.15, 0.05
     nav.rot_radius = 0.22
     nav.log = []; P = {'x': 0.0, 'y': 0.0, 'th': 0.0, 'turned': 0.0, 'turn_clear': []}
@@ -256,7 +259,7 @@ def main():
         r2 = nav2.go((2.0, 0.0, None))
         builtins.print = quiet
         check('구역 정보 없음 → 움직이지 않음 / 도중에 생긴 구역 → 멈춤', not r['ok'] and not nav.log and '받지 못함' in r['msg']
-              and not r2['ok'] and '금지 구역' in r2['msg'] and P2['x'] < 0.5, f'{r["msg"]} / {r2["msg"]}, 이동 {P2["x"] * 100:.0f} cm')
+              and not r2['ok'] and '금지 구역' in r2['msg'] and P2['x'] <= max(nav2.step_m, nav2.step_open_m) + 0.01, f'{r["msg"]} / {r2["msg"]}, 이동 {P2["x"] * 100:.0f} cm')   # 첫 걸음(step_m)만 가고 멈춤
         builtins.print = lambda *a, **k: None
         #  11f. 경로 계획용 격자: 구역 안과 차체 반폭 안은 100(통행 불가), 팽창 반경까지는 1~99, 그 밖은 0
         m, ox, oy = keepout.build_mask([box(1.0, 1.0, 2.0, 1.6)])
@@ -386,7 +389,11 @@ def main():
                             sc.ranges[i] = 0.082
                 return iter([sc] * 5)
         def chair(plan_detour=False, deg=(260, 268), rear_wall=False):
-            nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[] if rear_wall else None); nav._near_base = base; nav._raw = RawNear(P, (0.40, -0.18), deg)
+            nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[] if rear_wall else None); nav._near_base = base
+            nav.step_open_m = nav.step_m   # 이 시험은 후진 동작을 본다 — 가상 다리가 원시 반사로만 있어 일반 스캔엔 트여 보이므로 상황별 걸음은 끈다(아래 16b가 따로 본다)
+            # 다리는 첫 멈춤 자리(1.5 m를 step_m 이하로 균등 분할한 첫 걸음) 2.5 cm 앞 — 11-22: 0.40에 박혀 있어 0.5 m 걸음이면 감지 범위 밖이었다
+            first = 1.5 / math.ceil(1.5 / nav.step_m - 1e-9)
+            nav._raw = RawNear(P, (first + 0.025, -0.18), deg)
             straight = nav.plan
             if plan_detour:   # 빠져나온 뒤 planner가 다리를 피해 왼쪽으로 돈다(코스트맵에 다리가 찍힘)
                 nav.plan = lambda here, goal: ((line(here, [(here[0], 0.35), (1.5, 0.35), goal]), '') if any(e['kind'] == 'back_out' for e in nav.log) and here[1] < 0.3 else straight(here, goal))
@@ -408,6 +415,20 @@ def main():
               len(boA) == 1 and not turnA and 0.03 < -boA[0]['arg'] <= 0.30 and not rA['ok'] and '미확인' in rA['msg']
               and len(boB) == 1 and rB['ok'] and not boC and '미확인' in rC['msg'] and not boD,
               f'A 후진 {[e["arg"] for e in boA]}, {rA["msg"][:16]} | B {rB["msg"]} | C 후진 {len(boC)}번, {rC["msg"][:16]} | D 후진 {len(boD)}번')
+        builtins.print = lambda *a, **k: None
+        #  16b. 상황별 걸음(11-22): 트였으면 step_open_m, 경로 옆에 장애물이 있으면 step_m, 라이다 바로 옆 물체 직후 두 단계는 step_m
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); nav._nu_step = -99
+        path = [(k / 20, 0.0) for k in range(41)]
+        open_ = nav._step_len(5, path, (0.0, 0.0, 0.0))
+        nav.S.world.extend(bottle(0.3, -0.30))            # 경로 옆 30 cm(차체 바깥 19 cm) 병
+        near = nav._step_len(5, path, (0.0, 0.0, 0.0)); nav.S.world.clear()
+        nav._nu_step = 4; after = nav._step_len(5, path, (0.0, 0.0, 0.0)); later = nav._step_len(6, path, (0.0, 0.0, 0.0))
+        nav2, P2 = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); r = nav2.go((1.5, 0.0, None))
+        drives = [e['arg'] for e in nav2.log if e['kind'] == 'drive']
+        builtins.print = quiet
+        check('상황별 걸음: 트이면 0.5 / 옆 장애물이면 0.4 / 옆 물체 직후 0.4, 두 단계 뒤 0.5 / 트인 1.5 m는 0.5 m 세 걸음',
+              (open_, near, after, later) == (nav.step_open_m, nav.step_m, nav.step_m, nav.step_open_m) and r['ok'] and len(drives) == 3
+              and all(abs(d - 0.5) < 0.02 for d in drives), f'{(open_, near, after, later)}, 걸음 {drives}')
         builtins.print = lambda *a, **k: None
         #  16. 벽과 의자 다리 사이(11-07 다섯 번째 탐색): 왼쪽 벽이 차체 옆(중심 20 cm)을 x −0.2~0.45로 따라 이어지고 오른쪽 다리가 옆면 4 cm.
         #      뒤쪽 목표라 돌아야 한다 → 곧게 뒤로 빠져 돌 자리를 찾아(25 cm 안에는 없음) 돌고 도착 / 뒤도 막혔으면 움직이지 않고 실패
