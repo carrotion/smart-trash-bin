@@ -249,7 +249,7 @@ def main():
     L12 = mk(f8.url, geo_source=Geo3(), seen_source=seen_src); L12.hello(); f8.log.clear()
     r1 = L12.send_seen(); r2 = L12.send_seen(); seen = f8.kinds('seen')
     check('⑳ seen: 사람이 보일 때만 얼굴 부분(잘린 JPEG)과 상자를 올린다', r1 == 200 and r2 == 'none' and len(seen) == 1
-          and seen[0]['jpeg_b64'] == base64.b64encode(b'JPEGCROP').decode() and seen[0]['box']['score'] == 0.8
+          and seen[0]['jpeg'] == base64.b64encode(b'JPEGCROP').decode() and seen[0]['box']['score'] == 0.8
           and seen[0]['camera'] == 'logitech_c270', (r1, r2, seen[:1]))
     f8.close()
 
