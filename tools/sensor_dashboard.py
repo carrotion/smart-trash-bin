@@ -30,6 +30,7 @@ from sensor_msgs.msg import Imu, LaserScan, MagneticField
 state_lock = threading.Lock()
 state = {
     "imu": {"connected": False, "last_ts": 0.0},
+    "camera": {"connected": False, "n": 0},   # 대시보드 화면(11-22). 허브 카드가 읽는다
     "mag": {"connected": False, "last_ts": 0.0},
     "lidar": {"connected": False, "last_ts": 0.0},
 }
@@ -737,6 +738,8 @@ def _cam_worker():
         ok2, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 75])
         with cam_lock:
             cam["frame"] = fr; cam["jpg"] = buf.tobytes() if ok2 else cam["jpg"]; cam["n"] += 1; cam["err"] = None
+        with state_lock:
+            state["camera"] = {"connected": True, "n": cam["n"]}
 
 
 def _cam_start():
@@ -771,6 +774,7 @@ class Handler(BaseHTTPRequestHandler):
                 body, enc = packed, "gzip"
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")   # 페이지를 고쳐도 브라우저가 옛 화면을 들고 있지 않게(11-22)
         if enc:
             self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
@@ -859,6 +863,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    _cam_start()   # 켜질 때부터 카메라를 열어 둔다(허브 카드·대시보드가 바로 보이게)
     # global 선언은 이름을 쓰기 **전에** 와야 한다 (아래 add_argument의 default에서
     # 이미 읽으므로, 뒤에 두면 SyntaxError).
     global DECLINATION_DEG

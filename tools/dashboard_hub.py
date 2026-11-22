@@ -147,6 +147,7 @@ const MODULES = [
   {key:'motor', icon:'⚙️', label:'모터', port:8766},
   {key:'imu',   icon:'🧭', label:'IMU', port:8767},
   {key:'lidar', icon:'📡', label:'LiDAR', port:8767},
+  {key:'camera', icon:'📷', label:'카메라', port:8767},      // 11-22: 센서 대시보드에 카메라 화면을 붙였다
   {key:'map',   icon:'🗺️', label:'맵', port:8768},
 ];
 
@@ -330,6 +331,15 @@ async function tick() {
     }
 
     // imu / lidar는 sensor_dashboard.py(:8767) 하나가 둘 다 서빙
+    if (mod.key === 'camera') {
+      if (!sensorsAvail) {
+        return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
+      }
+      const c = summary.sensors.camera || {};
+      return c.connected
+        ? card(mod, `<div class="sub">화면 받는 중</div><div class="big">${c.n ?? 0}</div><div class="sub">장 누적 · 640×480 10장/초</div>`, 'var(--good)', false)
+        : card(mod, `<div class="sub">카메라 없음</div>`, 'var(--critical)', false);
+    }
     if (mod.key === 'imu' || mod.key === 'lidar') {
       if (!sensorsAvail) {
         return card(mod, `<div class="sub">대시보드 응답 없음</div>`, 'var(--idle)', true);
