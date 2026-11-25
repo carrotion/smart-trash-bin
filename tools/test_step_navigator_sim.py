@@ -55,7 +55,8 @@ def make(rot_off=0.04, turn_scale=1.02, drive_scale=1.01, rear_block=None, world
     import inspect
     nav.step_m = inspect.signature(StepNavigator.__init__).parameters['step_m'].default
     nav.xy_tol, nav.yaw_tol, nav.turn_tol = 0.05, math.radians(5), math.radians(5)
-    nav.settle_s, nav.blocked_max, nav.clear_margin, nav.back_max, nav.side_margin = 0.5, 3, 0.25, 0.15, 0.05
+    # 앞 여유는 주행기 클래스 값을 읽는다 — 0.25를 박아 두어 --set clear_margin_m=… 비교가 세 번 다 같게 나왔다(11-25, 시뮬 하네스가 값을 덮음)
+    nav.settle_s, nav.blocked_max, nav.clear_margin, nav.back_max, nav.side_margin = 0.5, 3, type(nav).clear_margin_m, 0.15, 0.05
     nav.rot_radius = 0.22
     nav.log = []; P = {'x': 0.0, 'y': 0.0, 'th': 0.0, 'turned': 0.0, 'turn_clear': []}
     if world is not None:

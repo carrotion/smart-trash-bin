@@ -53,6 +53,7 @@ class StepNavigator:
     # 앞 여유가 걸음 + clear_margin에 모자라면 포기하지 않고 여유가 허락하는 만큼(room − clear_margin)으로 줄여 간다.
     #   그 길이가 min_step 미만이면 막힘. 클래스 기본값인 이유는 위 cancel과 같다(가상 시험은 __init__을 건너뜀)
     min_step = 0.10
+    clear_margin_m = 0.25      # 걸음 뒤 차체 앞끝과 장애물 사이에 남길 거리(m). 생성 인자로도 바꿀 수 있다 — 시뮬 비교는 --set clear_margin_m=…
     #   원시 스캔(최근 몇 장, 자기 필터 전). None이면 바로 옆 미확인 물체 검사를 건너뜀(시뮬·가상 시험엔 /scan_raw가 없다)
     _raw = None
     #   가장 최근 경로의 남은 길이(m)와 그때 위치 — 액션 서버가 feedback(distance_remaining)을 만들 때 읽는다
@@ -133,10 +134,11 @@ class StepNavigator:
 
     def __init__(self, node, cmd_topic='/cmd_vel_nav', odom_topic='/odometry/filtered', gyro_from_odom=False,
                  step_m=0.4, xy_tol=0.05, yaw_tol_deg=5.0, turn_tol_deg=5.0, settle_s=0.5, blocked_max=3,
-                 clear_margin=0.25, back_max=0.15, side_margin=0.05, rot_radius=0.22, raw_scan_topic='/scan_raw'):
+                 clear_margin=None, back_max=0.15, side_margin=0.05, rot_radius=0.22, raw_scan_topic='/scan_raw'):
         self.n = node
         self.step_m, self.xy_tol, self.yaw_tol = step_m, xy_tol, math.radians(yaw_tol_deg)
-        self.turn_tol, self.settle_s, self.blocked_max, self.clear_margin = math.radians(turn_tol_deg), settle_s, blocked_max, clear_margin
+        self.turn_tol, self.settle_s, self.blocked_max = math.radians(turn_tol_deg), settle_s, blocked_max
+        self.clear_margin = type(self).clear_margin_m if clear_margin is None else clear_margin
         # 통로 옆 여유: 10 cm(09-24, 직진이 휘던 시절 값) → 5 cm. ⚠️ 09-27 장애물 코스: planner 경로가 병 옆을 지나
         #   병이 옆면 7 cm에 오자 "앞 여유 0" 3회로 중단. 근거: 직진 59회 옆밀림 최대 3.3 cm(95% 1.4 cm),
         #   3층 collision_monitor 직진 정지 구역이 옆 3 cm → 주행기가 그보다 한 겹 넓게
