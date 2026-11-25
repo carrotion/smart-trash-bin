@@ -117,7 +117,8 @@ def project_floor(x, y, pose, geom=GEOM, x_cam=0.0, width=640, height=480):
     alpha = math.atan(h / math.hypot(fwd, left))
     v = geom['cy'] + f * math.tan(alpha + pitch)
     psi = math.atan2(left, fwd)
-    u = geom['cx'] + f * math.tan(psi)
+    # 카메라가 +x를 보면 화면 오른쪽은 로봇의 -y(오른쪽)다 → 로봇 왼쪽(+y)은 화면 왼쪽(u<320). 11-25 실물 확인에서 뒤집혀 있던 것을 고침
+    u = geom['cx'] - f * math.tan(psi)
     if not (0 <= u < width and 0 <= v < height):
         return None
     return (round(u), round(v))
