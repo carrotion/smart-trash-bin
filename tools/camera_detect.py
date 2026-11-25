@@ -98,6 +98,31 @@ def row_to_distance(row, height=480, floor=FLOOR):
     return floor['b'] / (row - floor['a'])
 
 
+GEOM = {'h': 0.14, 'f': 644.0, 'pitch_deg': 9.5, 'cy': 240.0, 'cx': 320.0}   # 2026-11-25 실측(docs/calibration/camera_geometry_20261125.json)
+
+
+def project_floor(x, y, pose, geom=GEOM, x_cam=0.0, width=640, height=480):
+    """지도 위 바닥 점(x,y)이 카메라 화면 어디에 찍히나 (u, v). 화면 밖이면 None.
+    pose = (로봇 x, 로봇 y, 로봇 yaw°). 카메라는 base_link에서 x_cam만큼 앞, 높이 h, 아래로 pitch.
+    바닥이 평평하다고 보고 계산한다 — 벽이나 가구 위 점에는 맞지 않는다(그것은 깊이 카메라 몫)."""
+    import math
+    rx, ry, yaw = pose
+    th = math.radians(yaw)
+    dx, dy = x - rx, y - ry
+    fwd = dx * math.cos(th) + dy * math.sin(th) - x_cam
+    left = -dx * math.sin(th) + dy * math.cos(th)
+    if fwd <= 0.05:
+        return None
+    h, f, pitch = geom['h'], geom['f'], math.radians(geom['pitch_deg'])
+    alpha = math.atan(h / math.hypot(fwd, left))
+    v = geom['cy'] + f * math.tan(alpha + pitch)
+    psi = math.atan2(left, fwd)
+    u = geom['cx'] + f * math.tan(psi)
+    if not (0 <= u < width and 0 <= v < height):
+        return None
+    return (round(u), round(v))
+
+
 def objects_on_floor(dets, height=480, max_m=2.0):
     """검출 상자들 중 '바닥 가까이(아래 끝)에 있고 2 m 안'인 것을 (상자, 거리)로. 낮은 물체 판단의 재료."""
     out = []

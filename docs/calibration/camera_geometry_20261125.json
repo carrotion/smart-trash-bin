@@ -1,0 +1,26 @@
+{
+ "date": "2026-11-25",
+ "camera": "logitech C270 640x480",
+ "height_m": 0.14,
+ "f_px": 644.0,
+ "pitch_down_deg": 9.5,
+ "cy": 240,
+ "hfov_deg": 52.8,
+ "vfov_deg": 40.9,
+ "points": [
+  {
+   "d_m": 1.07,
+   "row": 437
+  },
+  {
+   "d_m": 1.59,
+   "row": 405
+  },
+  {
+   "d_m": 2.09,
+   "row": 394
+  }
+ ],
+ "fit_rms_rows": 1.43,
+ "note": "row = cy + f*tan(atan(h/d)+pitch). 카메라를 옮기거나 기울이면 다시 잰다"
+}
