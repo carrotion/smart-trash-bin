@@ -603,6 +603,9 @@ class StepNavigator:
         self._looked.append((here[0], here[1]))
         back = min(self.look_back_m, 1.0)
         self._note(step, 'look_back_try', dict(back=round(back, 2), room=round(corridor_clearance(self._scan(), True, 0.0, self.side_margin), 2)), None)
+        wake = getattr(self.floor_check, 'wake', None)
+        if wake is not None:
+            wake()                                             # 카메라는 평소 꺼져 있다 — 물러나는 동안 켠다(11-25)
         if not self._straight(step, -back, 'look_back', margin=0.05):
             return False                                   # 뒤가 막혀 있으면 그냥 진행(확인은 못 했지만 멈추지 않는다)
         self.settle(); time.sleep(0.4)                      # 카메라가 한 장 받을 시간

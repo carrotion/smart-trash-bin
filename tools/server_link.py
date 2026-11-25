@@ -633,7 +633,7 @@ class RobotState:
             return []
         try:
             import camera_detect
-            d = json.load(urllib.request.urlopen(api + '/api/detect', timeout=1.5))
+            d = json.load(urllib.request.urlopen(api + '/api/detect?peek=1', timeout=1.5))   # 엿보기만 — 카메라를 켜지 않는다(11-25)
             if d.get('age_s', 9) > 3:
                 return []
             th = math.radians(p['yaw_deg']); c, s = math.cos(th), math.sin(th); out = []
@@ -713,7 +713,7 @@ def main():
     def seen_frame():
         """사람이 보이면 (얼굴 부분 JPEG, 상자) — 대시보드의 인식 결과와 원본 화면을 쓴다(카메라는 그쪽이 잡고 있다)."""
         try:
-            d = json.load(urllib.request.urlopen(CAMERA_API + '/api/detect', timeout=2))
+            d = json.load(urllib.request.urlopen(CAMERA_API + '/api/detect?peek=1', timeout=2))   # 엿보기만 — 카메라를 켜지 않는다(11-25)
             people = [q for q in d.get('dets', []) if q.get('cls') == 0 and q.get('score', 0) >= 0.5]
             if not people:
                 return None

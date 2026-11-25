@@ -361,6 +361,7 @@ __FAVICON__
     <div class="msg" id="camState" style="min-width:12em"></div>
   </div>
   <div class="row" style="margin-top:8px">
+    <button class="mini" id="camToggle">화면 보기</button>
     <button class="mini" id="camSnap">한 장 찍어 저장</button>
     <span class="msg" id="camSnapMsg"></span>
   </div>
@@ -663,12 +664,23 @@ occBtn.addEventListener('click', async () => {
 pollOcc();
 
 tick();
-// 카메라: 0.25초마다 한 장씩 받아 <img>에 그린다. MJPEG 스트림은 헤드리스 브라우저에서 안 그려져서(11-22) 한 장씩 받는 쪽으로
+// 카메라는 [화면 보기]를 눌렀을 때만 켠다(11-25 사용자: 전력·CPU). 페이지를 열기만 해서는 켜지 않는다.
+//   보는 동안 0.25초마다 한 장씩 받아 <img>에 그린다(MJPEG는 헤드리스 브라우저에서 안 그려져서, 11-22).
+//   [화면 끄기]를 누르거나 탭을 숨기거나 3분이 지나면 받기를 멈추고, 서버는 20초 뒤 카메라를 닫는다.
 (function () {
   const img = document.getElementById('camImg'), dot = document.getElementById('camDot'), st = document.getElementById('camState');
-  let url = null, stop = false, info = '';
+  const btn = document.getElementById('camToggle');
+  const MAX_MS = 180000;
+  let url = null, on = false, info = '', since = 0, timer = null;
+  function setOff(msg) {
+    on = false; btn.textContent = '화면 보기';
+    if (timer) { clearTimeout(timer); timer = null; }
+    dot.style.background = 'var(--idle, #999)';
+    st.textContent = msg || '꺼짐 — [화면 보기]를 누르면 켜요(켜는 데 3~4초)';
+  }
   async function frame() {
-    if (stop) return;
+    if (!on) return;
+    if (Date.now() - since > MAX_MS) { setOff('3분이 지나 껐어요 — 다시 보려면 [화면 보기]'); return; }
     try {
       const r = await fetch('/camera.jpg?t=' + Date.now());
       if (!r.ok) throw new Error(r.status);
@@ -677,23 +689,29 @@ tick();
       url = URL.createObjectURL(blob); img.src = url;
       dot.style.background = 'var(--good)'; st.textContent = info || '실시간 화면';
     } catch (e) {
-      dot.style.background = 'var(--critical)'; st.textContent = '카메라 화면 없음 — 다시 시도';
+      dot.style.background = 'var(--critical)'; st.textContent = '카메라 켜는 중… / 화면 없음';
     }
-    setTimeout(frame, 250);
+    timer = setTimeout(frame, 250);
   }
-  frame();
-  window.addEventListener('beforeunload', () => { stop = true; });
+  btn.onclick = () => {
+    if (on) { setOff(); return; }
+    on = true; since = Date.now(); btn.textContent = '화면 끄기';
+    st.textContent = '카메라 켜는 중…'; frame(); camTick();
+  };
+  document.addEventListener('visibilitychange', () => { if (document.hidden && on) setOff('탭을 숨겨서 껐어요'); });
+  window.addEventListener('beforeunload', () => { on = false; });
   async function camTick() {
+    if (!on) return;                       // 꺼져 있으면 상태도 묻지 않는다(묻기만 해도 켜질 수 있게 두지 않음)
     try {
-      const r = await (await fetch('/api/camera')).json();
-      dot.style.background = r.ok ? 'var(--good)' : 'var(--critical)';
-      info = r.ok ? `${r.w}×${r.h} · ${Math.round(r.fps)}장/초 · 사람 ${r.people ?? 0}명` + (r.detect_ms ? ` · 인식 ${Math.round(r.detect_ms)}ms` : ' · 인식 꺼짐') : '';
-      st.textContent = r.ok ? info : (r.error || '카메라 없음');
-    } catch (e) { dot.style.background = 'var(--critical)'; st.textContent = '카메라 상태를 못 읽음'; }
+      const r = await (await fetch('/api/detect?peek=1')).json();
+      info = `640×480 · 사람 ${r.people ?? 0}명` + (r.ms ? ` · 인식 ${Math.round(r.ms)}ms` : '') + (r.brightness != null ? ` · 밝기 ${Math.round(r.brightness)}` : '');
+    } catch (e) { info = ''; }
   }
-  camTick(); setInterval(camTick, 3000);
+  setInterval(camTick, 3000);
+  setOff();
   document.getElementById('camSnap').onclick = async () => {
     const m = document.getElementById('camSnapMsg');
+    m.textContent = '찍는 중…';
     try { const r = await (await fetch('/camera.jpg?save=1')).json();
       m.textContent = r.ok ? '저장: ' + r.file : (r.error || '실패'); }
     catch (e) { m.textContent = '실패'; }
@@ -718,7 +736,24 @@ PAGE = PAGE.replace("__FAVICON__", FAVICON_TAG).replace("__HOME_ICON__", HOME_IC
 import cv2
 
 cam_lock = threading.Lock()
-cam = {"frame": None, "jpg": None, "n": 0, "info": None, "err": None}
+cam = {"frame": None, "jpg": None, "n": 0, "info": None, "err": None, "on": False}
+# 카메라는 **필요할 때만** 켠다(2026-11-25 사용자: "전력소모가 크구나, cpu 40%를 계속 넘는다").
+#   늘 켜 두니 이 프로세스가 한 코어의 88~90%를 썼다(잡기 10장/초 + JPEG + 사람 인식 3~4장/초).
+#   화면·검출을 찾는 요청이 오면 CAM_IDLE_S초 동안 켜 두고, 그동안 아무도 안 찾으면 카메라를 닫고 인식도 멈춘다.
+#   허브 카드(/api/status)와 서버 연결의 엿보기(/api/detect?peek=1)는 켜지 않는다.
+CAM_IDLE_S = 20.0
+cam_want = {"until": 0.0}
+
+
+def _cam_wanted():
+    return time.time() < cam_want["until"]
+
+
+def _want_camera(sec=CAM_IDLE_S, who=''):
+    if not _cam_wanted() and who:
+        print(f'카메라 요청: {who}', flush=True)                # 누가 켰는지 남긴다(11-25: 아무도 안 찾는데 켜져 있었다)
+    cam_want["until"] = max(cam_want["until"], time.time() + sec)
+    _cam_start(); _det_start()
 _cam_thread = {"t": None}
 _det_thread = {"t": None}
 det_lock = threading.Lock()
@@ -737,6 +772,8 @@ def _det_worker():
         print(f'사람 인식 비활성: {type(e).__name__} {e}', flush=True)
         return
     while True:
+        if not _cam_wanted():
+            time.sleep(0.5); continue
         with cam_lock:
             fr = None if cam.get("frame") is None else cam["frame"].copy()
         if fr is None:
@@ -752,7 +789,7 @@ def _det_worker():
                        people=sum(1 for x in ds if x[5] == 0))
         with state_lock:
             state["camera"] = dict(state.get("camera") or {}, connected=True, n=cam.get("n", 0), people=det["people"])
-        time.sleep(0.15)
+        time.sleep(0.4)          # 2장/초 안팎(11-25: 3~4장/초에서 줄임 — 켜져 있는 동안의 부담도 낮춘다)
 
 
 def _det_start():
@@ -761,15 +798,35 @@ def _det_start():
         _det_thread["t"].start()
 
 
-def _cam_worker():
-    """카메라를 한 번 열어 10장/초로 받아 최신 화면만 남긴다. 열기가 4초쯤 걸려서 대시보드 요청마다 열면 응답이 끊긴다(11-22)."""
+def _cam_open():
     cap = cv2.VideoCapture("/dev/video0", cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480); cap.set(cv2.CAP_PROP_FPS, 10)
     with cam_lock:
         cam["info"] = {"w": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), "h": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                        "fps": float(cap.get(cv2.CAP_PROP_FPS))}
+        cam["on"] = True
+    return cap
+
+
+def _cam_worker():
+    """찾는 동안만 카메라를 열어 10장/초로 받아 최신 화면만 남긴다. 열기가 3~4초 걸려서 요청마다 열지 않고,
+    마지막 요청 뒤 CAM_IDLE_S초가 지나면 닫는다(11-25)."""
+    cap = None
     while True:
+        if not _cam_wanted():
+            if cap is not None:
+                cap.release(); cap = None
+                with cam_lock:
+                    cam.update(frame=None, jpg=None, on=False)
+                with det_lock:
+                    det.update(dets=[], people=0)
+                with state_lock:
+                    state["camera"] = {"connected": False, "n": cam["n"], "off": True}
+                print('카메라 끔(찾는 요청 없음)', flush=True)
+            time.sleep(0.5); continue
+        if cap is None:
+            cap = _cam_open(); print('카메라 켬', flush=True)
         ok, fr = cap.read()
         if not ok or fr is None:
             with cam_lock:
@@ -796,8 +853,8 @@ def _cam_start():
         _cam_thread["t"].start()
 
 
-def _cam_latest(wait_s=3.0):
-    _cam_start()
+def _cam_latest(wait_s=6.0, who='camera.jpg'):
+    _want_camera(who=who)
     end = time.time() + wait_s
     while time.time() < end:
         with cam_lock:
@@ -835,15 +892,18 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             with state_lock:
                 self._send(200, json.dumps(state).encode("utf-8"), "application/json")
-        elif self.path == "/api/detect":
+        elif self.path.startswith("/api/detect"):
+            if "peek=1" not in self.path:
+                _want_camera(who=f'{self.client_address[0]} {self.path[:40]}')
             with det_lock:
                 ds = [dict(x1=round(d[0]), y1=round(d[1]), x2=round(d[2]), y2=round(d[3]),
                            score=round(d[4], 3), cls=int(d[5]), name=(__import__('camera_detect').COCO[int(d[5])])) for d in det["dets"]]
                 self._send(200, json.dumps({"people": det["people"], "ms": round(det["ms"], 1), "brightness": det.get("brightness"),
-                                            "age_s": round(time.time() - det["t"], 2), "dets": ds},
+                                            "age_s": round(time.time() - det["t"], 2), "t": det["t"], "on": bool(cam.get("on")),
+                                            "dets": ds if cam.get("on") else []},
                                            ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path == "/api/camera":
-            self._send_camera_info()
+            self._send_camera_info()           # 상태만 알려 준다(켜지 않는다, 11-25)
         elif self.path == "/camera.mjpg":
             self._stream_camera()
         elif self.path.startswith("/camera.jpg"):
@@ -866,7 +926,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_camera_jpeg(self):
         """가장 최근 한 장(JPEG). ?save=1이면 파일로 남긴다."""
-        fr = _cam_latest(3.0)
+        fr = _cam_latest(6.0, who=f"{self.client_address[0]} {self.path[:30]}")
         if fr is None:
             self._send(503, json.dumps({"ok": False, "error": "카메라 화면이 아직 없다"}, ensure_ascii=False).encode(), "application/json"); return
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -893,6 +953,7 @@ class Handler(BaseHTTPRequestHandler):
         last = None
         try:
             while True:
+                _want_camera()
                 with cam_lock:
                     jpg = cam.get("jpg"); n = cam.get("n")
                 if jpg and n != last:
@@ -923,8 +984,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    _cam_start()   # 켜질 때부터 카메라를 열어 둔다(허브 카드·대시보드가 바로 보이게)
-    _det_start()   # 사람 인식도 함께(모델이 없으면 조용히 꺼진다)
+    # 카메라는 켜질 때 열지 않는다 — 화면·검출을 찾을 때 열고, 안 찾으면 닫는다(11-25, 전력·CPU)
     # global 선언은 이름을 쓰기 **전에** 와야 한다 (아래 add_argument의 default에서
     # 이미 읽으므로, 뒤에 두면 SyntaxError).
     global DECLINATION_DEG

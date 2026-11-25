@@ -9,6 +9,7 @@
    그래서 이 확인은 "아는 물체가 앞에 있나"를 보는 정도로 두고, 결과는 단계 기록(`look_back`)에 남겨 나중에 학습 자료로 쓴다.
 """
 import json
+import time
 import math
 import os
 import sys
@@ -25,16 +26,39 @@ def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', '
                                                          'couch', 'bed', 'dining_table', 'tv', 'laptop')):
     """floor_check 함수를 만든다. 대시보드에 닿지 않으면 None을 돌려준다(주행기는 확인 없이 그대로 간다)."""
     try:
-        urllib.request.urlopen(api + '/api/detect', timeout=1.5).read()
+        urllib.request.urlopen(api + '/api/detect?peek=1', timeout=1.5).read()     # 있는지만 본다(카메라는 안 켠다)
     except Exception:
         return None
     from camera_detect import row_to_distance
     half = math.tan(math.radians(HFOV_DEG / 2))
 
+    t_wake = {'t': 0.0}
+
+    def wake():
+        """후진을 시작할 때 부른다 — 카메라를 켜는 데 3~4초 걸리니 물러나는 동안 데운다(11-25, 카메라는 필요할 때만 켬)."""
+        t_wake['t'] = time.time()
+        try:
+            urllib.request.urlopen(api + '/api/detect', timeout=1.5).read()
+        except Exception:
+            pass
+
+    def fresh(timeout=8.0):
+        """wake 뒤에 새로 한 검출 결과를 기다려 돌려준다. 시간 안에 안 오면 None."""
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                d = json.load(urllib.request.urlopen(api + '/api/detect', timeout=2))
+                if d.get('on') and d.get('t', 0) > t_wake['t'] + 0.3 and d.get('age_s', 9) < 1.5:
+                    return d
+            except Exception:
+                pass
+            time.sleep(0.3)
+        return None
+
     def check():
-        d = json.load(urllib.request.urlopen(api + '/api/detect', timeout=2))
-        if d.get('age_s', 9) > 3:
-            return []                                   # 화면이 오래됐으면 믿지 않는다
+        d = fresh()
+        if d is None:
+            return []                                   # 새 화면이 안 왔으면 판단하지 않는다
         out = []
         for q in d.get('dets', []):
             if q.get('name') not in keep_names or q.get('score', 0) < 0.45:
@@ -48,15 +72,15 @@ def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', '
         return out
     def ready(min_brightness=35.0):
         """카메라로 바닥을 볼 수 있나. 11-25 드레스룸(불 꺼짐)에서 화면 평균 밝기가 거의 0이라 검출이 될 수 없었다."""
-        try:
-            d = json.load(urllib.request.urlopen(api + '/api/detect', timeout=2))
-        except Exception:
-            return False, '카메라 응답 없음'
+        d = fresh()
+        if d is None:
+            return False, '카메라 화면이 안 옴'
         b = d.get('brightness')
         if b is not None and b < min_brightness:
             return False, f'어두움(밝기 {b:.0f})'
         return True, ''
     check.ready = ready
+    check.wake = wake
     return check
 
 
