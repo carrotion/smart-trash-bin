@@ -417,10 +417,13 @@ def main():
               f'A 후진 {[e["arg"] for e in boA]}, {rA["msg"][:16]} | B {rB["msg"]} | C 후진 {len(boC)}번, {rC["msg"][:16]} | D 후진 {len(boD)}번')
         builtins.print = lambda *a, **k: None
         #  16c. 좁은 곳 앞에서 후진해 바닥 확인(11-22): 물체가 있으면 멈추고, 없으면 그대로 들어간다
-        def look(found):
+        def look(found, dark=False):
             nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[])
             calls = []
-            nav.floor_check = lambda: (calls.append(1), found)[1]
+            def fc():
+                calls.append(1); return found
+            fc.ready = (lambda: (False, '어두움(밝기 3)')) if dark else (lambda: (True, ''))
+            nav.floor_check = fc
             # 앞이 좁은 곳: 통로 양옆에 벽을 놓아 여유를 줄인다
             nav.S.world = [(0.6, y / 100) for y in range(-40, 41, 5)] + [(0.6, -0.4 + y / 200) for y in range(0, 80)]
             r = nav.go((2.0, 0.0, None))
@@ -434,6 +437,12 @@ def main():
               'look_back' in kA and rA['msg'].startswith('바닥에 물체')
               and 'look_back' in kB and not rB['msg'].startswith('바닥에 물체'),
               f'A: {rA["msg"][:24]} {kA[:6]} | B: {rB["msg"][:16]} {kB[:6]}')
+        rC, kC, cC, PC = look([(0.8, 0.1, 'bottle')], dark=True)
+        builtins.print = quiet
+        check('후진 확인은 같은 자리에서 한 번만, 물러난 뒤에도 어두우면 판단하지 않고 건너뛴다(11-25 드레스룸)',
+              kB.count('look_back_try') <= 1 and 'look_back_try' in kC and 'look_back_skip' in kC and not cC,
+              f'B 시도 {kB.count("look_back_try")}회 | C: {kC[:5]} 확인 호출 {len(cC)}')
+        builtins.print = lambda *a, **k: None
         builtins.print = lambda *a, **k: None
 
         #  16b. 상황별 걸음(11-22): 트였으면 step_open_m, 경로 옆에 장애물이 있으면 step_m, 라이다 바로 옆 물체 직후 두 단계는 step_m

@@ -747,6 +747,7 @@ def _det_worker():
         except Exception:
             ds = []
         with det_lock:
+            det['brightness'] = round(float(fr[::8, ::8].mean()), 1)   # 어두우면 카메라 판단을 믿지 않는다(11-25 드레스룸)
             det.update(dets=ds, t=time.time(), ms=(time.time() - t0) * 1000,
                        people=sum(1 for x in ds if x[5] == 0))
         with state_lock:
@@ -838,7 +839,7 @@ class Handler(BaseHTTPRequestHandler):
             with det_lock:
                 ds = [dict(x1=round(d[0]), y1=round(d[1]), x2=round(d[2]), y2=round(d[3]),
                            score=round(d[4], 3), cls=int(d[5]), name=(__import__('camera_detect').COCO[int(d[5])])) for d in det["dets"]]
-                self._send(200, json.dumps({"people": det["people"], "ms": round(det["ms"], 1),
+                self._send(200, json.dumps({"people": det["people"], "ms": round(det["ms"], 1), "brightness": det.get("brightness"),
                                             "age_s": round(time.time() - det["t"], 2), "dets": ds},
                                            ensure_ascii=False).encode("utf-8"), "application/json")
         elif self.path == "/api/camera":

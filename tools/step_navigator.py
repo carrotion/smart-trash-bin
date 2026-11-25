@@ -327,7 +327,7 @@ class StepNavigator:
     def go(self, goal, max_steps=120, timeout=180.0):
         """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
         self._nu_step = -99; self.open_steps = 0
-        self.floor_check = getattr(self, 'floor_check', None); self._looked = set()
+        self.floor_check = getattr(self, 'floor_check', None); self._looked = []   # 후진 확인을 해 본 자리(지도 좌표)
         t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0; stages = 0; goal_moved = None
         self.path_remaining = None; self.path_pose = None
         self.current_path = []; self.current_goal = None
@@ -595,14 +595,25 @@ class StepNavigator:
         ⚠️ 카메라 검출은 COCO 80종만 안다 — 슬리퍼·옷은 못 알아본다. 지금은 아는 물체(병·의자·가방 등)만 잡고,
         모르는 것은 3D 카메라나 따로 학습한 모델이 필요하다(설계 docs/agent_architecture.md)."""
         self._look_msg = ''
-        if not self.floor_check or step in self._looked:
+        if not self.floor_check:
             return False
+        # ⚠️ 11-25 드레스룸 실물: 막힌 자리에서 걸음마다 다시 시도해 같은 후진 실패를 3번 했다 → 0.5 m 안에서 한 번만
+        if any(math.hypot(here[0] - q[0], here[1] - q[1]) < 0.5 for q in self._looked):
+            return False
+        self._looked.append((here[0], here[1]))
         back = min(self.look_back_m, 1.0)
-        self._looked.add(step)
         self._note(step, 'look_back_try', dict(back=round(back, 2), room=round(corridor_clearance(self._scan(), True, 0.0, self.side_margin), 2)), None)
         if not self._straight(step, -back, 'look_back', margin=0.05):
             return False                                   # 뒤가 막혀 있으면 그냥 진행(확인은 못 했지만 멈추지 않는다)
         self.settle(); time.sleep(0.4)                      # 카메라가 한 장 받을 시간
+        # 밝기는 **물러난 뒤에** 본다 — 11-25 드레스룸: 장 문에 0.43 m까지 붙어 벽만 보여 어두웠다(사용자 확인).
+        #   물러나면 오히려 보이는 경우라, 앞에서 보고 포기하면 안 된다. 물러났는데도 어두우면 그때 "못 봄"으로 남기고 진행한다
+        ready = getattr(self.floor_check, 'ready', None)
+        if ready is not None:
+            ok, why = ready()
+            if not ok:
+                self._note(step, 'look_back_skip', dict(why=why), None)
+                return False
         try:
             hits = self.floor_check() or []
         except Exception:

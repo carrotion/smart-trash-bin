@@ -46,6 +46,17 @@ def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', '
             lateral = (cx - width / 2) / (width / 2) * half * dist     # 화면 중심 기준 옆 거리(m)
             out.append((round(dist, 2), round(lateral, 2), q['name']))
         return out
+    def ready(min_brightness=35.0):
+        """카메라로 바닥을 볼 수 있나. 11-25 드레스룸(불 꺼짐)에서 화면 평균 밝기가 거의 0이라 검출이 될 수 없었다."""
+        try:
+            d = json.load(urllib.request.urlopen(api + '/api/detect', timeout=2))
+        except Exception:
+            return False, '카메라 응답 없음'
+        b = d.get('brightness')
+        if b is not None and b < min_brightness:
+            return False, f'어두움(밝기 {b:.0f})'
+        return True, ''
+    check.ready = ready
     return check
 
 
