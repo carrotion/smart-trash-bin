@@ -330,6 +330,7 @@ class StepNavigator:
         self.floor_check = getattr(self, 'floor_check', None); self._looked = set()
         t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0; stages = 0; goal_moved = None
         self.path_remaining = None; self.path_pose = None
+        self.current_path = []; self.current_goal = None
         # 금지 구역 정보를 아직 못 받았으면 잠깐 기다리고, 끝내 없으면 움직이지 않는다.
         #   ⚠️ 10-10 Stage: 주행기 서버가 뜨자마자 온 첫 목표가 구역 안이었는데, 구역 목록이 아직 안 도착해 '구역 없음'으로 출발 판단
         #   (planner가 경로를 안 내 줘 움직이진 않았다). 안전 기능은 "모르면 없는 셈"이 아니라 "모르면 멈춤"이어야 한다
@@ -449,6 +450,11 @@ class StepNavigator:
             i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
             self.path_remaining = sum(math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) for i in range(i0, len(path) - 1))
             self.path_pose = (here[0], here[1])
+            self.current_path = [(round(q[0], 2), round(q[1], 2)) for q in path]
+            self.current_goal = (round(goal[0], 2), round(goal[1], 2))
+            if getattr(self, 'on_path', None):
+                try: self.on_path(self.current_path, self.current_goal)
+                except Exception: pass
             # 지금까지 본 것보다 긴 경로가 나왔을 때만 늘린다. ⚠️ 첫 구현: 재계획마다 늘려 제자리걸음 2 m 목표가 600초까지 갔다(가상 시험에서 잡음)
             if self.path_remaining > longest:
                 longest = self.path_remaining

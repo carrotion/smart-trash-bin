@@ -12,7 +12,8 @@ frontier_exploration_ros2는 목표를 `navigate_to_pose_action_name` 액션으�
 따로 스레드에서 돌고, 받은 목표를 주 스레드에 넘겨 한 번에 하나씩 실행한다. 실행 중에 온 새 목표는 거절한다.
 목표의 도착 방향은 쓰지 않는다(탐색 목표는 위치만 의미가 있고, 방향을 맞추면 큰 회전이 한 번 더 든다).
 """
-import argparse, json, math, os, queue, sys, threading, time
+import argparse
+import json, math, os, queue, sys, threading, time
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -68,7 +69,21 @@ def main():
     n = rclpy.create_node('step_navigator', parameter_overrides=sim)
     nav = StepNavigator(n, cmd_topic=a.cmd_topic, odom_topic=a.odom_topic, gyro_from_odom=a.gyro_from_odom, step_m=a.step)
     import floor_watch
-    nav.floor_check = floor_watch.make_check(step_m=a.step)   # 좁은 곳 앞에서 후진해 바닥 확인(카메라 없으면 None → 동작 안 함)
+    nav.floor_check = floor_watch.make_check()   # 좁은 곳 앞에서 후진해 바닥 확인(카메라 없으면 None → 동작 안 함)
+    # 지금 계획된 경로를 파일로 남긴다 — 서버 연결(tools/server_link.py)이 읽어 주행 AR로 보낸다(11-25)
+    import json as _json
+    _path_file = os.path.expanduser('~/.local/state/smart-trash-bin/path.json')
+
+    def _write_path(path, goal):
+        try:
+            os.makedirs(os.path.dirname(_path_file), exist_ok=True)
+            tmp = _path_file + '.tmp'
+            _json.dump({'t': time.time(), 'goal': list(goal) if goal else None,
+                        'path': [[round(p[0], 2), round(p[1], 2)] for p in path][::5][:60]}, open(tmp, 'w'))
+            os.replace(tmp, _path_file)
+        except Exception:
+            pass
+    nav.on_path = _write_path
     srv_node = rclpy.create_node('step_nav_action_server', parameter_overrides=sim)
     try:
         from frontier_exploration_ros2.srv import ControlExploration

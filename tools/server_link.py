@@ -38,7 +38,10 @@ NOT_FOUND_BACKOFF_S = 60.0   # 받는 곳이 아직 없으면(404) 그만큼 쉰
 SAVED_DIR = os.path.expanduser('~/maps')
 SAVED_SCAN_S = 30.0          # 저장 지도 폴더를 살피는 주기
 ACTIVE_PLACES = os.path.expanduser('~/maps/active_places.json')   # 새 지도를 그릴 때 옮겨 둔 장소(tools/carry_places.py)
+LX = 0.054                # base_link → base_laser (tf_static)
 SEEN_S = 2.0              # 사람이 보이는 동안 얼굴 부분을 올리는 간격(규약 3.8)
+SCENE_S = 1.0            # 주행 AR용 장면(자세·경로·라이다 점·검출)을 올리는 간격(2026-11-25)
+PATH_FILE = os.path.expanduser('~/.local/state/smart-trash-bin/path.json')
 CAMERA_API = 'http://127.0.0.1:8767'
 COMMANDS = {
     'get_status': {'args': {}, 'rejects': []},
@@ -122,6 +125,7 @@ class Link:
         self.mission_proc = None
         self.mission_timeout_s = 600.0        # 미션 하나의 상한(주행기 자체 상한과 별개로 여기서도 끊는다)
         self.status_battery = None            # 마지막으로 본 배터리(단계로 go_to를 거절할 때 쓴다)
+        self.last_mode = None
         self.navigator_present = None          # 시험에서 주행기 서버 유무를 정해 준다(실제로는 killproc로 본다)
         self.home = self._read_home()
 
@@ -200,6 +204,7 @@ class Link:
         try:
             body.update(self.status_source())
             self.status_battery = body.get('battery')
+            self.last_mode = body.get('mode')
         except Exception as e:                       # 상태 읽기가 실패해도 보내기는 계속한다
             body['source_error'] = type(e).__name__
         if 'link_wifi_dbm' in body:
@@ -469,6 +474,39 @@ class Link:
                 print(f'seen 실패: {type(e).__name__} {e}', flush=True)
             self.stop.wait(SEEN_S)
 
+    # ---- 주행 AR용 장면(규약 3.10 초안, 2026-11-25): 자세·경로·라이다 점·검출을 지도 좌표로 1초에 한 번
+    def scene_body(self):
+        p = self.geo.pose() if self.geo else None
+        if not p:
+            return None
+        body = {'map_id': p.get('map_id'), 'mode': self.last_mode, 'pose': {k: p[k] for k in ('x', 'y', 'yaw_deg')},
+                'goal': None, 'path': [], 'scan': [], 'dets': []}
+        try:
+            d = json.load(open(PATH_FILE))
+            if time.time() - d.get('t', 0) < 5.0:      # 5초 안에 계획된 것만(오래된 경로는 안 보낸다)
+                body['goal'] = d.get('goal'); body['path'] = d.get('path') or []
+        except Exception:
+            pass
+        if self.geo.scan_points is not None:
+            body['scan'] = self.geo.scan_points()
+        try:
+            body['dets'] = self.geo.dets_map() or []
+        except Exception:
+            body['dets'] = []
+        return body
+
+    def scene_loop(self):
+        while not self.stop.is_set():
+            try:
+                b = self.scene_body()
+                if b:
+                    code = self._post_live('scene', b)
+                    if code not in (200, 'backoff'):
+                        print(f'장면 올리기 응답 {code}', flush=True)
+            except Exception as e:
+                print(f'장면 실패: {type(e).__name__} {e}', flush=True)
+            self.stop.wait(SCENE_S)
+
     # ---- 돌리기
     def status_loop(self):
         while not self.stop.is_set():
@@ -491,6 +529,8 @@ class Link:
         loops = [self.status_loop, self.poll_loop] + ([self.map_loop, self.pose_loop] if self.geo else [])
         if self.seen_source:
             loops.append(self.seen_loop)
+        if self.geo:
+            loops.append(self.scene_loop)
         threads = [threading.Thread(target=f, daemon=True) for f in loops]
         for t in threads:
             t.start()
@@ -504,16 +544,18 @@ class RobotState:
     def __init__(self, on_battery_stage=None):
         self.on_battery_stage = on_battery_stage; self.stage = None; self.tf = None; self.node = None; self.spin = None
         self.boot = open('/proc/sys/kernel/random/boot_id').read().strip()[:8]
-        self.map_msg = None; self.map_t = 0.0; self.session = 0; self.odom = (0.0, 0.0, 0.0)   # (v, w, 받은 시각)
+        self.map_msg = None; self.map_t = 0.0; self.scan_msg = None; self.session = 0; self.odom = (0.0, 0.0, 0.0)   # (v, w, 받은 시각)
         try:
             import rclpy, tf2_ros
             from rclpy.signals import SignalHandlerOptions
-            from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
+            from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, qos_profile_sensor_data
             from nav_msgs.msg import OccupancyGrid, Odometry
             rclpy.init(signal_handler_options=SignalHandlerOptions.NO); self.node = rclpy.create_node('server_link')
             self.tf = tf2_ros.Buffer(); tf2_ros.TransformListener(self.tf, self.node)
             self.node.create_subscription(OccupancyGrid, '/map', self._on_map, QoSProfile(
                 depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
+            from sensor_msgs.msg import LaserScan
+            self.node.create_subscription(LaserScan, '/scan', lambda m: setattr(self, 'scan_msg', m), qos_profile_sensor_data)
             self.node.create_subscription(Odometry, '/odometry/filtered', self._on_odom, 10)
             self.spin = threading.Thread(target=rclpy.spin, args=(self.node,), daemon=True); self.spin.start()
         except Exception as e:
@@ -562,6 +604,52 @@ class RobotState:
         o = m.info.origin.position
         return {'map_id': self.map_id, 'kind': 'live', 'resolution': round(m.info.resolution, 4),
                 'origin': [round(o.x, 4), round(o.y, 4), 0.0], 'width': w, 'height': h, 'png': png.tobytes()} if ok else None
+
+    def scan_points(self, every=3, max_m=12.0, limit=150):
+        """라이다 점을 지도 좌표로(스캔 1장, every칸마다, 최대 limit점). 주행 AR이 바닥에 그린다."""
+        import math
+        if not self.scan_msg or not self.map_ok():
+            return []
+        try:
+            m = self.scan_msg; p = self.pose()
+            x0, y0, th = p['x'], p['y'], math.radians(p['yaw_deg'])
+            c, s = math.cos(th), math.sin(th); out = []
+            for i in range(0, len(m.ranges), every):
+                r = m.ranges[i]
+                if not (m.range_min <= r <= min(m.range_max, max_m)):
+                    continue
+                a = m.angle_min + i * m.angle_increment
+                lx, ly = LX + r * math.cos(a), r * math.sin(a)          # 라이다 기준 → base_link
+                out.append([round(x0 + c * lx - s * ly, 2), round(y0 + s * lx + c * ly, 2)])
+            return out[:limit]
+        except Exception:
+            return []
+
+    def dets_map(self, api=CAMERA_API, min_score=0.45):
+        """카메라 검출을 지도 좌표로. 거리는 바닥 환산식(줄→거리), 옆은 화면 중심 기준."""
+        import math
+        p = self.pose()
+        if not p:
+            return []
+        try:
+            import camera_detect
+            d = json.load(urllib.request.urlopen(api + '/api/detect', timeout=1.5))
+            if d.get('age_s', 9) > 3:
+                return []
+            th = math.radians(p['yaw_deg']); c, s = math.cos(th), math.sin(th); out = []
+            half = math.tan(math.radians(25.0))                        # C270 가로 화각 50°의 절반
+            for q in d.get('dets', []):
+                if q.get('score', 0) < min_score:
+                    continue
+                dist = camera_detect.row_to_distance(q['y2'])
+                if dist is None or dist > 4.0:
+                    continue
+                lateral = ((q['x1'] + q['x2']) / 2 - 320) / 320 * half * dist
+                out.append({'name': q.get('name'), 'score': round(q.get('score'), 2), 'dist_m': round(dist, 2),
+                            'x': round(p['x'] + c * dist - s * lateral, 2), 'y': round(p['y'] + s * dist + c * lateral, 2)})
+            return out
+        except Exception:
+            return []
 
     def moving(self):
         v, w, t = self.odom

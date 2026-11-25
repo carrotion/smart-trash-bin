@@ -253,6 +253,28 @@ def main():
           and seen[0]['camera'] == 'logitech_c270', (r1, r2, seen[:1]))
     f8.close()
 
+    # ㉑ scene: 자세·경로·라이다 점·검출을 지도 좌표로 1회분 만든다(없는 것은 빈 배열)
+    class Geo5(Geo2):
+        map_id = 'mymap'
+        scan_msg = None
+        def scan_points(self):
+            return [[1.0, 2.0], [1.1, 2.1]]
+        def dets_map(self):
+            return [{'name': 'person', 'score': 0.8, 'dist_m': 1.2, 'x': 9.0, 'y': 9.5}]
+        def pose(self):
+            return {'map_id': 'mymap', 'x': 4.14, 'y': 2.72, 'yaw_deg': -41.8, 'age_ms': 30}
+    pf = os.path.join(tempfile.mkdtemp(), 'path.json')
+    json.dump({'t': time.time(), 'goal': [2.04, 4.73], 'path': [[4.14, 2.72], [3.9, 3.1]]}, open(pf, 'w'))
+    server_link.PATH_FILE = pf
+    L13 = mk(f7.url, geo_source=Geo5()); L13.last_mode = 'mission'
+    b = L13.scene_body()
+    check('㉑ scene: 자세·경로·라이다 점·검출을 한 몸으로 만든다', b and b['map_id'] == 'mymap' and b['mode'] == 'mission'
+          and b['pose']['x'] == 4.14 and b['goal'] == [2.04, 4.73] and b['path'] == [[4.14, 2.72], [3.9, 3.1]]
+          and b['scan'] == [[1.0, 2.0], [1.1, 2.1]] and b['dets'][0]['name'] == 'person', (b,))
+    json.dump({'t': time.time() - 60, 'goal': [2.04, 4.73], 'path': [[4.14, 2.72]]}, open(pf, 'w'))   # 파일 안의 계획 시각을 60초 전으로
+    b2 = L13.scene_body()
+    check('㉑ 오래된 경로(5초 넘음)는 싣지 않는다', b2['path'] == [] and b2['goal'] is None, b2['path'])
+
     print('합격' if not fails else f'불합격 {len(fails)}건: {fails}')
     return 1 if fails else 0
 
