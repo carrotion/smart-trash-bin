@@ -53,7 +53,10 @@ class StepNavigator:
     # 앞 여유가 걸음 + clear_margin에 모자라면 포기하지 않고 여유가 허락하는 만큼(room − clear_margin)으로 줄여 간다.
     #   그 길이가 min_step 미만이면 막힘. 클래스 기본값인 이유는 위 cancel과 같다(가상 시험은 __init__을 건너뜀)
     min_step = 0.10
-    clear_margin_m = 0.25      # 걸음 뒤 차체 앞끝과 장애물 사이에 남길 거리(m). 생성 인자로도 바꿀 수 있다 — 시뮬 비교는 --set clear_margin_m=…
+    # 걸음 뒤 차체 앞끝과 장애물 사이에 남길 거리(m). 0.25 → 0.15(11-27 사용자 승인, 드레스룸에서 "너무 과하게 잡았다").
+    #   근거: 멈출 때 밀림 최대 4.2 cm + 라이다 오차 약 1 cm + 충돌 감시 정지 구역(앞끝에서 9 cm) ≈ 14 cm. 0.12는 밀림 뒤 8 cm라 감시가 걸린다.
+    #   시뮬(11-25): 무작위 60건 0.25/0.15 모두 도착 100%·충돌 0, 의자 통로 20건 막힘 19 → 15. 비교는 --set clear_margin_m=…
+    clear_margin_m = 0.15
     #   원시 스캔(최근 몇 장, 자기 필터 전). None이면 바로 옆 미확인 물체 검사를 건너뜀(시뮬·가상 시험엔 /scan_raw가 없다)
     _raw = None
     #   가장 최근 경로의 남은 길이(m)와 그때 위치 — 액션 서버가 feedback(distance_remaining)을 만들 때 읽는다
@@ -113,14 +116,15 @@ class StepNavigator:
     step_open_m = 0.5
     open_side_m = 0.40   # 지도 시험(11-22): 0.25면 의자 통로 75%·무작위 98%로 나빠짐, 0.40이면 옛 설정과 같음(85%·100%)에 걸음 13.2→12.5
     open_quiet_steps = 2
-    # 카메라로 바닥을 확인하는 동작(11-22 사용자 판단 "필요하면 후진해서 장애물을 봐도 되고, 이동을 할 수 있으니까"):
-    #   카메라가 볼 수 있는 가장 가까운 바닥이 0.72 m라 바로 앞 낮은 물체는 화면에 안 들어온다. 그래서 좁은 곳에 들어가기 전에
-    #   look_back_m만큼 후진해 그 바닥을 화면에 담고 확인한 뒤 들어간다. floor_check는 (거리 m, 옆 m, 이름) 목록을 돌려주는 함수다
-    #   (없으면 이 동작을 하지 않는다). 후진은 이미 있는 ②'(drive_distance 뒤로)를 그대로 쓴다
-    look_back_m = 0.6
-    look_range_m = 1.2
+    # 카메라로 좁은 틈의 바닥을 미리 본다(11-27, 11-22 사용자 판단 "필요하면 움직여서 보면 된다"의 바뀐 방법).
+    #   카메라가 볼 수 있는 가장 가까운 바닥이 0.72 m라, 틈에 들어가기 **전에** 틈이 0.75~1.3 m 앞일 때 멈춘 김에 한 번 본다.
+    #   ⚠️ 11-25 드레스룸: 처음엔 '앞이 막혔을 때 후진해서 보기'로 짰다 — 라이다가 이미 막혔다고 보는 곳은 어차피 안 가니 볼 이유가 없었고,
+    #   뒤도 0.20 m라 물러나지도 못했다. 이제 라이다에는 비어 보이는 좁은 틈(양옆이 막힌 곳)만 보고, 후진은 하지 않는다.
+    #   floor_check는 (거리 m, 옆 m, 이름) 목록을 돌려주는 함수다(없으면 이 동작을 하지 않는다)
+    look_min_m = 0.75
+    look_max_m = 1.3
     look_side_m = 0.35
-    look_every = 3
+    look_gap_max = 0.60     # 이보다 넓은 틈은 좁은 곳으로 보지 않는다
     gap_narrow = 0.24
     gap_stage_m = 0.40
     #   회전 전 반경 검사에 더하는 여유: 실제 회전 중심은 base_link와 다르다(09-27 큰 회전 뒤 앞뒤로 3.7~10.3 cm 밀림, 부호도 바뀜 → 2~5 cm).
@@ -326,10 +330,12 @@ class StepNavigator:
             else:
                 calm = None
 
-    def go(self, goal, max_steps=120, timeout=180.0):
-        """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg)."""
+    def go(self, goal, max_steps=120, timeout=180.0, area_m=None):
+        """goal=(x, y, yaw 또는 None) map 좌표. 반환 dict(ok, msg, steps, secs, final_err_m, final_yaw_err_deg).
+        area_m: 장소(방 이름) 목표일 때 그 반경(m). 앞이 막혀 더 못 가도 장소 점에서 area_m 안이면 도착으로 본다(11-27 사용자 승인 —
+        11-25 드레스룸에서 이미 방 안 27 cm 앞이었는데 실패로 끝났다). 좌표 목표(None)는 지금처럼 2×xy_tol(10 cm)까지만."""
         self._nu_step = -99; self.open_steps = 0
-        self.floor_check = getattr(self, 'floor_check', None); self._looked = []   # 후진 확인을 해 본 자리(지도 좌표)
+        self.floor_check = getattr(self, 'floor_check', None); self._looked = []   # 카메라로 미리 본 틈(지도 좌표)
         t0 = time.time(); blocked = 0; final_fix = 0; near_turns = 0; arrive_tol = self.xy_tol; retreats = 0; flips = 0; longest = 0.0; backouts = 0; stages = 0; goal_moved = None
         self.path_remaining = None; self.path_pose = None
         self.current_path = []; self.current_goal = None
@@ -409,7 +415,8 @@ class StepNavigator:
                             final_fix += 1
                             if self._straight(step, along, 'final_fix'):
                                 continue
-                return self._done(True, ('도착' if arrive_tol == self.xy_tol else '도착(근접 허용)') + (f'(목표를 {goal_moved:.1f} m 옮김)' if goal_moved else ''), step, t0, goal)
+                kind = '도착' if arrive_tol == self.xy_tol else ('도착(근접 허용)' if arrive_tol <= 2 * self.xy_tol + 0.006 else f'도착(장소 안, 점에서 {dist * 100:.0f} cm — 앞이 막혀 더 못 감)')
+                return self._done(True, kind + (f'(목표를 {goal_moved:.1f} m 옮김)' if goal_moved else ''), step, t0, goal)
             path, why = self.plan(here, goal)
             if path is None:
                 # ⚠️ 10-10 Stage: 로봇이 문 A 안(문설주에서 0.15 m)에 섰을 때 "빈 경로" → 그 자리에서 이후 목표 35개가 전부 실패,
@@ -536,15 +543,14 @@ class StepNavigator:
                 #   (탐색기가 같은 목표를 계속 다시 보냄, 지도 300초 뒤 정지). 걸음을 줄이면 그 걸음은 안전하다(여유 0.25 유지)
                 seg = room - self.clear_margin - 0.01
                 self._note(step, 'shorten', dict(room=round(room, 2), seg=round(seg, 3)), None)
-            if room < seg + self.clear_margin and dist <= 2 * self.xy_tol and arrive_tol == self.xy_tol:
+            near_r = max(2 * self.xy_tol, area_m or 0.0)
+            if room < seg + self.clear_margin and dist <= near_r and arrive_tol == self.xy_tol:
                 # ⚠️ 10-10 지도 가상 시험 무작위 40쌍: 실패 2건이 모두 목표 9 cm 앞(합격 기준 10 cm 안)에서 "앞 여유 0.26 m"로
                 #   3번 막혀 실패 보고 — 목표가 벽 가까이라 마지막 9 cm가 "간 뒤 0.25 m 남기기"에 걸림. 안전 여유를 줄여
                 #   벽으로 밀어 넣지 않고, 이미 2×xy_tol(10 cm) 안이면 도착으로 인정(방향 지정이 있으면 위에서 마지막 회전)
-                arrive_tol = 2 * self.xy_tol
-                self._note(step, 'near_accept', dict(dist=round(dist, 3), room=round(room, 2)), None)
+                arrive_tol = max(2 * self.xy_tol, dist + 0.005)
+                self._note(step, 'near_accept', dict(dist=round(dist, 3), room=round(room, 2), area=area_m), None)
                 continue
-            if room < seg + self.clear_margin and self._look_floor(step, path, here):
-                return self._done(False, self._look_msg, step, t0, goal)
             if room < seg + self.clear_margin and stages < 2 and self._gap_stage(step, path, here):
                 stages += 1; blocked = 0; continue
             if room < seg + self.clear_margin:
@@ -554,6 +560,8 @@ class StepNavigator:
                 if blocked >= self.blocked_max:
                     return self._done(False, f'앞 여유 부족 {blocked}회({room:.2f} m)', step, t0, goal)
                 self.spin(1.0); continue
+            if self._look_ahead(step, path, here):
+                return self._done(False, self._look_msg, step, t0, goal)
             self._set_speed(stp > self.step_m)
             r = self.driver.drive_by(seg); self._note(step, 'drive', round(seg, 3), dict(r, v_max=self.driver.v_max))
             self.last_fwd = seg if r['ok'] else 0.0
@@ -592,68 +600,27 @@ class StepNavigator:
                 return self.step_m
         return self.step_open_m
 
-    def _look_floor(self, step, path, here):
-        """좁은 곳에 들어가기 전에 후진해 바닥을 카메라로 확인한다. 물체가 있으면 True(부르는 쪽이 멈춘다).
-        ⚠️ 카메라 검출은 COCO 80종만 안다 — 슬리퍼·옷은 못 알아본다. 지금은 아는 물체(병·의자·가방 등)만 잡고,
-        모르는 것은 3D 카메라나 따로 학습한 모델이 필요하다(설계 docs/agent_architecture.md)."""
-        self._look_msg = ''
-        if not self.floor_check:
-            return False
-        # ⚠️ 11-25 드레스룸 실물: 막힌 자리에서 걸음마다 다시 시도해 같은 후진 실패를 3번 했다 → 0.5 m 안에서 한 번만
-        if any(math.hypot(here[0] - q[0], here[1] - q[1]) < 0.5 for q in self._looked):
-            return False
-        self._looked.append((here[0], here[1]))
-        back = min(self.look_back_m, 1.0)
-        self._note(step, 'look_back_try', dict(back=round(back, 2), room=round(corridor_clearance(self._scan(), True, 0.0, self.side_margin), 2)), None)
-        wake = getattr(self.floor_check, 'wake', None)
-        if wake is not None:
-            wake()                                             # 카메라는 평소 꺼져 있다 — 물러나는 동안 켠다(11-25)
-        if not self._straight(step, -back, 'look_back', margin=0.05):
-            return False                                   # 뒤가 막혀 있으면 그냥 진행(확인은 못 했지만 멈추지 않는다)
-        self.settle(); time.sleep(0.4)                      # 카메라가 한 장 받을 시간
-        # 밝기는 **물러난 뒤에** 본다 — 11-25 드레스룸: 장 문에 0.43 m까지 붙어 벽만 보여 어두웠다(사용자 확인).
-        #   물러나면 오히려 보이는 경우라, 앞에서 보고 포기하면 안 된다. 물러났는데도 어두우면 그때 "못 봄"으로 남기고 진행한다
-        ready = getattr(self.floor_check, 'ready', None)
-        if ready is not None:
-            ok, why = ready()
-            if not ok:
-                self._note(step, 'look_back_skip', dict(why=why), None)
-                return False
-        try:
-            hits = self.floor_check() or []
-        except Exception:
-            return False
-        near = [(d, o, n) for d, o, n in hits if d <= self.look_range_m and abs(o) <= self.look_side_m]
-        self._note(step, 'look_back', dict(hits=[(round(d, 2), round(o, 2), n) for d, o, n in near[:4]]), None)
-        if near:
-            d, o, n = min(near)
-            self._look_msg = f'바닥에 물체({n}) {d:.1f} m — 후진해 확인함'
-            return True
-        return False                                       # 확인했고 비었으면 그대로 들어간다
-
-    def _gap_stage(self, step, path, here, lidar_x=0.054):
-        """경로 앞 1.2 m 안에서 양옆이 다 막힌 가장 좁은 틈을 지금 스캔으로 찾아, 그 틈 가운데 선의 gap_stage_m 앞으로 가서
-        틈 방향으로 선다. 너무 가까우면 먼저 곧게 물러선다. 움직였으면 True.
-        ⚠️ 첫 구현(11-07 지도 시험): ① 경로는 틈 가운데로 나지 않는다(좁은 곳에서 경로-다리 1.7 cm) → 양옆 장애물로 가운데를 잡는다
-        ② 한쪽만 막힌 곳(막이 벽 모서리)도 좁은 곳으로 잡아 폭 4.6 cm로 포기 → 양쪽이 다 막힌 곳만 틈으로 본다
-        ③ 물러서기만 하고 끝내 정렬 기회를 썼다 → 물러선 뒤 같은 동작 안에서 정렬까지 한다"""
+    def _find_gap(self, path, here, max_ahead=1.2, lidar_x=0.054):
+        """경로 앞 max_ahead m 안에서 양옆이 다 막힌 가장 좁은 곳 (폭, 경로 점 번호, 경로 거리, 경로 방향, 왼쪽 점, 오른쪽 점). 없으면 None.
+        _gap_stage(정렬)와 _look_ahead(카메라 미리 보기)가 함께 쓴다."""
         m = self._scan()
         if m is None or len(path) < 3:
-            return False
+            return None
         c, s = math.cos(here[2]), math.sin(here[2]); pts = []
         for i, r in enumerate(m.ranges):
             if m.range_min <= r <= min(m.range_max, 2.0):
                 a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
                 if not (abs(x) <= 0.11 and abs(y) <= 0.11):
                     pts.append((here[0] + c * x - s * y, here[1] + s * x + c * y))
+        self._gap_pts = pts                                    # _gap_stage가 틈이 끝나는 곳을 찾을 때 쓴다(지도 좌표)
         if not pts:
-            return False
+            return None
         i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
         acc, best = 0.0, None
         for i in range(i0, len(path)):
             if i > i0:
                 acc += math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1])
-            if acc > 1.2:
+            if acc > max_ahead:
                 break
             a0, a1 = path[max(i - 3, 0)], path[min(i + 3, len(path) - 1)]
             t = math.atan2(a1[1] - a0[1], a1[0] - a0[0]); tx, ty, nx, ny = math.cos(t), math.sin(t), -math.sin(t), math.cos(t)
@@ -670,6 +637,54 @@ class StepNavigator:
                 w = math.hypot(L[1] - R[1], L[2] - R[2])       # 양옆 장애물 점 사이 실제 거리
                 if w < 0.50 and (best is None or w < best[0]):
                     best = (w, i, acc, t, L, R)
+        return best
+
+    def _look_ahead(self, step, path, here):
+        """좁은 틈이 0.75~1.3 m 앞이면(라이다에는 비어 보임) 멈춘 김에 카메라로 그 바닥을 본다. 아는 물체가 틈 쪽에 있으면 True.
+        같은 틈은 한 번만(0.5 m 안에서 다시 보지 않음). 화면이 어두우면 판단하지 않고 진행한다.
+        ⚠️ 카메라 검출은 COCO 80종만 안다 — 슬리퍼·옷은 못 알아본다(설계 docs/agent_architecture.md)."""
+        self._look_msg = ''
+        if not self.floor_check:
+            return False
+        g = self._find_gap(path, here, max_ahead=self.look_max_m)
+        if g is None:
+            return False
+        width, n, an, t, L, R = g
+        if an < self.look_min_m or width < 2 * 0.11 + 0.06 or width > self.look_gap_max:
+            return False                                       # 너무 가깝거나(카메라에 안 보임), 막혔거나, 좁은 곳이 아님
+        cx0, cy0 = (L[1] + R[1]) / 2, (L[2] + R[2]) / 2
+        if any(math.hypot(cx0 - q[0], cy0 - q[1]) < 0.5 for q in self._looked):
+            return False
+        self._looked.append((cx0, cy0))
+        self._note(step, 'look_ahead_try', dict(width=round(width, 3), at=round(an, 2), center=(round(cx0, 2), round(cy0, 2))), None)
+        wake = getattr(self.floor_check, 'wake', None)
+        if wake is not None:
+            wake()                                             # 카메라는 평소 꺼져 있다 — 켜는 데 3~4초
+        ready = getattr(self.floor_check, 'ready', None)
+        if ready is not None:
+            ok, why = ready()
+            if not ok:
+                self._note(step, 'look_ahead_skip', dict(why=why), None)
+                return False
+        try:
+            hits = self.floor_check() or []
+        except Exception:
+            return False
+        near = [(d, o, nm) for d, o, nm in hits if d <= an + 0.30 and abs(o) <= self.look_side_m]
+        self._note(step, 'look_ahead', dict(hits=[(round(d, 2), round(o, 2), nm) for d, o, nm in near[:4]]), None)
+        if near:
+            d, o, nm = min(near)
+            self._look_msg = f'좁은 틈 바닥에 물체({nm}) {d:.1f} m — 들어가기 전에 카메라로 확인함'
+            return True
+        return False
+
+    def _gap_stage(self, step, path, here, lidar_x=0.054):
+        """경로 앞 1.2 m 안에서 양옆이 다 막힌 가장 좁은 틈을 지금 스캔으로 찾아, 그 틈 가운데 선의 gap_stage_m 앞으로 가서
+        틈 방향으로 선다. 너무 가까우면 먼저 곧게 물러선다. 움직였으면 True.
+        ⚠️ 첫 구현(11-07 지도 시험): ① 경로는 틈 가운데로 나지 않는다(좁은 곳에서 경로-다리 1.7 cm) → 양옆 장애물로 가운데를 잡는다
+        ② 한쪽만 막힌 곳(막이 벽 모서리)도 좁은 곳으로 잡아 폭 4.6 cm로 포기 → 양쪽이 다 막힌 곳만 틈으로 본다
+        ③ 물러서기만 하고 끝내 정렬 기회를 썼다 → 물러선 뒤 같은 동작 안에서 정렬까지 한다"""
+        best = self._find_gap(path, here, lidar_x=lidar_x); pts = getattr(self, '_gap_pts', [])
         if best is None:
             return False
         width, n, an, t, L, R = best

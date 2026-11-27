@@ -220,13 +220,13 @@ def main():
     class Geo3(Geo2):
         map_id = 'mymap'
     f7 = Fake(); calls2 = []
-    L8 = mk(f7.url, geo_source=Geo3(), mission=lambda x, y, l: (calls2.append((round(x, 2), round(y, 2))), subprocess.Popen([sys.executable, '-c', 'pass']))[1])
+    L8 = mk(f7.url, geo_source=Geo3(), mission=lambda x, y, l, area=None: (calls2.append((round(x, 2), round(y, 2), area)), subprocess.Popen([sys.executable, '-c', 'pass']))[1])
     L8.navigator_present = True; L8.hello()
     pl = f7.kinds('hello')[-1]['places']
     r = L8.handle({'id': 'p1', 'type': 'go_to', 'args': {'place': '주방'}, 'ttl_s': 30})
     r2 = L8.handle({'id': 'p2', 'type': 'go_to', 'args': {'place': '없는방'}, 'ttl_s': 30})
     check('⑰ hello에 장소 목록, go_to는 이름으로 좌표를 찾고 모르는 이름은 invalid', pl == ['거실', '주방'] and r == 'done'
-          and calls2 == [(-1.71, 4.73)] and r2 == 'failed' and f7.kinds('ack')[-1]['result']['reason'] == 'invalid', (pl, r, calls2, r2))
+          and calls2 == [(-1.71, 4.73, 0.30)] and r2 == 'failed' and f7.kinds('ack')[-1]['result']['reason'] == 'invalid', (pl, r, calls2, r2))
     class Geo4(Geo2):
         map_id = 'live-abcd-01'
     server_link.ACTIVE_PLACES = os.path.join(d2, 'active_places.json')
@@ -234,7 +234,7 @@ def main():
     empty = L10.places()
     json.dump({'places': [{'name': '주방', 'x': 9.0, 'y': 9.0}]}, open(server_link.ACTIVE_PLACES, 'w'), ensure_ascii=False)
     check("⑱ live 지도면 옮겨 둔 active_places.json을 읽는다(없으면 빈 목록)", empty == [] and L10.places() == ['주방'])
-    L11 = mk(f7.url, geo_source=Geo3(), mission=lambda x, y, l: subprocess.Popen([sys.executable, '-c', 'raise SystemExit(1)']))
+    L11 = mk(f7.url, geo_source=Geo3(), mission=lambda x, y, l, area=None: subprocess.Popen([sys.executable, '-c', 'raise SystemExit(1)']))
     L11.navigator_present = True; L11.status_battery = {'stage': 'ok'}
     r = L11.handle({'id': 'f1', 'type': 'go_to', 'args': {'place': '주방'}, 'ttl_s': 30})
     check('⑲ 미션이 실패(종료 코드 1)면 done이 아니라 failed로 알린다', r == 'failed'

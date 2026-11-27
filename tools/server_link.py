@@ -40,6 +40,7 @@ SAVED_SCAN_S = 30.0          # 저장 지도 폴더를 살피는 주기
 ACTIVE_PLACES = os.path.expanduser('~/maps/active_places.json')   # 새 지도를 그릴 때 옮겨 둔 장소(tools/carry_places.py)
 LX = 0.054                # base_link → base_laser (tf_static)
 SEEN_S = 2.0              # 사람이 보이는 동안 얼굴 부분을 올리는 간격(규약 3.8)
+PLACE_AREA_M = 0.30      # 방 이름 목표: 앞이 막혀 더 못 가도 장소 점에서 이 안이면 도착(11-27 사용자 승인)
 SCENE_S = 1.0            # 주행 AR용 장면(자세·경로·라이다 점·검출)을 올리는 간격(2026-11-25)
 PATH_FILE = os.path.expanduser('~/.local/state/smart-trash-bin/path.json')
 CAMERA_API = 'http://127.0.0.1:8767'
@@ -292,12 +293,13 @@ class Link:
 
     def go(self, typ, args):
         """go_to·return_home: 주행기 도구(tools/mission_go.py)로 미션을 띄우고, 끝날 때까지 지켜본다."""
+        area = None
         if typ == 'go_to':
             if args.get('place'):
                 xy = self.place_xy(str(args['place']))
                 if xy is None:
                     return {'outcome': 'failed', 'ok': False, 'reason': 'invalid'}
-                x, y = xy
+                x, y = xy; area = PLACE_AREA_M
             else:
                 try:
                     x, y = float(args['x']), float(args['y'])
@@ -309,7 +311,7 @@ class Link:
         if why:
             return {'outcome': 'failed', 'ok': False, 'reason': why}
         label = '서버' + ('목표' if typ == 'go_to' else '출발점')
-        self.mission_proc = self.mission(x, y, label)
+        self.mission_proc = self.mission(x, y, label, area) if area else self.mission(x, y, label)
         if not self.mission_proc:
             return {'outcome': 'failed', 'ok': False, 'reason': 'no_stack'}
         ok, msg = self.wait_mission()
@@ -734,11 +736,13 @@ def main():
         except Exception:
             return None
 
-    def spawn_mission(x, y, label):
-        """주행기 도구로 미션 하나. 반환 pid가 끝나면 미션이 끝난 것이다(취소는 SIGINT — mission_go가 스스로 목표를 취소한다)."""
+    def spawn_mission(x, y, label, area=None):
+        """주행기 도구로 미션 하나. 반환 pid가 끝나면 미션이 끝난 것이다(취소는 SIGINT — mission_go가 스스로 목표를 취소한다).
+        area: 장소 목표의 반경(m) — mission_go의 셋째 값으로 넘긴다."""
         os.makedirs(STATE, exist_ok=True)
+        spec = f'{label}:{x:.2f},{y:.2f}' + (f',{area:.2f}' if area else '')
         p = subprocess.Popen([sys.executable, '-u', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mission_go.py'),
-                              f'{label}:{x:.2f},{y:.2f}'], stdout=open(os.path.join(STATE, 'mission.log'), 'ab'),
+                              spec], stdout=open(os.path.join(STATE, 'mission.log'), 'ab'),
                              stderr=subprocess.STDOUT)
         print(f'미션 띄움: {label} ({x:.2f}, {y:.2f}) pid {p.pid}', flush=True)
         return p

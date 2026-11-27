@@ -203,12 +203,14 @@ def main():
         # 6b. 앞 여유 0.55 m(병 표면이 통로 가장자리 0.66 m 앞) + 걸음 0.4 → 걸음을 줄여 간다(10-09 시뮬에서 31번 막혔던 상황)
         #     가짜 플래너는 직선이라 줄인 걸음 뒤에는 정말 막힌다 — 확인할 것: 줄인 걸음이 실행되고, 병 앞 0.24 m 안으로는 안 간다
         #     (병 중심 y −0.17: 표면이 통로 폭 ±0.16 안쪽에 확실히 걸리게 — −0.19는 가상 스캔 각도 양자화로 가장자리에 걸려 멀어지면 사라졌다)
-        w = bottle(0.693, -0.17)
+        #     (11-27) 앞 여유가 0.25 → 0.15로 바뀌어도 같은 상황(줄여야 하는 걸음)이 되게 병을 (0.25 − 앞 여유)만큼 당긴다
+        cm = type(make()[0]).clear_margin_m; sh = 0.25 - cm
+        w = bottle(0.693 - sh, -0.17)
         nav, P = make(world=w); r = nav.go((0.8, 0.0, None))
         kinds = [x['kind'] for x in nav.log]
         gap = min(math.hypot(wx - P['x'], wy - P['y']) for wx, wy in w)
         builtins.print = quiet
-        check('앞 여유 부족 → 걸음을 줄임', 'shorten' in kinds and 0.25 <= P['x'] <= 0.31 and not r['ok'] and gap > 0.36,
+        check('앞 여유 부족 → 걸음을 줄임', 'shorten' in kinds and 0.25 <= P['x'] <= 0.31 and not r['ok'] and gap > 0.36 - sh,
               f'{kinds[:4]}, 이동 {P["x"] * 100:.0f} cm, 병까지 중심 {gap * 100:.0f} cm, {r["msg"]}')
         builtins.print = lambda *a, **k: None
         # 5. 취소(액션 서버가 cancel을 세움) — 움직이지 않고 '취소'로 끝난다. ⚠️ 10-09: cancel을 __init__에서만 만들어
@@ -221,11 +223,11 @@ def main():
         # 11. 금지 구역(10-10, tools/keepout.py) — 구역 선은 가상의 벽: 실제 장애물이 하나도 없는 빈 곳에서 선만으로 멈춰야 한다
         import keepout
         box = lambda x0, y0, x1, y1, name='': dict(id=1, name=name, poly=[[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-        #  11a. 정면을 가로막은 구역(가짜 planner는 직선) → 선을 넘지 않고, 차체 앞끝이 선 앞 0.25 m(앞 여유)에서 멈춤
+        #  11a. 정면을 가로막은 구역(가짜 planner는 직선) → 선을 넘지 않고, 차체 앞끝이 선 앞 앞 여유(clear_margin_m)에서 멈춤
         nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); nav.set_zones([box(0.8, -1.0, 1.4, 1.0, '소파')])
         r = nav.go((2.0, 0.0, None)); front = P['x'] + 0.11
         builtins.print = quiet
-        check('금지 구역이 정면 → 선 앞에서 멈춤', not r['ok'] and 0.2 <= P['x'] and front <= 0.8 - 0.24, f'차체 앞끝 {front:.2f} m(선 0.80 m), {r["msg"]}')
+        check('금지 구역이 정면 → 선 앞에서 멈춤', not r['ok'] and 0.2 <= P['x'] and front <= 0.8 - (nav.clear_margin - 0.01), f'차체 앞끝 {front:.2f} m(선 0.80 m), {r["msg"]}')
         builtins.print = lambda *a, **k: None
         #  11b. 목표가 구역 안 → 움직이지 않고 이유를 알림
         nav, P = make(); nav.set_zones([box(0.8, -1.0, 1.4, 1.0, '소파')]); r = nav.go((1.0, 0.0, None))
@@ -417,33 +419,39 @@ def main():
               and len(boB) == 1 and rB['ok'] and not boC and '미확인' in rC['msg'] and not boD,
               f'A 후진 {[e["arg"] for e in boA]}, {rA["msg"][:16]} | B {rB["msg"]} | C 후진 {len(boC)}번, {rC["msg"][:16]} | D 후진 {len(boD)}번')
         builtins.print = lambda *a, **k: None
-        #  16c. 좁은 곳 앞에서 후진해 바닥 확인(11-22): 물체가 있으면 멈추고, 없으면 그대로 들어간다
-        def look(found, dark=False):
+        #  16c. 좁은 틈 앞에서 카메라로 미리 보기(11-27): 틈이 0.75~1.3 m 앞일 때 한 번 본다. 후진은 하지 않는다
+        #   틈 = 앞 1.0 m에 의자 다리 두 개(사이 40 cm). 라이다에는 틈이 비어 보인다
+        def look(found, dark=False, gap_x=1.0):
             nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[])
             calls = []
             def fc():
                 calls.append(1); return found
             fc.ready = (lambda: (False, '어두움(밝기 3)')) if dark else (lambda: (True, ''))
             nav.floor_check = fc
-            # 앞이 좁은 곳: 통로 양옆에 벽을 놓아 여유를 줄인다
-            nav.S.world = [(0.6, y / 100) for y in range(-40, 41, 5)] + [(0.6, -0.4 + y / 200) for y in range(0, 80)]
+            nav.S.world = [(gap_x + dx / 100, y / 100) for dx in range(0, 4) for y in list(range(20, 27)) + list(range(-26, -19))]
             r = nav.go((2.0, 0.0, None))
             kinds = [e['kind'] for e in nav.log]
             return r, kinds, calls, P
-        rA, kA, cA, PA = look([(0.8, 0.1, 'bottle')])
+        rA, kA, cA, PA = look([(1.0, 0.05, 'bottle')])
         rB, kB, cB, PB = look([])
+        rC, kC, cC, PC = look([(1.0, 0.05, 'bottle')], dark=True)
         builtins.print = quiet
-        # B는 확인 뒤에도 좁은 통로라 끝까지 못 갈 수 있다 — 여기서 볼 것은 "확인은 했고, 물체 때문에 멈추지는 않았다"이다
-        check('좁은 곳 앞 후진 확인: 물체가 있으면 그 이유로 멈추고, 없으면 확인만 하고 진행을 막지 않는다',
-              'look_back' in kA and rA['msg'].startswith('바닥에 물체')
-              and 'look_back' in kB and not rB['msg'].startswith('바닥에 물체'),
-              f'A: {rA["msg"][:24]} {kA[:6]} | B: {rB["msg"][:16]} {kB[:6]}')
-        rC, kC, cC, PC = look([(0.8, 0.1, 'bottle')], dark=True)
-        builtins.print = quiet
-        check('후진 확인은 같은 자리에서 한 번만, 물러난 뒤에도 어두우면 판단하지 않고 건너뛴다(11-25 드레스룸)',
-              kB.count('look_back_try') <= 1 and 'look_back_try' in kC and 'look_back_skip' in kC and not cC,
-              f'B 시도 {kB.count("look_back_try")}회 | C: {kC[:5]} 확인 호출 {len(cC)}')
-        builtins.print = lambda *a, **k: None
+        check('좁은 틈 앞 카메라 미리 보기: 틈 바닥에 물체가 있으면 들어가기 전에 멈추고, 없으면 그대로 지나간다(후진 없음)',
+              'look_ahead' in kA and rA['msg'].startswith('좁은 틈 바닥에 물체') and 'look_back' not in ' '.join(kA)
+              and 'look_ahead' in kB and rB['ok'] and kB.count('look_ahead_try') == 1,
+              f'A: {rA["msg"][:26]} {kA[:6]} | B: {rB["msg"][:16]} 시도 {kB.count("look_ahead_try")}회 {kB[:6]}')
+        check('어두우면 판단하지 않고 지나간다(물체가 있다고 해도 확인 함수를 부르지 않음)',
+              'look_ahead_skip' in kC and rC['ok'] and not cC, f'C: {rC["msg"][:16]} {kC[:6]} 확인 호출 {len(cC)}')
+        #  16d. 장소 목표는 앞이 막혀도 장소 점 30 cm 안이면 도착(11-27, 11-25 드레스룸: 장 문에서 18 cm인 점을 27 cm 앞두고 실패)
+        def place(area):
+            nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[])
+            nav.S.world = [(1.10, y / 100) for y in range(-40, 41, 2)]          # 목표(1.0, 0) 바로 뒤 10 cm에 벽(앞 여유 0.15로도 못 다가가는 자리)
+            r = nav.go((1.0, 0.0, None), area_m=area)
+            return r, math.hypot(1.0 - P['x'], P['y'])
+        rP, dP = place(0.30)
+        rQ, dQ = place(None)
+        check('장소 목표는 막혀도 30 cm 안이면 도착, 좌표 목표는 그대로 실패(벽에 밀어 넣지 않음)',
+              rP['ok'] and dP <= 0.30 and not rQ['ok'], f'장소: {rP["msg"][:30]} 남은 {dP * 100:.0f} cm | 좌표: {rQ["msg"][:20]}')
         builtins.print = lambda *a, **k: None
 
         #  16b. 상황별 걸음(11-22): 트였으면 step_open_m, 경로 옆에 장애물이 있으면 step_m, 라이다 바로 옆 물체 직후 두 단계는 step_m
