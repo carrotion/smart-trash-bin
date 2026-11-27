@@ -22,11 +22,16 @@ LX = 0.054
 WEDGES = ((48, 72), (164, 176), (182, 192), (232, 248), (288, 310))   # 자기 구조물이 차지하는 방향(기준 칸 ±4°, 도, 0=앞·90=왼쪽) — 11-07: 모서리 4곳만 지웠더니 60°(가운데)에서도 허상
 
 
+NEAR_WEDGES = ((20, 80, 0.096), (280, 340, 0.096))   # 11-27: 앞 기둥 반사가 번지는 방향, 라이다 9.6 cm 안쪽만(filter7·8)
+
+
 def wedges(r, ang):
-    """config/scan_self_filter.yaml의 쐐기와 같은 범위: 라이다에서 18 cm 안, 네 좁은 각도."""
+    """config/scan_self_filter.yaml의 쐐기와 같은 범위: 자기 구조물 방향은 라이다에서 18 cm 안, 앞 기둥 번짐 방향은 9.6 cm 안."""
     deg = np.degrees(ang) % 360; o = r.copy()
     for a, b in WEDGES:
         o[(deg >= a) & (deg <= b) & (r <= 0.18)] = np.nan
+    for a, b, rr in NEAR_WEDGES:
+        o[(deg >= a) & (deg <= b) & (r <= rr)] = np.nan
     return o
 
 
