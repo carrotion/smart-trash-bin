@@ -114,7 +114,18 @@ class StepNavigator:
     #   (지도 시험: 0.5 m 걸음이면 의자 다리 옆을 그냥 지나감). 그래서 앞으로 갈 구간 양옆이 트였고(차체 바깥 open_side_m 안에 스캔 점 없음)
     #   최근 open_quiet_steps 단계 안에 라이다 바로 옆 물체가 없었을 때만 step_open_m으로 늘린다
     step_open_m = 0.5
-    open_side_m = 0.40   # 지도 시험(11-22): 0.25면 의자 통로 75%·무작위 98%로 나빠짐, 0.40이면 옛 설정과 같음(85%·100%)에 걸음 13.2→12.5
+    # 트인 곳 긴 걸음(11-28 사용자 "앞 경로에 장애물이 없는데도 40 cm씩 이동 — 너무 느리고 배터리 소모도 많다").
+    #   11-28 하루 247걸음: 평균 0.37 m, 걸음마다 거리와 무관한 2.5 s + 사이 멈춤 0.7 s → 실제 평균 0.09 m/s.
+    #   트였을 때(위 open 조건) step_long_m부터 step_open_m까지 줄여 가며, 그 길이의 경로가 곧고(직선에서 step_straight_dev 안)
+    #   양옆이 트인 첫 길이를 쓴다. 곧음 조건: 걸음은 당근점까지 직선으로 가니 휜 경로에서 길면 모서리를 질러 간다.
+    #   step_long_m = step_open_m이면 예전과 같다
+    #   지도 시험(11-28, logs/long_step_20261128/): 무작위 60(seed 23) 직진 시간 어림 65.5 → 47.6 s(−27%), 도착 100%, 장애물 최소 9.8 → 8.7 cm.
+    #   의자 통로 40(seed 23) 도착 39 → 39·최소 5.0 → 5.0 cm, 20(seed 11) 16 → 17·4.9 → 4.9 cm(아래 좁은 틈 보호가 있을 때).
+    #   옆 0.40 그대로면 같은 무작위가 56.8 s(−13%)뿐이다 — 집 안에 양옆 40 cm가 트인 곳이 드물다
+    step_long_m = 1.5
+    step_straight_dev = 0.05
+    gap_guard_m = 0.8       # 긴 걸음 + 이 거리 안에 좁은 틈이 있으면 step_m(0이면 끔)
+    open_side_m = 0.30   # 11-22 지도 시험: 0.25면 의자 통로 75%·무작위 98%로 나빠짐(걸음 0.5만 있을 때). 11-28: 0.30 + 좁은 틈 보호(gap_guard_m)면 의자 통로가 0.40과 같다(위 step_long_m 주석)
     open_quiet_steps = 2
     # 카메라로 좁은 틈의 바닥을 미리 본다(11-27, 11-22 사용자 판단 "필요하면 움직여서 보면 된다"의 바뀐 방법).
     #   카메라가 볼 수 있는 가장 가까운 바닥이 0.72 m라, 틈에 들어가기 **전에** 틈이 0.75~1.3 m 앞일 때 멈춘 김에 한 번 본다.
@@ -445,7 +456,8 @@ class StepNavigator:
                 #   (NavFn·Smac 2D·Theta* 전부) 거기서 출발하는 경로를 못 낸다. 그 자리에 남으면 다음 목표들도 줄줄이 실패(35개 연속).
                 #   → 마지막으로 계획이 됐던 자리로 되돌아간다(방금 지나온 곳). 같은 목표에서 두 번 되돌아가면 포기 — 계획되는 자리에 남는다
                 self._note(step, 'plan_fail', why, None)
-                if self.last_good is not None and 0.03 < math.hypot(self.last_good[0] - here[0], self.last_good[1] - here[1]) <= 0.6 \
+                # 되돌아갈 거리 한도: 한 걸음 + 10 cm. ⚠️ 11-28: 0.6 고정이었더니 긴 걸음(1.41 m) 뒤엔 되돌아가지 못하고 계획 안 되는 자리에 갇혔다(가상 시험 10)
+                if self.last_good is not None and 0.03 < math.hypot(self.last_good[0] - here[0], self.last_good[1] - here[1]) <= max(0.6, getattr(self, 'step_long_m', 0.5) + 0.1) \
                         and self._retreat(step, here):
                     retreats += 1
                     if retreats >= 2:
@@ -574,31 +586,54 @@ class StepNavigator:
         return self._done(False, f'단계 {max_steps}회 초과', max_steps, t0, goal)
 
     def _step_len(self, step, path, here, lidar_x=0.054):
-        """이번 걸음 길이: 트인 곳이면 step_open_m, 아니면 step_m(위 설정 주석). 앞으로 갈 경로(step_open_m + 0.1 m) 위 점마다
-        지금 스캔의 장애물 점이 차체 반폭 + open_side_m 안에 있으면 트이지 않은 것으로 본다."""
+        """이번 걸음 길이: 트인 곳이면 step_long_m~step_open_m(곧고 트인 가장 긴 것), 아니면 step_m(위 설정 주석).
+        앞으로 갈 경로(걸음 + 0.1 m) 위 점마다 지금 스캔의 장애물 점이 차체 반폭 + open_side_m 안에 있으면 트이지 않은 것으로 본다."""
         if self.step_open_m <= self.step_m or step - getattr(self, '_nu_step', -99) < self.open_quiet_steps:
             return self.step_m
         m = self._scan()
         if m is None or len(path) < 2:
             return self.step_m
+        longest = max(self.step_open_m, getattr(self, 'step_long_m', self.step_open_m))
         c, s = math.cos(here[2]), math.sin(here[2]); reach = 0.11 + self.open_side_m; pts = []
         for i, r in enumerate(m.ranges):
-            if m.range_min <= r <= min(m.range_max, self.step_open_m + reach + 0.3):
+            if m.range_min <= r <= min(m.range_max, longest + reach + 0.3):
                 a = m.angle_min + i * m.angle_increment; x, y = lidar_x + r * math.cos(a), r * math.sin(a)
                 if not (abs(x) <= 0.11 and abs(y) <= 0.11):
                     pts.append((here[0] + c * x - s * y, here[1] + s * x + c * y))
         i0 = min(range(len(path)), key=lambda i: math.hypot(path[i][0] - here[0], path[i][1] - here[1]))
-        acc, probe = 0.0, [(here[0], here[1])]
+        probe = [(0.0, (here[0], here[1]))]; acc = 0.0      # (경로 위 거리, 점)
         for i in range(i0, len(path)):
             if i > i0:
                 acc += math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1])
-            if acc > self.step_open_m + 0.1:
+            if acc > longest + 0.1:
                 break
-            probe.append(path[i])
-        for qx, qy in probe:
+            probe.append((acc, path[i]))
+        # 좁은 틈(양옆이 막힌 폭 0.5 m 미만)이 앞에 있으면 촘촘한 걸음 — ⚠️ 11-28 지도 시험(seed 23, 의자 통로 40):
+        #   옆 0.30 + 긴 걸음만으로는 틈 앞에 서는 자리가 어긋나 도착 39 → 37, 장애물 최소 5.0 → 2.9 cm(11-22 옆 0.25와 같은 문제)
+        if self.gap_guard_m > 0 and self._find_gap(path, here, max_ahead=longest + self.gap_guard_m) is not None:
+            return self.step_m
+        bad = None   # 처음으로 막힌 경로 거리
+        for d, (qx, qy) in probe:
             if any((px - qx) ** 2 + (py - qy) ** 2 < reach * reach for px, py in pts):
-                return self.step_m
-        return self.step_open_m
+                bad = d; break
+        cands = [longest]
+        while cands[-1] - 0.25 > self.step_open_m + 1e-6:
+            cands.append(round(cands[-1] - 0.25, 3))
+        if cands[-1] > self.step_open_m + 1e-6:
+            cands.append(self.step_open_m)
+        for L in cands:
+            if bad is not None and bad <= L + 0.1:
+                continue
+            if L > self.step_open_m + 1e-6:
+                cx, cy = self.carrot(path, here, step_len=L)
+                vx, vy = cx - here[0], cy - here[1]; n = math.hypot(vx, vy)
+                if n < 1e-6:
+                    continue
+                if any(abs(vx * (qy - here[1]) - vy * (qx - here[0])) / n > self.step_straight_dev
+                       for d, (qx, qy) in probe if d <= L):
+                    continue
+            return L
+        return self.step_m
 
     def _find_gap(self, path, here, max_ahead=1.2, lidar_x=0.054):
         """경로 앞 max_ahead m 안에서 양옆이 다 막힌 가장 좁은 곳 (폭, 경로 점 번호, 경로 거리, 경로 방향, 왼쪽 점, 오른쪽 점). 없으면 None.

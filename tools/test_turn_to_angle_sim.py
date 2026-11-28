@@ -11,6 +11,8 @@ import math, os, random, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from turn_to_angle import TurnToAngle
+import inspect
+ACCEL = inspect.signature(TurnToAngle.__init__).parameters["accel"].default   # 지금 설정된 회전 가속(rad/s²)
 
 
 class Plant:
@@ -67,7 +69,8 @@ def main():
                             (90, dict(coast=0.35), 0)):
         r, real, acc = run(deg, **kw)
         # 판정선 = 제어기 허용 오차(tol 2°) + 0.5° — 로직이 "보정 2회 이내로 허용 오차 안에 끝나는가"를 본다(실물 기준은 turn_angle_test)
-        ok = r['ok'] and abs(real - deg) < 2.0 + 0.5 and acc <= 0.3 * 1.5   # 허용 2° + 보정 뒤 관성 여유 0.5°, 가속 0.3 rad/s²
+        # 가속 판정은 TurnToAngle의 설정값 × 1.5. ⚠️ 11-28: 0.3을 박아 둬서 11-22 가속 0.5로 올린 뒤로 회귀 시험이 계속 떨어져 있었다
+        ok = r['ok'] and abs(real - deg) < 2.0 + 0.5 and acc <= ACCEL * 1.5   # 허용 2° + 보정 뒤 관성 여유 0.5°
         fails += (not ok) and judged
         if not judged:
             print('   (참고, 판정 제외)', end=' ')

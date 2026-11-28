@@ -262,7 +262,7 @@ def main():
         r2 = nav2.go((2.0, 0.0, None))
         builtins.print = quiet
         check('구역 정보 없음 → 움직이지 않음 / 도중에 생긴 구역 → 멈춤', not r['ok'] and not nav.log and '받지 못함' in r['msg']
-              and not r2['ok'] and '금지 구역' in r2['msg'] and P2['x'] <= max(nav2.step_m, nav2.step_open_m) + 0.01, f'{r["msg"]} / {r2["msg"]}, 이동 {P2["x"] * 100:.0f} cm')   # 첫 걸음(step_m)만 가고 멈춤
+              and not r2['ok'] and '금지 구역' in r2['msg'] and P2['x'] <= max(nav2.step_m, nav2.step_open_m, nav2.step_long_m) + 0.01 and P2['x'] < 1.6 - 0.11, f'{r["msg"]} / {r2["msg"]}, 이동 {P2["x"] * 100:.0f} cm')   # 첫 걸음(step_m)만 가고 멈춤
         builtins.print = lambda *a, **k: None
         #  11f. 경로 계획용 격자: 구역 안과 차체 반폭 안은 100(통행 불가), 팽창 반경까지는 1~99, 그 밖은 0
         m, ox, oy = keepout.build_mask([box(1.0, 1.0, 2.0, 1.6)])
@@ -324,7 +324,7 @@ def main():
         builtins.print = quiet
         check('주행 도중 자리 검사: 한 번 안 맞으면 기다렸다 이음 / 계속 안 맞으면 거절',
               r5['ok'] and len(pc5) >= 2 and pc5[1]['ok'] and pc5[1]['waited'] > 0
-              and not r6['ok'] and '안 맞음' in r6['msg'] and len(pc6) == 2 and pc6[1]['step'] >= 1 and abs(pc6[1]['waited'] - 2.1) < 0.05 and P6['x'] < 0.9,
+              and not r6['ok'] and '안 맞음' in r6['msg'] and len(pc6) == 2 and pc6[1]['step'] >= 1 and abs(pc6[1]['waited'] - 2.1) < 0.05 and P6['x'] <= [e['arg'] for e in nav6.log if e['kind'] == 'drive'][0] + 0.03,
               f'한 번: {r5["msg"]}(기다림 {pc5[1]["waited"] if len(pc5) > 1 else "?"} s) | 계속: {r6["msg"][:24]}…, 단계 {pc6[-1]["step"]}, 기다림 {pc6[-1]["waited"]} s, x {P6["x"]:.2f} m')
         builtins.print = lambda *a, **k: None
         #  13. 왕복 끊기(11-01 닫힌 문 옆 틈): 위치에 따라 경로가 앞뒤로 뒤집히는 가상 planner. 2번째 큰 회전 전에 멈춘다.
@@ -362,7 +362,7 @@ def main():
             def timed(goal, moves):
                 nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0); d0 = nav.driver.drive_by
                 def drive(d):
-                    clock[0] += 8.0
+                    clock[0] += max(8.0, 16.0 * abs(d)) if moves else 8.0     # 움직이면 거리만큼(16 s/m — 0.5 m 걸음 8초와 같음)
                     return d0(d) if moves else dict(ok=True, msg='', err_m=0.0, fixes=0, secs=8.0)
                 nav.driver.drive_by = drive
                 return nav.go(goal)
@@ -452,6 +452,19 @@ def main():
         rQ, dQ = place(None)
         check('장소 목표는 막혀도 30 cm 안이면 도착, 좌표 목표는 그대로 실패(벽에 밀어 넣지 않음)',
               rP['ok'] and dP <= 0.30 and not rQ['ok'], f'장소: {rP["msg"][:30]} 남은 {dP * 100:.0f} cm | 좌표: {rQ["msg"][:20]}')
+        #  16f. 긴 걸음의 두 조건(11-28): 경로가 휘면(직선에서 5 cm 넘게) 긴 걸음을 안 쓴다 / 앞에 좁은 틈(폭 0.5 m 미만)이 있으면 촘촘한 걸음
+        nav, P = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); nav._nu_step = -99
+        bent = [(k / 20, 0.0) for k in range(13)] + [(0.6, k / 20) for k in range(1, 30)]          # 0.6 m 곧게 간 뒤 왼쪽으로 꺾임
+        l_bent = nav._step_len(5, bent, (0.0, 0.0, 0.0))
+        straight_path = [(k / 20, 0.0) for k in range(61)]
+        for k in range(7):                                                                           # 1.2~1.5 m에 폭 0.4 m 틈(양옆 벽)
+            nav.S.world.extend([(1.2 + k * 0.05, 0.2), (1.2 + k * 0.05, -0.2)])
+        l_gap = nav._step_len(5, straight_path, (0.0, 0.0, 0.0)); nav.S.world.clear()
+        l_open = nav._step_len(5, straight_path, (0.0, 0.0, 0.0))
+        builtins.print = quiet
+        check('긴 걸음 조건: 꺾이는 경로는 0.5 / 앞 좁은 틈은 0.4 / 곧고 트이면 1.5',
+              (l_bent, l_gap, l_open) == (nav.step_open_m, nav.step_m, nav.step_long_m), f'꺾임 {l_bent}, 틈 {l_gap}, 트임 {l_open}')
+        builtins.print = lambda *a, **k: None
         #  16e. 제자리 둘러보기(11-28 집 한 바퀴 기록): 지금 자리를 목표로 방향만 90°씩 네 번 — 매번 도착, 방향 오차 5° 안,
         #       회전 중심 어긋남(rot_off 기본값)이 있어도 처음 자리에서 10 cm 안에 남는다
         nav, P = make(world=[]); x0, y0 = P['x'], P['y']; looks = []
@@ -477,9 +490,8 @@ def main():
         nav3.step_open_m = nav3.step_m; r3 = nav3.go((1.5, 0.0, None)); v_tight = nav3.driver.v_max
         nav4, _ = make(rot_off=0.0, turn_scale=1.0, drive_scale=1.0, world=[]); r4 = nav4.go((1.5, 0.0, None)); v_open = nav4.driver.v_max
         vm = [e.get('v_max') for e in nav4.log if e['kind'] == 'drive']
-        check('상황별 걸음: 트이면 0.5 / 옆 장애물이면 0.4 / 옆 물체 직후 0.4, 두 단계 뒤 0.5 / 트인 1.5 m는 0.5 m 세 걸음 / 속도도 트이면 0.20, 좁으면 0.15',
-              (open_, near, after, later) == (nav.step_open_m, nav.step_m, nav.step_m, nav.step_open_m) and r['ok'] and len(drives) == 3
-              and all(abs(d - 0.5) < 0.02 for d in drives)
+        check('상황별 걸음: 트이면 긴 걸음(step_long_m) / 옆 장애물이면 0.4 / 옆 물체 직후 0.4, 두 단계 뒤 긴 걸음 / 트인 1.5 m는 한 걸음 / 속도도 트이면 0.20, 좁으면 0.15',
+              (open_, near, after, later) == (nav.step_long_m, nav.step_m, nav.step_m, nav.step_long_m) and r['ok'] and len(drives) == math.ceil(1.5 / nav.step_long_m - 1e-9)
               and v_open == nav4.drive_v_max and v_tight == nav3.drive_v_tight and r3['ok'] and vm and all(v == nav4.drive_v_max for v in vm),
               f'{(open_, near, after, later)}, 걸음 {drives}, 속도 트임 {v_open} / 좁음 {v_tight}, 기록 {vm}')
         builtins.print = lambda *a, **k: None

@@ -358,7 +358,8 @@ def main():
                     ok = (not r['ok']) and c['expect_fail'] in r['msg'] and len(track) == 1
                 ok_all &= ok
                 stat.append(dict(name=name, ok=r['ok'], msg=r['msg'], hits=hits['n'], zone=hits['zone'], zone_gap=hits['zone_gap'], steps=r['steps'], blocked=kinds.count('blocked'),
-                                 turns=kinds.count('turn'), shifts=kinds.count('plan_shift'), min_gap=hits['min_gap'], start=c['start'], goal=c['goal']))
+                                 turns=kinds.count('turn'), shifts=kinds.count('plan_shift'), min_gap=hits['min_gap'], start=c['start'], goal=c['goal'],
+                                 drives=[(e['arg'], e.get('v_max')) for e in nav.log if e['kind'] == 'drive']))
                 if a.random and not a.verbose:
                     if hits['min_gap'] < 0.03:
                         print(f'   ⚠️ {name}: 차체-장애물 {hits["min_gap"] * 100:.1f} cm — 자세·직전 동작 {hits.get("min_at")}', flush=True)
@@ -376,6 +377,13 @@ def main():
                   f'막힘 합 {sum(x["blocked"] for x in stat)}, 회전 합 {sum(x["turns"] for x in stat)}, 출발점 옮겨 계획 {sum(x["shifts"] for x in stat)}, '
                   f'차체-장애물 최소 {min(x["min_gap"] for x in stat) * 100:.1f} cm'
                   + (f', 구역 선 침범 있는 건 {sum(x["zone"] > 0 for x in stat)}, 차체-구역 선 최소 {min(x["zone_gap"] for x in stat) * 100:.1f} cm' if kz else ''))
+            # 직진 시간 어림(11-28 실물 247걸음 맞춤: 걸음마다 2.47 s + 4.97 s/m(0.15 m/s), 걸음 사이 멈춤 0.69 s;
+            #   0.20 m/s 걸음의 거리 몫은 0.15/0.20배로 줄여 잡는다). 가상 시험엔 시간이 없어서 걸음 기록으로 바꿔 센다
+            dv = [d for x in stat for d in x['drives']]
+            if dv:
+                est = sum(2.47 + 0.69 + abs(d) * (4.97 if (v or 0.15) <= 0.15 else 4.97 * 0.15 / v) for d, v in dv)
+                print(f'    직진 {len(dv)}걸음(건당 {len(dv) / n:.1f}), 평균 {np.mean([abs(d) for d, _ in dv]):.2f} m, '
+                      f'0.6 m 넘는 걸음 {sum(abs(d) > 0.6 for d, _ in dv)}, 직진 시간 어림 {est:.0f} s(건당 {est / n:.1f} s)')
             import json
             json.dump(stat, open(f'/tmp/step_nav_map_sim_{int(time.time())}.json', 'w'), default=float)
     finally:
