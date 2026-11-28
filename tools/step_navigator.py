@@ -125,6 +125,12 @@ class StepNavigator:
     step_long_m = 1.5
     step_straight_dev = 0.05
     gap_guard_m = 0.8       # 긴 걸음 + 이 거리 안에 좁은 틈이 있으면 step_m(0이면 끔)
+    # 합친 폭(11-28 사용자: "한쪽에 붙긴 했지만 반대편 공간에 여유가 있어서 빨리 가도 될 것"): 경로 점마다 한쪽 옆은
+    #   차체 옆면에서 open_side_min_m만 비어 있으면 되고, 대신 양옆 합친 빈 폭이 2 × (반폭 + open_side_m) 이상이어야 한다.
+    #   직진 중 옆밀림은 최대 3.3 cm(09-27 59회). open_side_min_m = open_side_m이면 예전(양옆 각각)과 같다
+    #   지도 시험(11-28, logs/hall_center_20261128/): 0.30 → 0.20이면 무작위 60(seed 23) 직진 시간 어림 47.6 → 42.5 s(−11%)·장애물 최소 8.7 → 9.1 cm,
+    #   의자 통로 40 39 → 39·5.0 → 5.0 cm, 폭 1 m ㄱ자 복도 4건 268 → 248 s. 전역 팽창 0.55(경로를 가운데로)는 의자 통로 39 → 35라 보류
+    open_side_min_m = 0.20
     open_side_m = 0.30   # 11-22 지도 시험: 0.25면 의자 통로 75%·무작위 98%로 나빠짐(걸음 0.5만 있을 때). 11-28: 0.30 + 좁은 틈 보호(gap_guard_m)면 의자 통로가 0.40과 같다(위 step_long_m 주석)
     open_quiet_steps = 2
     # 카메라로 좁은 틈의 바닥을 미리 본다(11-27, 11-22 사용자 판단 "필요하면 움직여서 보면 된다"의 바뀐 방법).
@@ -612,9 +618,29 @@ class StepNavigator:
         #   옆 0.30 + 긴 걸음만으로는 틈 앞에 서는 자리가 어긋나 도착 39 → 37, 장애물 최소 5.0 → 2.9 cm(11-22 옆 0.25와 같은 문제)
         if self.gap_guard_m > 0 and self._find_gap(path, here, max_ahead=longest + self.gap_guard_m) is not None:
             return self.step_m
+        side_min = min(self.open_side_m, getattr(self, 'open_side_min_m', self.open_side_m))
+        r_min = 0.11 + side_min; width = 2 * reach
         bad = None   # 처음으로 막힌 경로 거리
-        for d, (qx, qy) in probe:
-            if any((px - qx) ** 2 + (py - qy) ** 2 < reach * reach for px, py in pts):
+        for j, (d, (qx, qy)) in enumerate(probe):
+            if side_min >= self.open_side_m:                     # 예전 규칙: 반경 reach 안에 점이 없을 것
+                if any((px - qx) ** 2 + (py - qy) ** 2 < reach * reach for px, py in pts):
+                    bad = d; break
+                continue
+            if any((px - qx) ** 2 + (py - qy) ** 2 < r_min * r_min for px, py in pts):
+                bad = d; break
+            # 합친 폭: 이 점의 경로 방향에 수직인 왼쪽·오른쪽 가장 가까운 점(앞뒤 ±0.1 m 띠)
+            a0 = probe[max(j - 1, 0)][1]; a1 = probe[min(j + 1, len(probe) - 1)][1]
+            t = math.atan2(a1[1] - a0[1], a1[0] - a0[0]) if (a0 != a1) else here[2]
+            tx, ty = math.cos(t), math.sin(t); L = R = 9.9
+            for px, py in pts:
+                dx, dy = px - qx, py - qy
+                if abs(dx * tx + dy * ty) <= 0.10:
+                    o = -dx * ty + dy * tx
+                    if o >= 0:
+                        L = min(L, o)
+                    else:
+                        R = min(R, -o)
+            if L + R < width:
                 bad = d; break
         cands = [longest]
         while cands[-1] - 0.25 > self.step_open_m + 1e-6:

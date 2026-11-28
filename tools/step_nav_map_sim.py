@@ -55,14 +55,21 @@ CASES = {'door': dict(start=(1.83, 0.79, 130.0), goal=(2.19, 2.27)),
          #   (실제 문 폭 지도에서 — 좁은 문 지도에선 출발 자세 자체가 반대쪽 문설주와도 너무 가까워 빠져나올 자리가 없다)
          'wallstart': dict(map='real', start=(2.14, 1.06, 80.0), goal=(0.46, -1.71)),
          'sofa': dict(map='real', start=(-2.6, 1.6, 90.0), goal=(-1.0, 3.8), zones=SOFA),
-         'sofa_in': dict(map='real', start=(-2.6, 1.6, 90.0), goal=(-1.0, 2.6), zones=SOFA, expect_fail='금지 구역')}
+         'sofa_in': dict(map='real', start=(-2.6, 1.6, 90.0), goal=(-1.0, 2.6), zones=SOFA, expect_fail='금지 구역'),
+         # 11-28 폭 1 m ㄱ자 복도 갈 때·올 때(가운데로 가는지, 긴 걸음이 나오는지)
+         'hall_go': dict(map='hall', start=(-3.6, 0.5, 0.0), goal=(1.5, 4.6)),
+         'hall_back': dict(map='hall', start=(1.5, 4.6, -90.0), goal=(-3.6, 0.5)),
+         #   벽 쪽으로 치우친 출발·도착(방에서 나와 한쪽으로 들어선 경우) — 경로가 한쪽 벽을 타는지
+         'hall_side_go': dict(map='hall', start=(-3.6, 0.25, 0.0), goal=(1.25, 4.6)),
+         'hall_side_back': dict(map='hall', start=(1.75, 4.6, -90.0), goal=(-3.6, 0.75))}
 RES, OX, OY = 0.05, -7.45, -4.925
 HALF = 0.11
 
 
 MAPS = {'real': 'our_home.png',                   # 문 폭 실제값(A·B 0.75, C 0.85 m — 10-10 사용자 실측 77/77/87 cm)
         'narrow': 'our_home_narrowdoors.png',
-        'chair': '(make_chair_map — 거실 왼쪽 구역 + 의자 다리 통로)'}     # 08-23 원본: 문 세 곳이 0.45 m로 그려짐 → 좁은 틈 통과 시험용으로 남김
+        'chair': '(make_chair_map — 거실 왼쪽 구역 + 의자 다리 통로)',
+        'hall': '(make_hall_map — 폭 1 m ㄱ자 복도)'}     # 08-23 원본: 문 세 곳이 0.45 m로 그려짐 → 좁은 틈 통과 시험용으로 남김
 
 
 CHAIR_PNG = '/tmp/step_nav_map_sim_chair.png'
@@ -87,9 +94,30 @@ def make_chair_map(gap=0.40, depth=0.40):
     return CHAIR_PNG
 
 
+HALL_PNG = '/tmp/step_nav_map_sim_hall.png'
+
+
+def make_hall_map(width=1.0):
+    """(11-28 사용자 관찰: 1 m 복도에서 갈 때는 가운데, 올 때는 오른쪽 벽에 붙어 걸음이 짧고 느렸다) 폭 width의 ㄱ자 복도만 빈
+    지도 — 가로 x −4~2(y 0~width), 세로 x 2−width~2(y 0~5). real 지도와 같은 크기·원점."""
+    im = np.zeros_like(np.array(Image.open(map_path('real')))); H = im.shape[0]
+    def px(x, y):
+        return H - 1 - int((y - OY) / RES), int((x - OX) / RES)
+    for x in np.arange(-4.0, 2.0, RES / 2):
+        for y in np.arange(0.0, width, RES / 2):
+            im[px(x, y)] = 254
+    for x in np.arange(2.0 - width, 2.0, RES / 2):
+        for y in np.arange(0.0, 5.0, RES / 2):
+            im[px(x, y)] = 254
+    Image.fromarray(im).save(HALL_PNG)
+    return HALL_PNG
+
+
 def map_path(name):
     if name == 'chair':
         return CHAIR_PNG if os.path.exists(CHAIR_PNG) else make_chair_map()
+    if name == 'hall':
+        return HALL_PNG if os.path.exists(HALL_PNG) else make_hall_map()
     return os.path.abspath(os.path.join(HERE, '../robot/sim_worlds/bitmaps', MAPS[name]))
 
 
@@ -105,7 +133,7 @@ def others_running():
     return [ln.strip()[:90] for ln in out if any(f'/{n} ' in ln + ' ' for n in ('planner_server', 'map_server', 'controller_server', 'async_slam_toolbox_node'))]
 
 
-def start_planner(radius='0.35', map_name='real', zones=None):
+def start_planner(radius='0.35', map_name='real', zones=None, scaling='2.0'):
     # ⚠️ 10-10: 실물 시험 스택이 켜진 채 이 도구를 돌렸더니, 끝날 때 이름으로 정리하며 **실물 스택의 planner_server·
     #   lifecycle_manager까지 죽였다**(로봇 정지 중이라 무사). → ① 다른 Nav2가 떠 있으면 시작하지 않는다 ② 자기가 띄운
     #   프로세스 묶음(세션)만 죽인다
@@ -115,7 +143,7 @@ def start_planner(radius='0.35', map_name='real', zones=None):
     d = os.path.join(HERE, 'inflation_probe'); p = f'/tmp/step_nav_map_sim_{radius}.yaml'
     my = f'/tmp/step_nav_map_sim_{map_name}.yaml'
     open(my, 'w').write(open(os.path.join(d, 'map.yaml')).read().replace('image: ../../robot/sim_worlds/bitmaps/our_home.png', f'image: {map_path(map_name)}'))
-    s = open(os.path.join(d, 'params.template.yaml')).read().replace('RADIUS', radius).replace('yaml_filename: map.yaml', f'yaml_filename: {my}')
+    s = open(os.path.join(d, 'params.template.yaml')).read().replace('RADIUS', radius).replace('cost_scaling_factor: 2.0', f'cost_scaling_factor: {scaling}').replace('yaml_filename: map.yaml', f'yaml_filename: {my}')
     # 코스트맵 갱신 10 Hz(아래 plan()이 요청마다 다시 계산시킨다 — 실물 코스트맵을 흉내). ⚠️ 11-07 참고
     s = s.replace('      update_frequency: 1.0\n      publish_frequency: 1.0\n      global_frame: map', '      update_frequency: 10.0\n      publish_frequency: 1.0\n      global_frame: map', 1)
     if zones is not None:        # 금지 구역: 전역 코스트맵에 KeepoutFilter + 구역 서버(실물 런치와 같은 구성)
@@ -307,6 +335,8 @@ def main():
     ap.add_argument('--case', help='사례 하나만')
     ap.add_argument('--chair', type=int, default=0, help='의자 다리 통로(폭 40 cm) 통과 시험 n번 — 막힌 구역 안 무작위 출발 → 통로 너머 목표')
     ap.add_argument('--chair-gap', type=float, default=0.40)
+    ap.add_argument('--inflation', default='0.35', help='전역 팽창 반경(m) — 실물 nav2_params 전역과 같게 둔다')
+    ap.add_argument('--cost-scaling', default='2.0', help='전역 팽창 cost_scaling_factor')
     ap.add_argument('--nav-file', help='비교용: 다른 step_navigator.py(예: git show HEAD:… 로 꺼낸 파일)')
     ap.add_argument('--set', nargs='*', default=[], help='StepNavigator 클래스 값 덮어쓰기 예: replan_after_escape=True')
     a = ap.parse_args()
@@ -346,7 +376,7 @@ def main():
         for (gmap, gzones), gcases in groups.items():
             print(f'지도: {gmap} ({MAPS[gmap]})' + (f', 금지 구역 {list(gzones)}' if gzones else ''), flush=True)
             gworld = world if gmap == map_name else load_world(gmap)
-            procs = start_planner(map_name=gmap, zones=gzones)
+            procs = start_planner(radius=a.inflation, map_name=gmap, zones=gzones, scaling=a.cost_scaling)
             if not ac.wait_for_server(timeout_sec=25):
                 print('❌ planner_server 안 뜸'); return 1
             time.sleep(6.0 if gzones else 3.0)       # 구역 격자가 코스트맵에 칠해질 때까지(전역 코스트맵 1 Hz)
@@ -370,6 +400,10 @@ def main():
                       f'막힘 {kinds.count("blocked")}, 출발점 옮겨 계획 {kinds.count("plan_shift")}, 충돌 {hits["n"]}, 차체-장애물 최소 {hits["min_gap"] * 100:.1f} cm'
                       + (f', 구역 선 침범 {hits["zone"]}, 차체-구역 선 최소 {hits["zone_gap"] * 100:.1f} cm' if gzones else ''))
                 print('   지나간 점:', ' → '.join(f'({x:.2f},{y:.2f})' for x, y in track))
+                dv = [(e['arg'], e.get('v_max')) for e in nav.log if e['kind'] == 'drive']
+                if dv:
+                    est = sum(2.47 + 0.69 + abs(d) * (4.97 if (v or 0.15) <= 0.15 else 4.97 * 0.15 / v) for d, v in dv)
+                    print(f'   직진 {len(dv)}걸음, 평균 {np.mean([abs(d) for d, _ in dv]):.2f} m, 직진 시간 어림 {est:.0f} s, 걸음 {[round(d, 2) for d, _ in dv]}')
             stop_planner(procs); procs = []; time.sleep(2.0)
         if a.random:
             n = len(stat); arr = sum(x['ok'] for x in stat); col = sum(x['hits'] > 0 for x in stat)

@@ -461,9 +461,13 @@ def main():
             nav.S.world.extend([(1.2 + k * 0.05, 0.2), (1.2 + k * 0.05, -0.2)])
         l_gap = nav._step_len(5, straight_path, (0.0, 0.0, 0.0)); nav.S.world.clear()
         l_open = nav._step_len(5, straight_path, (0.0, 0.0, 0.0))
+        # 합친 폭(11-28): 오른쪽 벽이 경로에서 0.33 m(차체 옆면 22 cm)·왼쪽은 트임 → 긴 걸음 / 양쪽 0.33 m(폭 0.66 m)면 0.4
+        nav.S.world.extend([(k * 0.05, -0.33) for k in range(-4, 40)]); l_side = nav._step_len(5, straight_path, (0.0, 0.0, 0.0))
+        nav.S.world.extend([(k * 0.05, 0.33) for k in range(-4, 40)]); l_both = nav._step_len(5, straight_path, (0.0, 0.0, 0.0)); nav.S.world.clear()
         builtins.print = quiet
-        check('긴 걸음 조건: 꺾이는 경로는 0.5 / 앞 좁은 틈은 0.4 / 곧고 트이면 1.5',
-              (l_bent, l_gap, l_open) == (nav.step_open_m, nav.step_m, nav.step_long_m), f'꺾임 {l_bent}, 틈 {l_gap}, 트임 {l_open}')
+        check('긴 걸음 조건: 꺾이는 경로는 0.5 / 앞 좁은 틈은 0.4 / 곧고 트이면 1.5 / 한쪽 벽만 가까우면 1.5 / 양쪽 다 가까우면 0.4',
+              (l_bent, l_gap, l_open, l_side, l_both) == (nav.step_open_m, nav.step_m, nav.step_long_m, nav.step_long_m, nav.step_m),
+              f'꺾임 {l_bent}, 틈 {l_gap}, 트임 {l_open}, 한쪽 벽 {l_side}, 양쪽 벽 {l_both}')
         builtins.print = lambda *a, **k: None
         #  16e. 제자리 둘러보기(11-28 집 한 바퀴 기록): 지금 자리를 목표로 방향만 90°씩 네 번 — 매번 도착, 방향 오차 5° 안,
         #       회전 중심 어긋남(rot_off 기본값)이 있어도 처음 자리에서 10 cm 안에 남는다
