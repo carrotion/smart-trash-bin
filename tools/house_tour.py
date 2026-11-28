@@ -199,7 +199,7 @@ def main():
                            camera_geometry='docs/calibration/camera_geometry_20261125.json'),
                       open(os.path.join(out, 'tour.json'), 'w'), ensure_ascii=False, indent=1)
             print(f'끝: 장소 {sum(r["ok"] for r in res)}/{len(route)}, 화면 {rec.n}장(실패 {rec.fail})'
-                  + (f', 올림 {up.ok}장(실패 {up.fail}, 버림 {up.dropped})' if up else '') + ', {(time.time() - t_all) / 60:.1f}분 → {out}', flush=True)
+                  + (f', 올림 {up.ok}장(실패 {up.fail}, 버림 {up.dropped})' if up else '') + f', {(time.time() - t_all) / 60:.1f}분 → {out}', flush=True)
     finally:
         state.close()
     return 0 if res and all(r['ok'] for r in res) else 1
