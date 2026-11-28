@@ -136,9 +136,16 @@ def main():
                         f'def h(*_):\n    open({mark!r},"w").write("1"); sys.exit(0)\n'
                         'signal.signal(signal.SIGINT, h)\nwhile True: time.sleep(0.1)\n')
     p = subprocess.Popen([sys.executable, mg]); time.sleep(0.5)
-    f3 = Fake(); L3 = mk(f3.url); L3.hello()
-    r = L3.handle({'id': 'k1', 'type': 'cancel', 'args': {'target': 'all'}, 'ttl_s': 30})
-    p.wait(timeout=5)
+    # 11-28: 진짜 프로세스 목록을 그대로 쓰면 ① 실제 탐색 스택이 켜져 있을 때 "탐색 멈춤은 1단계 밖"으로 실패했고
+    #   ② 실제 mission_go가 돌고 있으면 시험이 그 주행을 취소해 버린다 → 이 시험이 띄운 가짜만 보이게 막는다
+    real_find = server_link.killproc.find
+    server_link.killproc.find = lambda names, **kw: [] if 'frontier_explorer' in names else [t for t in real_find(names, **kw) if t[0] == p.pid]
+    try:
+        f3 = Fake(); L3 = mk(f3.url); L3.hello()
+        r = L3.handle({'id': 'k1', 'type': 'cancel', 'args': {'target': 'all'}, 'ttl_s': 30})
+        p.wait(timeout=5)
+    finally:
+        server_link.killproc.find = real_find
     fin = f3.kinds('ack')[-1]
     check('⑧ cancel이 mission_go에 SIGINT를 보내고 끝난 뒤 done', r == 'done' and os.path.exists(mark)
           and fin['result'].get('stopped_missions') == 1, (r, fin))

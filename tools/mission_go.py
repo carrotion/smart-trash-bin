@@ -19,11 +19,19 @@ MIN_V = 11.4
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def volts():
-    try:
-        return json.load(urllib.request.urlopen('http://localhost:8769/api/overview', timeout=3)).get('battery', {}).get('voltage')
-    except Exception:
-        return None
+def volts(settle_s=0.0):
+    """배터리 전압. settle_s를 주면 그동안 몇 번 읽어 가장 높은 값(주행 직후 처짐이 풀린 값)을 돌려준다.
+    11-28: 거실 도착 1초 뒤 11.38 V로 읽혀 다음 목표(안방)를 거절했다 — 3초 뒤엔 11.46~11.51 V였다(멈춰 있을 때 값)."""
+    def one():
+        try:
+            return json.load(urllib.request.urlopen('http://localhost:8769/api/overview', timeout=3)).get('battery', {}).get('voltage')
+        except Exception:
+            return None
+    vals = [one()]; end = time.time() + settle_s
+    while time.time() < end:
+        time.sleep(0.5); vals.append(one())
+    vals = [v for v in vals if v is not None]
+    return max(vals) if vals else None
 
 
 def main():
@@ -61,8 +69,8 @@ def main():
             print('❌ 주행기 액션 서버 없음'); return 2
         if not spin_until(lambda: pose() is not None, 10):
             print('❌ map→base_link 없음'); return 2
-        for name, x, y, area, yaw_deg in goals:
-            v = volts()
+        for k, (name, x, y, area, yaw_deg) in enumerate(goals):
+            v = volts(settle_s=3.0 if k else 0.0)          # 둘째 목표부터는 앞 주행의 전압 처짐이 풀리기를 잠깐 기다린다
             if v is not None and v < MIN_V:
                 print(f'🔋 {v:.2f} V — {MIN_V} V 미만이라 "{name}" 시작 안 함'); return 3
             p0 = pose(); t0 = time.time()
