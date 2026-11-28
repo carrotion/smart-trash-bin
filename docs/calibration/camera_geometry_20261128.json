@@ -1,0 +1,96 @@
+{
+ "date": "2026-11-28 12:23",
+ "camera": "logitech C270 640x480",
+ "height_m": 0.14,
+ "f_px": 644.0,
+ "cy": 240.0,
+ "pitch_up_deg": 17.62,
+ "pitch_std_deg": 0.22,
+ "points": [
+  {
+   "name": "person",
+   "d_m": 4.27,
+   "row": 464,
+   "pitch_up_deg": 17.3
+  },
+  {
+   "name": "person",
+   "d_m": 4.28,
+   "row": 470,
+   "pitch_up_deg": 17.78
+  },
+  {
+   "name": "person",
+   "d_m": 4.28,
+   "row": 473,
+   "pitch_up_deg": 18.02
+  },
+  {
+   "name": "person",
+   "d_m": 4.28,
+   "row": 467,
+   "pitch_up_deg": 17.55
+  },
+  {
+   "name": "person",
+   "d_m": 4.28,
+   "row": 472,
+   "pitch_up_deg": 17.94
+  },
+  {
+   "name": "person",
+   "d_m": 4.28,
+   "row": 468,
+   "pitch_up_deg": 17.62
+  },
+  {
+   "name": "person",
+   "d_m": 4.28,
+   "row": 470,
+   "pitch_up_deg": 17.78
+  },
+  {
+   "name": "person",
+   "d_m": 4.33,
+   "row": 467,
+   "pitch_up_deg": 17.57
+  },
+  {
+   "name": "person",
+   "d_m": 5.23,
+   "row": 461,
+   "pitch_up_deg": 17.41
+  }
+ ],
+ "method": "tools/camera_pitch_calibrate.py --name person (사람이 정면 약 4.3 m에 섬, 로봇은 바닥·충전기 꽂음). 출력을 옮겨 적음(--save 없이 돌려서)",
+ "cross_check": "오전·오후 같은 자세 사진 12쌍 ORB 호모그래피: 9.5 + 8.4~9.7 ≈ 18 (임시값)",
+ "note": "위 기울기 = atan((v − cy)/f) − atan(h/d). d는 라이다로 잰 물체 앞면까지 수평 거리(카메라 = base_link 가운데)",
+ "status": "무효(f=644 가정이 틀림) — 키 170 cm 머리 끝은 10~10.7°, 라이다 모서리 맞춤 f≈786~858. 체스판으로 렌즈 값을 잰 뒤 다시 푼다",
+ "head_check": [
+  {
+   "d_m": 4.25,
+   "y1": 122,
+   "y2": 450
+  },
+  {
+   "d_m": 4.25,
+   "y1": 132,
+   "y2": 452
+  },
+  {
+   "d_m": 4.27,
+   "y1": 131,
+   "y2": 454
+  },
+  {
+   "d_m": 4.27,
+   "y1": 134,
+   "y2": 456
+  },
+  {
+   "d_m": 4.25,
+   "y1": 132,
+   "y2": 454
+  }
+ ]
+}

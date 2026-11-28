@@ -21,6 +21,9 @@ API = 'http://127.0.0.1:8767'
 HFOV_DEG = 50.0          # C270 가로 화각(어림) — 화면 중심에서 옆 거리로 바꿀 때 쓴다
 
 
+NEAR_FLOOR_MAX_M = 1.2    # 미리 보기가 뜻이 있으려면 화면 맨 아래 바닥이 이만큼 가까워야 한다(11-25 각도 9.5°에서 0.6 m)
+
+
 def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', 'chair', 'backpack', 'handbag',
                                                          'suitcase', 'cup', 'book', 'vase', 'potted_plant',
                                                          'couch', 'bed', 'dining_table', 'tv', 'laptop')):
@@ -32,6 +35,9 @@ def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', '
     from camera_detect import row_to_distance, geom_ready
     if not geom_ready():
         return None          # 11-28: 카메라 기울기가 바뀌어 다시 잴 때까지 거리를 모른다 → 미리 보기 없이 간다(틀린 거리로 멈추지 않게)
+    near = row_to_distance(height - 3, height)
+    if near is None or near > NEAR_FLOOR_MAX_M:
+        return None          # 11-28: 위로 17.6°면 화면에 보이는 가장 가까운 바닥이 2.9 m — 틈 앞 0.3~1 m를 못 본다 → 미리 보기 없이 간다
     half = math.tan(math.radians(HFOV_DEG / 2))
 
     t_wake = {'t': 0.0}

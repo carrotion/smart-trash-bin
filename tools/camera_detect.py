@@ -95,8 +95,13 @@ FLOOR = {'a': 347.0, 'b': 96.0}      # (옛) 줄 = a + b/거리(m) — 2026-11-2
 #   11-28 사용자가 카메라를 더 위로 올렸다(서버 쪽 물체 인식이 가구 전체를 못 봄) — 11-25 값은 무효.
 #   다시 잴 때까지 pitch_up_deg=None → 거리·바닥 투영을 하지 않는다(틀린 거리보다 "모름"이 낫다).
 #   다시 재기: 로봇을 바닥에 두고 `python3 tools/camera_pitch_calibrate.py`(라이다로 잰 물체 거리 + 검출 상자 아래 끝 → 기울기)
-GEOM = {'h': 0.14, 'f': 644.0, 'pitch_up_deg': None, 'cy': 240.0, 'cx': 320.0}
-GEOM_HISTORY = [dict(date='2026-11-25', pitch_up_deg=9.5, file='docs/calibration/camera_geometry_20261125.json')]
+#   11-28 12:23 다시 잼: 위로 17.62°(사람 4.3 m 9장, 표준편차 0.22°). 같은 자세 사진 비교 임시값 ≈ 18°와 맞다.
+#     이 각도에서 화면 맨 아래 줄 = 바닥 2.9 m, 지평선 = 450줄 → 바닥 거리는 2.9 m~십여 m만 보이고 줄 하나가 수십 cm다
+#   그런데 키 170 cm로 확인하니 머리 끝은 10.5°를 냈다 — f=644가 틀렸다(라이다 모서리 맞춤으로 f≈820, 그러면 발끝·머리 끝·문지방이 ≈12.6°로 맞음).
+#     → 다시 None. tools/camera_intrinsics_calibrate.py(체스판)로 fx·fy·cx·cy를 재고 기울기를 다시 풀어 함께 넣는다
+GEOM = {'h': 0.14, 'f': 644.0, 'pitch_up_deg': None, 'cy': 240.0, 'cx': 320.0}   # 11-28: f부터 의심 — 체스판으로 잰 뒤 한 벌로 넣는다
+GEOM_HISTORY = [dict(date='2026-11-25', pitch_up_deg=9.5, file='docs/calibration/camera_geometry_20261125.json'),
+                dict(date='2026-11-28', pitch_up_deg=17.62, file='docs/calibration/camera_geometry_20261128.json', note='f=644 가정 — f가 틀려 무효')]
 
 
 def geom_ready(geom=None):
@@ -110,6 +115,8 @@ def row_to_distance(row, height=480, geom=None):
     g = geom or GEOM
     if g.get('pitch_up_deg') is None or row > height:
         return None
+    if row >= height - 2:
+        return None      # 11-28: 아래 끝이 화면 끝에 잘린 상자 — 실제 접점은 더 가깝고 얼마인지 모른다(17.6°면 2.9 m로 잘못 나왔다)
     down = math.atan((row - g['cy']) / g['f']) - math.radians(g['pitch_up_deg'])
     if down <= math.radians(0.5):
         return None
