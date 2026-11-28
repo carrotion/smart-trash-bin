@@ -394,7 +394,11 @@ collision_monitor:
       visualize: True
       enabled: True
       polygon_pub_topic: "velocity_polygon_stop"
-      velocity_polygons: ["rotation", "translation_forward", "translation_backward", "stopped"]
+      # 11-28 사용자 승인: 0.16 m/s 넘게 달릴 때만 앞끝 0.20 → 0.25(여유 9 → 14 cm). 근거(벽 다가가기, docs/motion_foundation.md "저녁 바닥 확인"):
+      #   라이다는 약 16 cm 안을 0.08 근처로 읽어(여유 11 cm 안이 못 읽는 띠) 0.20 상자에는 실제 거리 점이 안 들어오고 0.08 점이 늦게 걸린다 →
+      #   0.20 m/s에서 실제 멈춘 여유 2.6~5.6 cm. 0.25면 1~3장 먼저 걸려 기록상 2~4 cm 더 남는다. 녹화 8개(0.16 m/s 넘는 3,724장)에서 더 걸릴 장은 1번(0.18 m/s로 물체 12 cm 앞).
+      #   먼저 맞는 구역을 쓰므로 translation_fast를 translation_forward 앞에 둔다
+      velocity_polygons: ["rotation", "translation_fast", "translation_forward", "translation_backward", "stopped"]
       holonomic: false
       rotation:
         points: "[[0.20, 0.0], [0.141, 0.141], [0.0, 0.20], [-0.141, 0.141], [-0.20, 0.0], [-0.141, -0.141], [0.0, -0.20], [0.141, -0.141]]"
@@ -402,10 +406,16 @@ collision_monitor:
         linear_max: 0.03
         theta_min: -3.0
         theta_max: 3.0
+      translation_fast:
+        points: "[[0.25, 0.14], [0.25, -0.14], [0.0, -0.14], [0.0, 0.14]]"
+        linear_min: 0.16
+        linear_max: 1.0
+        theta_min: -3.0
+        theta_max: 3.0
       translation_forward:
         points: "[[0.20, 0.14], [0.20, -0.14], [0.0, -0.14], [0.0, 0.14]]"
         linear_min: 0.03
-        linear_max: 1.0
+        linear_max: 0.16
         theta_min: -3.0
         theta_max: 3.0
       translation_backward:

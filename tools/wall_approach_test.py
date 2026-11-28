@@ -27,10 +27,11 @@ from speed_floor_sweep import corridor_clearance, LIDAR_X, HALF
 from wheel_config import wheel_distances
 
 BOX_X = (0.0, 0.20); BOX_Y = 0.14; GHOST = 0.085
+BOX_X_FAST = 0.25; FAST_V = 0.16   # 11-28부터 0.16 m/s 넘으면 translation_fast(앞끝 0.25)
 LANE = BOX_Y - HALF   # 앞 여유를 정지 상자와 같은 폭(±0.14)으로만 본다
 
 
-def box_points(msg):
+def box_points(msg, x_max=BOX_X[1]):
     """정면 정지 상자 안 점: (전체 수, 0.08 점 수, 가장 가까운 x)."""
     n = g = 0; near = None
     for i, r in enumerate(msg.ranges):
@@ -40,7 +41,7 @@ def box_points(msg):
         x, y = LIDAR_X + r * math.cos(a), r * math.sin(a)
         if abs(x) <= HALF + 0.005 and abs(y) <= HALF + 0.005:
             continue
-        if BOX_X[0] <= x <= BOX_X[1] and abs(y) <= BOX_Y:
+        if BOX_X[0] <= x <= x_max and abs(y) <= BOX_Y:
             n += 1; g += r <= GHOST
             near = x if near is None else min(near, x)
     return n, g, near
@@ -53,12 +54,12 @@ def main():
     ap.add_argument('--back', type=float, default=0.40, help='회차 사이 물러날 거리(m)')
     a = ap.parse_args()
     rclpy.init(); n = rclpy.create_node('wall_approach_test')
-    S = {'scan': None, 'enc': [], 'state': None, 'log': None}
+    S = {'scan': None, 'enc': [], 'state': None, 'log': None, 'v': a.v}
 
     def on_scan(m):
         S['scan'] = m
         if S['log'] is not None:
-            bn, bg, near = box_points(m)
+            bn, bg, near = box_points(m, BOX_X_FAST if S['v'] > FAST_V else BOX_X[1])
             S['log'].append(dict(t=round(time.time(), 3), box=bn, ghost=bg, near_x=near,
                                  clear=round(corridor_clearance(m, True, corridor=LANE), 3)))
 
