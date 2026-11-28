@@ -127,7 +127,8 @@ def main():
     allp = [(p['name'], p['x'], p['y']) for p in json.load(open(os.path.expanduser('~/maps/active_places.json')))['places']]
     # 11-28 사용자: "안방 화장실은 금지구역이잖아, 단차가 있어서 들어가면 안 된다." 장소 점은 구역 밖(앞 0.28 m)이라 막히지 않았다.
     #   금지 구역과 이름이 같은 장소(공백 무시)는 "들어가면 안 되는 방"이라 둘러볼 대상에서 뺀다. 거리로 거르면 안 된다 —
-    #   훙게방 점은 침대 구역에서 0.19 m라 함께 빠진다
+    #   훙게방 점은 침대 구역에서 0.19 m라 함께 빠진다.
+    #   같은 날 사용자 결정: 그 장소는 지우지 않고 "안방 화장실 앞"으로 이름을 바꿔 남김(구역 밖 점) → 이름이 달라 빠지지 않는다
     import keepout
     zn = {str(q.get('name', '')).replace(' ', '') for q in keepout.load().get('zones', [])}
     banned = [p[0] for p in allp if p[0].replace(' ', '') in zn]
