@@ -25,6 +25,13 @@ def main():
     P = yaml.safe_load(open(a.params)); rp = P[next(iter(P))]['ros__parameters']
     rp.update(mode='localization', map_file_name=base, map_start_pose=[x, y, math.radians(deg)])
     rp.pop('map_start_at_dock', None)
+    # 11-28: 어뭉이방에서 위치가 2.92 m 튀었다(12:06:27) — 저장 지도와 거짓으로 맞춘 고리 닫기(찾는 범위 3.0 m 바로 안).
+    #   녹화 재생 비교(도메인 42, 같은 녹화를 설정만 바꿔 다시 돌림, 2초마다 스캔이 지도 벽 10 cm 안에 드는 비율):
+    #     3.0 m(그대로): 튐 재현, 이후 50%대 / 1.0 m·고리 닫기 끔: 안 튀지만 필요한 0.3 m 보정도 못 해 40~69%로 밀림
+    #     2.0 m: 안 튀고 보정은 함, 끝 자세 (−1.85, −1.38) = 전체 지도 찾기 (−1.84, −1.37), 80% 미만 1/109장(그대로는 11)
+    #     오전 15분 녹화: 3.0 m 94.1% / 2.0 m 94.3%(80% 미만 22 → 20장) — 나빠진 곳 없음
+    #   지도를 그릴 때(매핑)는 그대로 3.0 m — 위치 잡기에서만 줄인다
+    rp['loop_search_maximum_distance'] = 2.0
     if a.sim:
         rp['use_sim_time'] = True
     yaml.safe_dump(P, open(a.out, 'w'), allow_unicode=True)
