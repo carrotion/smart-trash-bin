@@ -113,6 +113,50 @@ GEOM_HISTORY = [dict(date='2026-11-25', pitch_up_deg=7.3, valid_until='2026-11-2
                      note='체스판 렌즈 값 + 사람 발끝·머리 끝. 17.62°(f=644 짝)는 무효')]
 
 
+# ---- 깔끔한 화면(주행 AR 카메라 창·3D 재료, 11-28): 왜곡을 펴고 카메라가 옆으로 돈 것(롤)을 바로 세운 화면
+#   롤: 세로선(문틀·스피커·TV) 30여 개의 소실점 방향 — 소실점 거리는 위 기울기 14.4°로 고정하고 방향만 풀었다.
+#     세 장 모두 3.6~4.0° 사이, 3.8°에서 남은 롤 ±0.1°. 벽에 세운 체스판으로 잰 위 기울기 14.35°(±0.04)도 14.4°와 맞았다.
+#     (기울기까지 자유롭게 풀면 소실점이 6000 px로 멀어져 8°가 나왔다 — 맞는 선이 17/34뿐이었다. 기울기 고정 땐 32/34)
+#   화면: 640×480, 초점 = (fx+fy)/2 × 1.08, 가로 중심 319.5, 세로 중심 195. 줌·중심을 바꿔 가며 골랐다:
+#     1.10·212면 검은 곳 0.13%지만 바닥이 5.9 m부터 보였다. 1.08·195면 왼쪽 아래 쐐기(0.65%, 맨 아래 17줄)만 비고 바닥은 3.07 m부터 → 그 쐐기는 가장자리 화소로 채운다.
+#     기울기(위로 든 각)는 펴지 않는다 — 펴면 바닥이 화면 밖으로 더 나간다. 그래서 RECT의 pitch_up_deg는 GEOM과 같다.
+ROLL_FIX_DEG = 3.8          # 이만큼 돌려야 세로선이 서는 각(initUndistortRectifyMap의 R, 화면 기준 반시계 +)
+RECT_ZOOM = 1.08
+RECT_CY = 195.0             # 세로 중심을 원본(212.3)보다 위로 — 천장을 조금 버리고 바닥을 원본만큼(3.1 m부터) 남긴다
+_rect_cache = {}
+
+
+def rect_geom(geom=None):
+    """깔끔한 화면의 기하 — project_floor·row_to_distance에 그대로 넣으면 그 화면 좌표가 나온다(왜곡·롤 없음)."""
+    g = geom or GEOM
+    f = (g.get('fx', g['f']) + g['f']) / 2 * RECT_ZOOM
+    return {'h': g['h'], 'f': f, 'fx': f, 'cx': 319.5, 'cy': RECT_CY, 'pitch_up_deg': g['pitch_up_deg'], 'roll_deg': 0.0,
+            'w': 640, 'h_px': 480, 'from': 'GEOM + 왜곡 폄 + 롤 %.1f° 바로잡음 + %.2f배' % (ROLL_FIX_DEG, RECT_ZOOM)}
+
+
+def rect_maps(width=640, height=480):
+    """cv2.remap용 지도 한 쌍(처음 한 번 만들고 둔다). 화면 크기가 다르면 None."""
+    import math
+    import cv2
+    if (width, height) != (640, 480):
+        return None
+    if 'maps' not in _rect_cache:
+        g = GEOM; r = rect_geom()
+        K = np.array([[g.get('fx', g['f']), 0, g['cx']], [0, g['f'], g['cy']], [0, 0, 1.0]])
+        Kn = np.array([[r['fx'], 0, r['cx']], [0, r['f'], r['cy']], [0, 0, 1.0]])
+        t = math.radians(ROLL_FIX_DEG)
+        R = np.array([[math.cos(t), -math.sin(t), 0], [math.sin(t), math.cos(t), 0], [0, 0, 1.0]])
+        _rect_cache['maps'] = cv2.initUndistortRectifyMap(K, np.array(g.get('dist') or [0] * 5, float), R, Kn, (640, 480), cv2.CV_16SC2)
+    return _rect_cache['maps']
+
+
+def rectify(frame):
+    """원본 화면 → 깔끔한 화면. 크기가 640×480이 아니면 그대로 돌려준다."""
+    import cv2
+    m = rect_maps(frame.shape[1], frame.shape[0])
+    return frame if m is None else cv2.remap(frame, m[0], m[1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+
 def geom_ready(geom=None):
     return (geom or GEOM).get('pitch_up_deg') is not None
 

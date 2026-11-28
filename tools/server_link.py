@@ -508,6 +508,14 @@ class Link:
             body['dets'] = self.geo.dets_map() or []
         except Exception:
             body['dets'] = []
+        try:                                             # 11-28: 깔끔한 카메라 화면과 그 기하 — 관제소가 경로·사람을 겹쳐 그릴 때 쓴다
+            import camera_detect
+            r = camera_detect.rect_geom()
+            body['camera'] = {'stream': '/camera_rect.mjpg', 'still': '/camera_rect.jpg', 'w': 640, 'h': 480,
+                              'fx': round(r['fx'], 1), 'fy': round(r['f'], 1), 'cx': r['cx'], 'cy': r['cy'],
+                              'pitch_up_deg': r['pitch_up_deg'], 'height_m': r['h'], 'x_cam_m': 0.0}
+        except Exception:
+            pass
         return body
 
     def scene_loop(self):

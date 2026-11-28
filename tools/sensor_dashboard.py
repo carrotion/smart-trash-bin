@@ -912,6 +912,10 @@ class Handler(BaseHTTPRequestHandler):
             self._stream_camera()
         elif self.path.startswith("/camera.jpg"):
             self._send_camera_jpeg()
+        elif self.path.startswith("/camera_rect.jpg"):
+            self._send_camera_rect()
+        elif self.path.startswith("/camera_rect.mjpg"):
+            self._stream_camera(rect=True)
         elif self.path == "/api/occlusion/status":
             with occ_lock:
                 self._send(200, json.dumps(occ_state).encode("utf-8"), "application/json")
@@ -950,8 +954,18 @@ class Handler(BaseHTTPRequestHandler):
         ok, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 85])
         self._send(200, buf.tobytes(), "image/jpeg")
 
-    def _stream_camera(self):
-        """MJPEG — 이미 받아 둔 최신 화면을 흘려보낸다(카메라는 스레드 하나만 연다)."""
+    def _send_camera_rect(self):
+        """깔끔한 한 장 — 왜곡을 펴고 옆으로 돈 것(롤 3.8°)을 바로 세운 원본(상자 없음). 기하는 camera_detect.rect_geom() (11-28)."""
+        fr = _cam_latest(6.0, who=f"{self.client_address[0]} {self.path[:30]}")
+        if fr is None:
+            self._send(503, json.dumps({"ok": False, "error": "카메라 화면이 아직 없다"}, ensure_ascii=False).encode(), "application/json"); return
+        from camera_detect import rectify
+        ok, buf = cv2.imencode(".jpg", rectify(fr), [cv2.IMWRITE_JPEG_QUALITY, 92])
+        self._send(200, buf.tobytes(), "image/jpeg")
+
+    def _stream_camera(self, rect=False):
+        """MJPEG — 이미 받아 둔 최신 화면을 흘려보낸다(카메라는 스레드 하나만 연다).
+        rect=True면 깔끔한 화면(왜곡 폄·롤 바로잡음, 상자 없음)을 장마다 만들어 보낸다(11-28, 주행 AR 카메라 창)."""
         if _cam_latest(5.0) is None:
             self._send(404, b"no camera", "text/plain"); return
         self.send_response(200)
@@ -963,7 +977,11 @@ class Handler(BaseHTTPRequestHandler):
             while True:
                 _want_camera()
                 with cam_lock:
-                    jpg = cam.get("jpg"); n = cam.get("n")
+                    jpg = cam.get("jpg"); n = cam.get("n"); fr = cam.get("frame") if rect else None
+                if rect and fr is not None and n != last:
+                    from camera_detect import rectify
+                    ok, b = cv2.imencode(".jpg", rectify(fr), [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    jpg = b.tobytes() if ok else None
                 if jpg and n != last:
                     last = n
                     self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
