@@ -33,6 +33,7 @@ def main():
     ap.add_argument('--square', type=float, default=25.4, help='칸 한 변(mm)')
     ap.add_argument('--views', type=int, default=20); ap.add_argument('--timeout', type=float, default=300)
     ap.add_argument('--save', action='store_true')
+    ap.add_argument('--with', dest='extra', action='append', default=[], help='앞서 찍어 둔 ~/ar_scan/calib_* 폴더 사진도 함께 쓴다(여러 번 가능)')
     a = ap.parse_args()
     pat = (a.cols, a.rows)
     obj = np.zeros((a.cols * a.rows, 3), np.float32)
@@ -70,8 +71,19 @@ def main():
             time.sleep(0.2); continue
         kept.append((ctr, area, shape)); views.append(c)
         cv2.imwrite(os.path.join(out_dir, f'{len(views):02d}.jpg'), img)
-        print(f'{len(views):2d}/{a.views}  가운데 ({ctr[0]:.0f},{ctr[1]:.0f})  넓이 {area / (size[0] * size[1]) * 100:.0f}%', flush=True)
+        # 판 기울기(카메라 쪽으로 기운 각) — 임시 렌즈 값 800으로. 11-28 두 번째: 11~26°뿐이라 f가 750~1010으로 흔들렸다 → 30° 넘게
+        _, rv_, _ = cv2.solvePnP(obj, c, np.array([[800., 0, 320], [0, 800, 240], [0, 0, 1]]), None)
+        tilt = math.degrees(math.acos(min(1.0, abs(cv2.Rodrigues(rv_)[0][2, 2]))))
+        print(f'{len(views):2d}/{a.views}  가운데 ({ctr[0]:.0f},{ctr[1]:.0f})  넓이 {area / (size[0] * size[1]) * 100:.0f}%  기울기 {tilt:.0f}°' + ('' if tilt >= 30 else ' (더 기울여서)'), flush=True)
         time.sleep(0.5)
+    import glob
+    for dd in a.extra:
+        for fn in sorted(glob.glob(os.path.join(os.path.expanduser(dd), '*.jpg'))):
+            g = cv2.imread(fn, cv2.IMREAD_GRAYSCALE)
+            ok, c = cv2.findChessboardCorners(g, pat, cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE)
+            if ok:
+                views.append(cv2.cornerSubPix(g, c, (5, 5), (-1, -1), (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.01))); size = g.shape[::-1]
+        print(f'{dd}에서 더함 → 모두 {len(views)}장')
     if len(views) < 8:
         print(f'❌ 쓸 만한 장 {len(views)}장(8장 미만, 시도 {n_try}장) — 판이 화면에 다 들어오게, 밝은 데서 다시'); return 1
     rms, K, dist, rv, tv = cv2.calibrateCamera([obj] * len(views), views, size, None, None,
@@ -80,6 +92,11 @@ def main():
     for o_, c_, r_, t_ in zip([obj] * len(views), views, rv, tv):
         pr, _ = cv2.projectPoints(o_, r_, t_, K, dist); errs.append(float(np.sqrt(((pr - c_) ** 2).sum(-1).mean())))
     fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    rng = np.random.default_rng(0); bs = []
+    for _ in range(30):                                   # 장을 뽑아 다시 풀어 흔들림을 본다(11-28: 낮은 RMS여도 f가 ±150 흔들렸다)
+        ix = rng.choice(len(views), len(views), replace=True)
+        bs.append(cv2.calibrateCamera([obj] * len(views), [views[i] for i in ix], size, None, None, flags=cv2.CALIB_FIX_K3)[1][0, 0])
+    print(f'흔들림(다시 뽑아 30번): fx {np.mean(bs):.0f} ± {np.std(bs):.0f} px — ±20 넘으면 기울인 장이 모자란 것')
     hfov = 2 * math.degrees(math.atan(size[0] / 2 / fx)); vfov = 2 * math.degrees(math.atan(size[1] / 2 / fy))
     print(f'\n{len(views)}장, 재투영 오차 RMS {rms:.3f} px (장마다 최대 {max(errs):.3f})')
     print(f'fx {fx:.1f}  fy {fy:.1f}  cx {cx:.1f}  cy {cy:.1f}  화각 {hfov:.1f}×{vfov:.1f}°   (그동안 쓴 값: f 644, 320/240, 52.8×40.9°)')

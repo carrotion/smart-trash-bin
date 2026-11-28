@@ -38,7 +38,7 @@ def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', '
     near = row_to_distance(height - 3, height)
     if near is None or near > NEAR_FLOOR_MAX_M:
         return None          # 11-28: 위로 17.6°면 화면에 보이는 가장 가까운 바닥이 2.9 m — 틈 앞 0.3~1 m를 못 본다 → 미리 보기 없이 간다
-    half = math.tan(math.radians(HFOV_DEG / 2))
+    from camera_detect import GEOM
 
     t_wake = {'t': 0.0}
 
@@ -75,7 +75,7 @@ def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', '
             if dist is None:
                 continue
             cx = (q['x1'] + q['x2']) / 2
-            lateral = (cx - width / 2) / (width / 2) * half * dist     # 화면 중심 기준 옆 거리(m)
+            lateral = (cx - GEOM['cx']) / GEOM.get('fx', GEOM['f']) * dist     # 화면 중심 기준 옆 거리(m) — 11-28 잰 렌즈 값
             out.append((round(dist, 2), round(lateral, 2), q['name']))
         return out
     def ready(min_brightness=35.0):

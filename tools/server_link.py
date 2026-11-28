@@ -652,14 +652,14 @@ class RobotState:
             if d.get('age_s', 9) > 3:
                 return []
             th = math.radians(p['yaw_deg']); c, s = math.cos(th), math.sin(th); out = []
-            half = math.tan(math.radians(25.0))                        # C270 가로 화각 50°의 절반
+            G = camera_detect.GEOM                                     # 11-28: 화각을 어림(50°)하지 않고 잰 렌즈 값으로
             for q in d.get('dets', []):
                 if q.get('score', 0) < min_score:
                     continue
                 dist = camera_detect.row_to_distance(q['y2'])
                 if dist is None or dist > 4.0:
                     continue
-                lateral = ((q['x1'] + q['x2']) / 2 - 320) / 320 * half * dist
+                lateral = ((q['x1'] + q['x2']) / 2 - G['cx']) / G.get('fx', G['f']) * dist
                 out.append({'name': q.get('name'), 'score': round(q.get('score'), 2), 'dist_m': round(dist, 2),
                             'x': round(p['x'] + c * dist - s * lateral, 2), 'y': round(p['y'] + s * dist + c * lateral, 2)})
             return out

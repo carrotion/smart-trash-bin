@@ -11,7 +11,7 @@
     ~/ar_scan/<시각>/tour.json           장소마다 결과(도착·시간·점까지 거리), 둘러보기 결과
 올리기: 장마다 집 안 서버 POST /v1/robots/<기기>/scan/frame {session, seq, t, place, moving, pose{x,y,yaw_deg}, jpeg_b64}
       (서버 주소·토큰은 server_link와 같은 ~/.config/smart-trash-bin/). 실패한 장은 건너뛴다 — 로봇에는 다 남는다.
-카메라 기하: tools/camera_detect.GEOM (f=644 px, 높이 14 cm, 몸통 가운데, 위 기울기 — 11-25 9.5°, 11-28 카메라를 올려 다시 잼).
+카메라 기하: tools/camera_detect.GEOM (11-28 체스판 렌즈 값 fx 849.5·fy 857·cx 316.1·cy 212.3, 높이 14 cm, 몸통 가운데, 위 기울기 14.4° — 그 전 7.3°).
 
     python3 tools/house_tour.py                 # 지금 장소 목록 전부, 가까운 순서
     python3 tools/house_tour.py 거실 주방 식탁   # 고른 장소만, 적은 순서대로
@@ -121,7 +121,7 @@ def camera_info():
     import camera_detect as C
     p = C.GEOM.get('pitch_up_deg')
     last = C.GEOM_HISTORY[-1] if C.GEOM_HISTORY else {}
-    return dict(pitch_up_deg=p, height_m=C.GEOM['h'], f_px=C.GEOM['f'],
+    return dict(pitch_up_deg=p, height_m=C.GEOM['h'], f_px=C.GEOM['f'], fx_px=C.GEOM.get('fx'), cx=C.GEOM['cx'], cy=C.GEOM['cy'], dist=C.GEOM.get('dist'),
                 geometry_file=last.get('file') if p is not None and last.get('pitch_up_deg') == p else None,
                 note=None if p is not None else '2026-11-28 오전 기록 주행(10:29 끝) 뒤 사용자가 각도를 위로 올림 — 기울기 아직 안 잼')
 

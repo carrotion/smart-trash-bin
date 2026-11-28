@@ -99,9 +99,18 @@ FLOOR = {'a': 347.0, 'b': 96.0}      # (옛) 줄 = a + b/거리(m) — 2026-11-2
 #     이 각도에서 화면 맨 아래 줄 = 바닥 2.9 m, 지평선 = 450줄 → 바닥 거리는 2.9 m~십여 m만 보이고 줄 하나가 수십 cm다
 #   그런데 키 170 cm로 확인하니 머리 끝은 10.5°를 냈다 — f=644가 틀렸다(라이다 모서리 맞춤으로 f≈820, 그러면 발끝·머리 끝·문지방이 ≈12.6°로 맞음).
 #     → 다시 None. tools/camera_intrinsics_calibrate.py(체스판)로 fx·fy·cx·cy를 재고 기울기를 다시 풀어 함께 넣는다
-GEOM = {'h': 0.14, 'f': 644.0, 'pitch_up_deg': None, 'cy': 240.0, 'cx': 320.0}   # 11-28: f부터 의심 — 체스판으로 잰 뒤 한 벌로 넣는다
-GEOM_HISTORY = [dict(date='2026-11-25', pitch_up_deg=9.5, file='docs/calibration/camera_geometry_20261125.json'),
-                dict(date='2026-11-28', pitch_up_deg=17.62, file='docs/calibration/camera_geometry_20261128.json', note='f=644 가정 — f가 틀려 무효')]
+#   11-28 14:2x 체스판(37장, RMS 0.38 px, fx 흔들림 ±23)으로 렌즈 값을 쟀다: fx 849.5, fy 857.0, cx 316.1, cy 212.3(화각 41.3×31.3°).
+#     이 값으로 사람(키 170 cm, 라이다 4.27 m) 발끝 → 14.74°(첫째 섬)·13.87°(둘째 섬), 머리 끝 → 14.65° — f=644 때(16.5 vs 10.5)와 달리 1° 안에서 맞는다 → 14.4°(±0.5).
+#     ⚠️ 이 각도에선 바닥 3~10 m가 화면 437~479줄에 몰린다 — 상자 아래 끝이 10 px 흔들리면 4 m가 7 m로 바뀐다. 거리는 라이다로 잴 것
+#     'f'는 세로(줄 → 거리)에 쓰는 fy, 'fx'는 가로(열 → 옆 방향). 왜곡(k1 +0.03, k2 +0.37)은 아직 적용하지 않는다(가운데 근처는 1 px 안팎).
+#     이 각도에서 화면 맨 아래 줄 = 바닥 약 3.1 m, 지평선 = 437줄
+GEOM = {'h': 0.14, 'f': 857.0, 'fx': 849.5, 'pitch_up_deg': 14.4, 'cy': 212.3, 'cx': 316.1,
+        'dist': [0.0308, 0.3716, -0.0123, 0.0108, 0.0], 'intrinsics_file': 'docs/calibration/camera_intrinsics_20261128.json'}
+# 기울기 이력 — 새 렌즈 값 기준. 11-25(오전 기록 주행까지)는 같은 자세 사진 10쌍의 회전 차이 7.6°와 11-25 바닥 세 점(7.2~8.1°)으로 다시 풀었다
+GEOM_HISTORY = [dict(date='2026-11-25', pitch_up_deg=7.3, valid_until='2026-11-28 10:29', file='docs/calibration/camera_geometry_20261125.json',
+                     note='옛 표기 9.5°는 f=644 짝 — 새 렌즈 값으로 7.3°(±0.5)'),
+                dict(date='2026-11-28', pitch_up_deg=14.4, file='docs/calibration/camera_intrinsics_20261128.json',
+                     note='체스판 렌즈 값 + 사람 발끝·머리 끝. 17.62°(f=644 짝)는 무효')]
 
 
 def geom_ready(geom=None):
@@ -140,7 +149,7 @@ def project_floor(x, y, pose, geom=GEOM, x_cam=0.0, width=640, height=480):
     v = geom['cy'] + f * math.tan(alpha + pitch)
     psi = math.atan2(left, fwd)
     # 카메라가 +x를 보면 화면 오른쪽은 로봇의 -y(오른쪽)다 → 로봇 왼쪽(+y)은 화면 왼쪽(u<320). 11-25 실물 확인에서 뒤집혀 있던 것을 고침
-    u = geom['cx'] - f * math.tan(psi)
+    u = geom['cx'] - geom.get('fx', f) * math.tan(psi)
     if not (0 <= u < width and 0 <= v < height):
         return None
     return (round(u), round(v))
