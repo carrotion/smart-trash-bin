@@ -1,0 +1,18 @@
+[Unit]
+Description=Smart Trash Bin - driving AR check view (rectified camera + path/lidar/boxes overlay, port 8770)
+# 카메라 화면은 센서 대시보드(8767)에서 받는다. 2026-11-28 사용자 결정: 늘 켬(카메라가 늘 깨어 있고 CPU 한 코어의 약 20%)
+After=network-online.target smart-trash-sensor-dashboard.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=carrotian
+WorkingDirectory=/home/carrotian/smart-trash-bin
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/carrotian/catkin_ws/install/setup.bash && exec python3 -u tools/ar_view.py'
+Restart=on-failure
+RestartSec=5
+# 보여 주기용 — 주행·SLAM보다 뒤로
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
