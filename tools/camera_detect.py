@@ -88,22 +88,37 @@ class Detector:
         return frame
 
 
-FLOOR = {'a': 347.0, 'b': 96.0}      # 줄 = a + b/거리(m) — 2026-11-22 실측(docs/calibration/camera_floor_20261122.json)
+FLOOR = {'a': 347.0, 'b': 96.0}      # (옛) 줄 = a + b/거리(m) — 2026-11-22 실측. 11-28부터 GEOM 하나로 계산한다(아래)
+
+# 카메라 기하. pitch_up_deg = 광축이 수평보다 **위로** 든 각(도). 11-25 값 9.5°는 그동안 "아래로 9.5°"라고 적었지만 틀린 표기였다 —
+#   식(v = cy + f·tan(atan(h/d) + 9.5°))에서 지평선(d→∞)이 347줄, 화면 가운데(240)보다 아래에 오니 광축은 위를 본다(11-28 정정, 값과 계산은 맞았다).
+#   11-28 사용자가 카메라를 더 위로 올렸다(서버 쪽 물체 인식이 가구 전체를 못 봄) — 11-25 값은 무효.
+#   다시 잴 때까지 pitch_up_deg=None → 거리·바닥 투영을 하지 않는다(틀린 거리보다 "모름"이 낫다).
+#   다시 재기: 로봇을 바닥에 두고 `python3 tools/camera_pitch_calibrate.py`(라이다로 잰 물체 거리 + 검출 상자 아래 끝 → 기울기)
+GEOM = {'h': 0.14, 'f': 644.0, 'pitch_up_deg': None, 'cy': 240.0, 'cx': 320.0}
+GEOM_HISTORY = [dict(date='2026-11-25', pitch_up_deg=9.5, file='docs/calibration/camera_geometry_20261125.json')]
 
 
-def row_to_distance(row, height=480, floor=FLOOR):
-    """화면 줄 → 바닥까지 거리(m). 지평선(a)보다 아래일 때만 뜻이 있다. 카메라를 기울이거나 높이를 바꾸면 다시 잰다."""
-    if row <= floor['a'] or row > height:
+def geom_ready(geom=None):
+    return (geom or GEOM).get('pitch_up_deg') is not None
+
+
+def row_to_distance(row, height=480, geom=None):
+    """화면 줄(물체 상자 아래 끝) → 카메라에서 바닥 접점까지 수평 거리(m). 기울기를 모르면 None.
+    식: 수평 아래로 본 각 = atan((줄 − cy)/f) − 위 기울기 → 거리 = h / tan(각). 그 각이 0.5° 이하(지평선 근처·위)면 None."""
+    import math
+    g = geom or GEOM
+    if g.get('pitch_up_deg') is None or row > height:
         return None
-    return floor['b'] / (row - floor['a'])
-
-
-GEOM = {'h': 0.14, 'f': 644.0, 'pitch_deg': 9.5, 'cy': 240.0, 'cx': 320.0}   # 2026-11-25 실측(docs/calibration/camera_geometry_20261125.json)
+    down = math.atan((row - g['cy']) / g['f']) - math.radians(g['pitch_up_deg'])
+    if down <= math.radians(0.5):
+        return None
+    return g['h'] / math.tan(down)
 
 
 def project_floor(x, y, pose, geom=GEOM, x_cam=0.0, width=640, height=480):
     """지도 위 바닥 점(x,y)이 카메라 화면 어디에 찍히나 (u, v). 화면 밖이면 None.
-    pose = (로봇 x, 로봇 y, 로봇 yaw°). 카메라는 base_link에서 x_cam만큼 앞, 높이 h, 아래로 pitch.
+    pose = (로봇 x, 로봇 y, 로봇 yaw°). 카메라는 base_link에서 x_cam만큼 앞, 높이 h, 광축은 위로 pitch_up_deg.
     바닥이 평평하다고 보고 계산한다 — 벽이나 가구 위 점에는 맞지 않는다(그것은 깊이 카메라 몫)."""
     import math
     rx, ry, yaw = pose
@@ -111,9 +126,9 @@ def project_floor(x, y, pose, geom=GEOM, x_cam=0.0, width=640, height=480):
     dx, dy = x - rx, y - ry
     fwd = dx * math.cos(th) + dy * math.sin(th) - x_cam
     left = -dx * math.sin(th) + dy * math.cos(th)
-    if fwd <= 0.05:
+    if fwd <= 0.05 or geom.get('pitch_up_deg') is None:
         return None
-    h, f, pitch = geom['h'], geom['f'], math.radians(geom['pitch_deg'])
+    h, f, pitch = geom['h'], geom['f'], math.radians(geom['pitch_up_deg'])   # 광축이 위로 든 각
     alpha = math.atan(h / math.hypot(fwd, left))
     v = geom['cy'] + f * math.tan(alpha + pitch)
     psi = math.atan2(left, fwd)

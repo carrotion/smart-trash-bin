@@ -29,7 +29,9 @@ def make_check(api=API, height=480, width=640, keep_names=('person', 'bottle', '
         urllib.request.urlopen(api + '/api/detect?peek=1', timeout=1.5).read()     # 있는지만 본다(카메라는 안 켠다)
     except Exception:
         return None
-    from camera_detect import row_to_distance
+    from camera_detect import row_to_distance, geom_ready
+    if not geom_ready():
+        return None          # 11-28: 카메라 기울기가 바뀌어 다시 잴 때까지 거리를 모른다 → 미리 보기 없이 간다(틀린 거리로 멈추지 않게)
     half = math.tan(math.radians(HFOV_DEG / 2))
 
     t_wake = {'t': 0.0}

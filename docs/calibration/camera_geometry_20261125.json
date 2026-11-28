@@ -22,5 +22,7 @@
   }
  ],
  "fit_rms_rows": 1.43,
- "note": "row = cy + f*tan(atan(h/d)+pitch). 카메라를 옮기거나 기울이면 다시 잰다"
+ "note": "row = cy + f*tan(atan(h/d)+pitch). 카메라를 옮기거나 기울이면 다시 잰다",
+ "pitch_up_deg": 9.5,
+ "note_20261128": "pitch_down_deg는 이름이 틀렸다 — 식 row = cy + f*tan(atan(h/d)+9.5°)에서 지평선이 348줄(가운데보다 아래)이라 광축은 위로 9.5°. 11-28 카메라를 더 올려 이 값은 무효"
 }

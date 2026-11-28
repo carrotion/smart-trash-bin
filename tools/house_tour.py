@@ -11,7 +11,7 @@
     ~/ar_scan/<시각>/tour.json           장소마다 결과(도착·시간·점까지 거리), 둘러보기 결과
 올리기: 장마다 집 안 서버 POST /v1/robots/<기기>/scan/frame {session, seq, t, place, moving, pose{x,y,yaw_deg}, jpeg_b64}
       (서버 주소·토큰은 server_link와 같은 ~/.config/smart-trash-bin/). 실패한 장은 건너뛴다 — 로봇에는 다 남는다.
-카메라 기하: docs/calibration/camera_geometry_20261125.json (f=644 px, 아래 9.5°, 높이 14 cm, 몸통 가운데).
+카메라 기하: tools/camera_detect.GEOM (f=644 px, 높이 14 cm, 몸통 가운데, 위 기울기 — 11-25 9.5°, 11-28 카메라를 올려 다시 잼).
 
     python3 tools/house_tour.py                 # 지금 장소 목록 전부, 가까운 순서
     python3 tools/house_tour.py 거실 주방 식탁   # 고른 장소만, 적은 순서대로
