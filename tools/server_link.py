@@ -44,6 +44,19 @@ PLACE_AREA_M = 0.30      # 방 이름 목표: 앞이 막혀 더 못 가도 장�
 SCENE_S = 1.0            # 주행 AR용 장면(자세·경로·라이다 점·검출)을 올리는 간격(2026-11-25)
 PATH_FILE = os.path.expanduser('~/.local/state/smart-trash-bin/path.json')
 CAMERA_API = 'http://127.0.0.1:8767'
+_cam_seen = {'t': -1e9, 'ok': False}
+
+
+def camera_present(api=CAMERA_API, ttl=30.0):
+    """카메라가 꽂혀 있고 관제 대시보드가 답하나(켜지는 않는다 — /api/camera는 상태만, 11-28 서버 쪽이 devices.camera를 물음). 30초 기억."""
+    now = time.monotonic()
+    if now - _cam_seen['t'] > ttl:
+        try:
+            _cam_seen['ok'] = json.load(urllib.request.urlopen(api + '/api/camera', timeout=1.5)).get('ok') is True
+        except Exception:
+            _cam_seen['ok'] = False
+        _cam_seen['t'] = now
+    return _cam_seen['ok']
 COMMANDS = {
     'get_status': {'args': {}, 'rejects': []},
     'cancel': {'args': {'id': '명령 번호(없으면 지금 하는 것)', 'target': 'mission|speech|all'}, 'rejects': []},
@@ -190,7 +203,7 @@ class Link:
     def hello(self):
         return self.call('POST', self.path('hello'), {
             'protocol': PROTOCOL, 'software': self.software, 'caps_version': self.caps_version, 'name': '쓰레기통',
-            'devices': {'mic': False, 'speaker': False, 'camera': False}, 'commands': COMMANDS, 'places': self.places(),
+            'devices': {'mic': False, 'speaker': False, 'camera': camera_present()}, 'commands': COMMANDS, 'places': self.places(),
             'status_interval_s': STATUS_S})[0]
 
     def status_body(self):
@@ -198,7 +211,7 @@ class Link:
         body = {'protocol': PROTOCOL, 'software': self.software, 'caps_version': self.caps_version, 'boot_id': self.boot,
                 'uptime_s': round(self.clock(), 1), 'robot_time': datetime.now().astimezone().isoformat(timespec='seconds'),
                 'mode': 'idle', 'doing': self.doing, 'speaking': False,
-                'devices': {'mic': False, 'speaker': False, 'camera': False},
+                'devices': {'mic': False, 'speaker': False, 'camera': camera_present()},
                 'link': {'rtt_ms_p50': round(statistics.median(rt), 1) if rt else None,
                          'lost_pct': round(100 * sum(self.fails) / len(self.fails), 1) if self.fails else None,
                          'outbox': len(self.outbox.items), 'outbox_dropped': self.outbox.dropped}}

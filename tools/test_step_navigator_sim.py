@@ -452,6 +452,15 @@ def main():
         rQ, dQ = place(None)
         check('장소 목표는 막혀도 30 cm 안이면 도착, 좌표 목표는 그대로 실패(벽에 밀어 넣지 않음)',
               rP['ok'] and dP <= 0.30 and not rQ['ok'], f'장소: {rP["msg"][:30]} 남은 {dP * 100:.0f} cm | 좌표: {rQ["msg"][:20]}')
+        #  16e. 제자리 둘러보기(11-28 집 한 바퀴 기록): 지금 자리를 목표로 방향만 90°씩 네 번 — 매번 도착, 방향 오차 5° 안,
+        #       회전 중심 어긋남(rot_off 기본값)이 있어도 처음 자리에서 10 cm 안에 남는다
+        nav, P = make(world=[]); x0, y0 = P['x'], P['y']; looks = []
+        for k in range(1, 5):
+            here = nav.map_pose(); r = nav.go((here[0], here[1], math.radians(90 * k)))
+            looks.append((r['ok'], r.get('final_yaw_err_deg'), math.hypot(P['x'] - x0, P['y'] - y0)))
+        check('제자리 둘러보기: 지금 자리 + 방향만 준 목표 90°씩 네 번이 모두 도착, 방향 오차 5° 안, 처음 자리에서 10 cm 안',
+              all(o and ye is not None and abs(ye) <= 5.0 and d <= 0.10 for o, ye, d in looks),
+              ' | '.join(f'{"✓" if o else "✗"} {ye if ye is None else round(ye, 1)}° {d * 100:.1f}cm' for o, ye, d in looks))
         builtins.print = lambda *a, **k: None
 
         #  16b. 상황별 걸음(11-22): 트였으면 step_open_m, 경로 옆에 장애물이 있으면 step_m, 라이다 바로 옆 물체 직후 두 단계는 step_m

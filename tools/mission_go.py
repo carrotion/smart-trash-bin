@@ -5,6 +5,7 @@
 목표마다 배터리를 보고(11.4 V 미만이면 시작 안 함), 도착하면 지도 위 자세와 주행기가 잰 자리 검사 값을 남긴다. Ctrl-C/종료 신호면 목표를 취소한다.
 
     python3 tools/mission_go.py 북쪽방:-1.0,5.1 복도:-0.1,-5.0 제자리:0.66,0.49
+    python3 tools/mission_go.py 거실:3.58,3.18,0.30 둘러보기:3.58,3.18,,90   # 이름:x,y[,장소 반경 m[,마지막 방향 도]]
 """
 import json, math, os, signal, sys, time, urllib.request
 
@@ -29,7 +30,8 @@ def main():
     goals = []
     for g in sys.argv[1:]:
         name, xy = g.rsplit(':', 1); v = xy.split(',')
-        goals.append((name, float(v[0]), float(v[1]), float(v[2]) if len(v) > 2 else None))   # 셋째 값 = 장소 반경(m, 11-27)
+        goals.append((name, float(v[0]), float(v[1]), float(v[2]) if len(v) > 2 and v[2] else None,   # 셋째 값 = 장소 반경(m, 11-27)
+                      float(v[3]) if len(v) > 3 and v[3] else None))                                # 넷째 값 = 마지막 방향(도, 11-28)
     if not goals:
         print(__doc__); return 2
     # ⚠️ 11-14: Ctrl-C(SIGINT)에 rclpy 기본 처리기가 먼저 컨텍스트를 닫아, 취소 요청을 보내지 못한 채 죽었다 → 로봇은 목표로 계속 갔다(비상정지로 세움).
@@ -59,7 +61,7 @@ def main():
             print('❌ 주행기 액션 서버 없음'); return 2
         if not spin_until(lambda: pose() is not None, 10):
             print('❌ map→base_link 없음'); return 2
-        for name, x, y, area in goals:
+        for name, x, y, area, yaw_deg in goals:
             v = volts()
             if v is not None and v < MIN_V:
                 print(f'🔋 {v:.2f} V — {MIN_V} V 미만이라 "{name}" 시작 안 함'); return 3
@@ -67,8 +69,9 @@ def main():
             print(f'▶ {name} ({x:+.2f}, {y:+.2f}) ← 지금 ({p0[0]:+.2f}, {p0[1]:+.2f}), 직선 {math.hypot(x - p0[0], y - p0[1]):.1f} m, {v} V', flush=True)
             g = NavigateToPose.Goal(); g.pose.header.frame_id = 'map'; g.pose.header.stamp = n.get_clock().now().to_msg()
             g.pose.pose.position.x, g.pose.pose.position.y = x, y; g.pose.pose.orientation.w = 1.0
-            if area:
-                g.behavior_tree = f'area_m={area:.2f}'          # 장소 목표: 막혀도 이 반경 안이면 도착(step_nav_action_server가 읽음)
+            bt = ([f'area_m={area:.2f}'] if area else []) + ([f'yaw_deg={yaw_deg:.1f}'] if yaw_deg is not None else [])
+            if bt:
+                g.behavior_tree = ';'.join(bt)                 # 장소 반경(막혀도 이 안이면 도착)·마지막 방향 — step_nav_action_server가 읽음
             fg = ac.send_goal_async(g)
             if not spin_until(fg.done, 10) or not fg.result().accepted:
                 print('❌ 목표 거절됨'); return 2
