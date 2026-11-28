@@ -827,7 +827,7 @@ def _cam_worker():
             time.sleep(0.5); continue
         if cap is None:
             cap = _cam_open(); print('카메라 켬', flush=True)
-        ok, fr = cap.read()
+        ok, fr = cap.read(); t_read = time.time()       # 찍힌 시각(대략) — 주행 AR 지연 재기용, X-Frame-T로 알려 준다(11-28)
         if not ok or fr is None:
             with cam_lock:
                 cam["err"] = "read failed"
@@ -847,6 +847,7 @@ def _cam_worker():
         ok2, buf = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 75])
         with cam_lock:
             cam["frame"] = fr; cam["jpg"] = buf.tobytes() if ok2 else cam["jpg"]; cam["n"] += 1; cam["err"] = None
+            cam["t"] = t_read
         with state_lock:
             state["camera"] = {"connected": True, "n": cam["n"]}
 
@@ -873,7 +874,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, code, body, ctype):
+    def _send(self, code, body, ctype, extra=None):
         # 클라이언트가 받아준다면 압축해서 보낸다. 맵 그리드나 JSON 반복 필드는
         # 10배 가까이 줄어든다. WiFi가 약한 구간에서 이게 응답성을 좌우한다.
         enc = None
@@ -886,6 +887,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")   # 페이지를 고쳐도 브라우저가 옛 화면을 들고 있지 않게(11-22)
         if enc:
             self.send_header("Content-Encoding", enc)
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -940,7 +943,9 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if (q.get("raw") or [""])[0]:                       # 상자 없는 원본(인식 시험용)
             ok, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 92])
-            self._send(200, buf.tobytes(), "image/jpeg"); return
+            with cam_lock:
+                t_fr = cam.get("t")
+            self._send(200, buf.tobytes(), "image/jpeg", {"X-Frame-T": f"{t_fr:.3f}"} if t_fr else None); return
         if (q.get("save") or [""])[0]:
             d = os.path.expanduser("~/camera_shots"); os.makedirs(d, exist_ok=True)
             name = os.path.join(d, "cam_" + time.strftime("%Y%m%d_%H%M%S") + ".jpg")

@@ -189,11 +189,13 @@ def project_floor(x, y, pose, geom=GEOM, x_cam=0.0, width=640, height=480):
     if fwd <= 0.05 or geom.get('pitch_up_deg') is None:
         return None
     h, f, pitch = geom['h'], geom['f'], math.radians(geom['pitch_up_deg'])   # 광축이 위로 든 각
-    alpha = math.atan(h / math.hypot(fwd, left))
-    v = geom['cy'] + f * math.tan(alpha + pitch)
-    psi = math.atan2(left, fwd)
-    # 카메라가 +x를 보면 화면 오른쪽은 로봇의 -y(오른쪽)다 → 로봇 왼쪽(+y)은 화면 왼쪽(u<320). 11-25 실물 확인에서 뒤집혀 있던 것을 고침
-    u = geom['cx'] - geom.get('fx', f) * math.tan(psi)
+    # 11-28: 핀홀 그대로(tools/ar_view.project와 같은 식). 예전 식(옆 거리까지 합친 거리로 숙임각을 냄)은 화면 옆쪽에서 어긋났다
+    zc = fwd * math.cos(pitch) - h * math.sin(pitch)
+    if zc <= 0.05:
+        return None
+    v = geom['cy'] + f * (fwd * math.sin(pitch) + h * math.cos(pitch)) / zc
+    # 카메라가 +x를 보면 화면 오른쪽은 로봇의 -y(오른쪽)다 → 로봇 왼쪽(+y)은 화면 왼쪽. 11-25 실물 확인에서 뒤집혀 있던 것을 고침
+    u = geom['cx'] - geom.get('fx', f) * left / zc
     if not (0 <= u < width and 0 <= v < height):
         return None
     return (round(u), round(v))
