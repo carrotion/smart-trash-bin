@@ -139,6 +139,11 @@ def main():
         p0 = state.pose()
         if not p0:
             print('❌ 지도 위 자세가 없다 — 스택을 저장 지도로 켰나?'); return 2
+        # 11-28: 스택을 `start`(주행기 서버 없음)로 켜고 돌렸다 → 목표가 전부 "주행기 액션 서버 없음"으로 실패했는데 화면 48장은 올라갔다.
+        #   주행기 서버가 없으면 기록도 시작하지 않는다(`MAP=… tools/nav_test_stack.sh start explore`로 켜야 뜬다)
+        procs = subprocess.run(['ps', '-eo', 'args'], capture_output=True, text=True, timeout=5).stdout
+        if 'step_nav_action_server.py' not in procs:
+            print('❌ 주행기 서버(step_nav_action_server)가 없다 — `MAP=… tools/nav_test_stack.sh start explore`로 켤 것'); return 2
         route = [byname[n] for n in a.places] if a.places else order_nearest((p0['x'], p0['y']), allp)
         session = 'tour_' + time.strftime('%Y%m%d_%H%M%S')
         out = os.path.expanduser('~/ar_scan/' + session); os.makedirs(out, exist_ok=True)
@@ -151,7 +156,7 @@ def main():
             bag = subprocess.Popen(['ros2', 'bag', 'record', '-s', 'mcap', '-o', os.path.join(out, 'bag')] + TOPICS,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         rec = Recorder(state, out, a.frame_s, up); rec.start()
-        print(f'세션 {session} — 기록: {out}' + ('' if up else ' (올리기 끔)') + '\n순서: {" → ".join(p[0] for p in route)}', flush=True)
+        print(f'세션 {session} — 기록: {out}' + ('' if up else ' (올리기 끔)') + f'\n순서: {" → ".join(p[0] for p in route)}', flush=True)
         res = []; fails = 0; t_all = time.time()
         try:
             for name, x, y in route:
