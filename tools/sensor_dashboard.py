@@ -834,13 +834,17 @@ def _cam_worker():
             time.sleep(0.5); continue
         with det_lock:
             ds = list(det["dets"]) if time.time() - det["t"] < 1.5 else []
+        # 11-28: 예전엔 상자를 fr 자체에 그려 cam["frame"]에 넣었다 → `?raw=1`(기록 주행·보정)과 검출기 입력에도 상자가 들어갔다.
+        #   상자는 보여 주는 jpg에만 그리고, frame은 카메라 원본 그대로 둔다
+        view = fr
         if ds:
             from camera_detect import COCO
+            view = fr.copy()
             for x1, y1, x2, y2, sc, c in ds:
-                cv2.rectangle(fr, (int(x1), int(y1)), (int(x2), int(y2)), (60, 200, 60), 2)
-                cv2.putText(fr, f'{COCO[c]} {sc:.2f}', (int(x1), max(12, int(y1) - 6)),
+                cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (60, 200, 60), 2)
+                cv2.putText(view, f'{COCO[c]} {sc:.2f}', (int(x1), max(12, int(y1) - 6)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 200, 60), 1, cv2.LINE_AA)
-        ok2, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        ok2, buf = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 75])
         with cam_lock:
             cam["frame"] = fr; cam["jpg"] = buf.tobytes() if ok2 else cam["jpg"]; cam["n"] += 1; cam["err"] = None
         with state_lock:
@@ -939,6 +943,10 @@ class Handler(BaseHTTPRequestHandler):
             cv2.imwrite(name, fr, [cv2.IMWRITE_JPEG_QUALITY, 92])
             self._send(200, json.dumps({"ok": True, "file": name, "w": fr.shape[1], "h": fr.shape[0]}, ensure_ascii=False).encode(), "application/json")
             return
+        with cam_lock:
+            jpg = cam.get("jpg")                             # 상자를 그린 보여 주기용(11-28부터 frame은 원본)
+        if jpg:
+            self._send(200, jpg, "image/jpeg"); return
         ok, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 85])
         self._send(200, buf.tobytes(), "image/jpeg")
 
