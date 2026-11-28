@@ -116,6 +116,16 @@ def mission(spec, log):
         p.send_signal(signal.SIGTERM); p.wait(20); raise
 
 
+def camera_info():
+    """이 세션 사진을 찍은 카메라 기울기. 11-28 사용자가 각도를 올린 뒤로 다시 재기 전까지는 None(모름)이다."""
+    import camera_detect as C
+    p = C.GEOM.get('pitch_up_deg')
+    last = C.GEOM_HISTORY[-1] if C.GEOM_HISTORY else {}
+    return dict(pitch_up_deg=p, height_m=C.GEOM['h'], f_px=C.GEOM['f'],
+                geometry_file=last.get('file') if p is not None and last.get('pitch_up_deg') == p else None,
+                note=None if p is not None else '2026-11-28 오전 기록 주행(10:29 끝) 뒤 사용자가 각도를 위로 올림 — 기울기 아직 안 잼')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('places', nargs='*'); ap.add_argument('--no-look', action='store_true')
@@ -123,6 +133,11 @@ def main():
     ap.add_argument('--no-return', action='store_true', help='끝나고 출발 자리로 돌아오지 않음')
     ap.add_argument('--no-upload', action='store_true', help='집 안 서버로 올리지 않음(로봇에만 남김)')
     a = ap.parse_args()
+    # 11-28: 아침 첫 시도를 SIGTERM으로 끊었더니 finally가 안 돌아 `ros2 bag record`가 고아로 2시간 46분 남았다(626 MB).
+    #   SIGTERM도 Ctrl-C처럼 받아 정리(녹화·올리기 마무리·tour.json)를 거치게 한다
+    def _term(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
     import server_link as S
     allp = [(p['name'], p['x'], p['y']) for p in json.load(open(os.path.expanduser('~/maps/active_places.json')))['places']]
     # 11-28 사용자: "안방 화장실은 금지구역이잖아, 단차가 있어서 들어가면 안 된다." 장소 점은 구역 밖(앞 0.28 m)이라 막히지 않았다.
@@ -206,7 +221,7 @@ def main():
             json.dump(dict(session=session, upload=None if not up else dict(ok=up.ok, fail=up.fail, dropped=up.dropped, last_err=up.last_err), start=p0, route=[p[0] for p in route], results=res, frames=rec.n, frame_fail=rec.fail,
                            secs=round(time.time() - t_all, 1), map=os.path.basename(os.readlink(os.path.expanduser('~/maps/active_places.json')))
                            if os.path.islink(os.path.expanduser('~/maps/active_places.json')) else None,
-                           camera_geometry='docs/calibration/camera_geometry_20261125.json'),
+                           camera=camera_info()),
                       open(os.path.join(out, 'tour.json'), 'w'), ensure_ascii=False, indent=1)
             print(f'끝: 장소 {sum(r["ok"] for r in res)}/{len(route)}, 화면 {rec.n}장(실패 {rec.fail})'
                   + (f', 올림 {up.ok}장(실패 {up.fail}, 버림 {up.dropped})' if up else '') + f', {(time.time() - t_all) / 60:.1f}분 → {out}', flush=True)
