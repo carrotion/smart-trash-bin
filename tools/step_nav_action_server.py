@@ -158,7 +158,7 @@ def main():
         #   이 주행기는 행동 트리를 쓰지 않으니 그 칸을 빌린다. 없거나 못 읽으면 좌표 목표로 다룬다
         #   11-28: 'area_m=0.30;yaw_deg=90'처럼 ';'로 이어 마지막 방향도 싣는다(집 한 바퀴 기록 — 장소마다 제자리에서 둘러보기).
         #   yaw_deg가 없으면 지금처럼 방향 없음(None). 자세의 orientation은 보내는 쪽마다 w=1(0°)로 채워 와서 쓰지 않는다
-        area = None; yaw = None
+        area = None; yaw = None; ov = {}
         for kv in (gh.request.behavior_tree or '').split(';'):
             k, _, v = kv.strip().partition('=')
             try:
@@ -166,9 +166,11 @@ def main():
                     area = max(0.0, min(0.6, float(v)))
                 elif k == 'yaw_deg':
                     yaw = math.radians(float(v))
+                elif k in ('set.step_long_m', 'set.open_side_m'):   # 11-28 A/B 바닥 시험용(이 두 값만) — mission_go의 NAV_SET
+                    ov[k[4:]] = max(0.0, min(2.0, float(v)))
             except ValueError:
                 pass
-        jobs.put((goal[0], goal[1], done, box, area, yaw)); t_start = time.time(); t_fb = 0.0
+        jobs.put((goal[0], goal[1], done, box, area, yaw, ov)); t_start = time.time(); t_fb = 0.0
         while not done.wait(0.1):
             if stopping.is_set():
                 return NavigateToPose.Result()
@@ -217,7 +219,7 @@ def main():
     try:
         while rclpy.ok():
             try:
-                x, y, done, box, area, yaw = jobs.get_nowait()
+                x, y, done, box, area, yaw, ov = jobs.get_nowait()
             except queue.Empty:
                 nav.spin(0.05); continue
             k += 1; nav.cancel = False; nlog = len(nav.log)
@@ -234,7 +236,16 @@ def main():
                         nav.spin(0.1)
                     r = dict(ok=False, msg='시험: 닫힌 문 흉내', steps=0, secs=time.time() - te, final_err_m=0.0)
                 else:
-                    r = nav.go((x, y, yaw), area_m=area) if here else dict(ok=False, msg='map→base_link TF 없음', steps=0, secs=0.0, final_err_m=float('nan'))
+                    keep = {name: getattr(nav, name) for name in ov}      # ⚠️ 11-28: 여기서 k를 쓰면 목표 번호 k를 덮어 서버가 죽었다
+                    try:
+                        for name, val in ov.items():
+                            setattr(nav, name, val)
+                        if ov:
+                            print(f'   이 목표만 설정 {ov}', flush=True)
+                        r = nav.go((x, y, yaw), area_m=area) if here else dict(ok=False, msg='map→base_link TF 없음', steps=0, secs=0.0, final_err_m=float('nan'))
+                    finally:
+                        for name, val in keep.items():
+                            setattr(nav, name, val)
             except Exception as e:   # 주행기가 죽어도 목표를 준 쪽이 영영 기다리지 않게 실패로 돌려준다
                 if not rclpy.ok():
                     break

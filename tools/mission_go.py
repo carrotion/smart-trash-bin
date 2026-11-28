@@ -78,6 +78,8 @@ def main():
             g = NavigateToPose.Goal(); g.pose.header.frame_id = 'map'; g.pose.header.stamp = n.get_clock().now().to_msg()
             g.pose.pose.position.x, g.pose.pose.position.y = x, y; g.pose.pose.orientation.w = 1.0
             bt = ([f'area_m={area:.2f}'] if area else []) + ([f'yaw_deg={yaw_deg:.1f}'] if yaw_deg is not None else [])
+            # NAV_SET='step_long_m=0.5;open_side_m=0.40' — 이 실행의 목표만 주행기 설정을 바꾼다(11-28 A/B 바닥 시험)
+            bt += [f'set.{kv.strip()}' for kv in os.environ.get('NAV_SET', '').split(';') if kv.strip()]
             if bt:
                 g.behavior_tree = ';'.join(bt)                 # 장소 반경(막혀도 이 안이면 도착)·마지막 방향 — step_nav_action_server가 읽음
             fg = ac.send_goal_async(g)
